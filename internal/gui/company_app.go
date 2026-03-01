@@ -6,6 +6,7 @@ import (
 
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
+	"github.com/hanfourmini/aisupervisor/internal/worker"
 )
 
 // CompanyApp is the Wails binding for the company management system.
@@ -95,6 +96,29 @@ func (c *CompanyApp) CreateWorker(name, avatar string) (*WorkerDTO, error) {
 	return &dto, nil
 }
 
+// CreateWorkerWithTier creates a worker with tier and hierarchy options.
+func (c *CompanyApp) CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool string) (*WorkerDTO, error) {
+	var opts []company.WorkerOption
+	if tier != "" {
+		opts = append(opts, company.WithTier(worker.WorkerTier(tier)))
+	}
+	if parentID != "" {
+		opts = append(opts, company.WithParent(parentID))
+	}
+	if backendID != "" {
+		opts = append(opts, company.WithBackend(backendID))
+	}
+	if cliTool != "" {
+		opts = append(opts, company.WithCLITool(cliTool))
+	}
+	w, err := c.company.CreateWorker(name, avatar, opts...)
+	if err != nil {
+		return nil, err
+	}
+	dto := WorkerToDTO(w)
+	return &dto, nil
+}
+
 func (c *CompanyApp) ListWorkers() []WorkerDTO {
 	workers := c.company.ListWorkers()
 	dtos := make([]WorkerDTO, len(workers))
@@ -102,6 +126,21 @@ func (c *CompanyApp) ListWorkers() []WorkerDTO {
 		dtos[i] = WorkerToDTO(w)
 	}
 	return dtos
+}
+
+// GetSubordinates returns workers managed by the given worker.
+func (c *CompanyApp) GetSubordinates(workerID string) []WorkerDTO {
+	workers := c.company.GetSubordinates(workerID)
+	dtos := make([]WorkerDTO, len(workers))
+	for i, w := range workers {
+		dtos[i] = WorkerToDTO(w)
+	}
+	return dtos
+}
+
+// PromoteWorker upgrades a worker's tier.
+func (c *CompanyApp) PromoteWorker(workerID, newTier string) error {
+	return c.company.PromoteWorker(workerID, worker.WorkerTier(newTier))
 }
 
 // --- Assignment ---

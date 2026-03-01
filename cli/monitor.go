@@ -29,6 +29,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/session"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
+	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/tui"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
 	"github.com/spf13/cobra"
@@ -157,8 +158,25 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 		projectStore, _ := project.NewStore(companyDataDir)
 		git := gitops.New()
 		spawner := worker.NewSpawner(tmuxClient, git, sup, mgr)
+		if len(cfg.WorkerTiers) > 0 {
+			spawner.LoadTierConfigs(cfg.WorkerTiers)
+		}
 		completionMon := worker.NewCompletionMonitor(tmuxClient)
 		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+
+		// Wire training collector if enabled
+		if cfg.Training.Enabled {
+			trainingDir := cfg.Training.DataDir
+			if trainingDir == "" {
+				trainingDir = filepath.Join(home, ".local", "share", "aisupervisor", "training")
+			} else if strings.HasPrefix(trainingDir, "~/") {
+				trainingDir = filepath.Join(home, trainingDir[2:])
+			}
+			if logger, err := training.NewLogger(trainingDir); err == nil {
+				collector := training.NewCollector(logger, git, tmuxClient, cfg.Training.CaptureDiffs)
+				companyMgr.SetCollector(collector)
+			}
+		}
 
 		// Start messaging if configured
 		startMessagingCLI(cfg, companyMgr)

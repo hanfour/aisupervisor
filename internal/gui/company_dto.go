@@ -35,36 +35,42 @@ func ProjectToDTO(p *project.Project) ProjectDTO {
 }
 
 type TaskDTO struct {
-	ID          string   `json:"id"`
-	ProjectID   string   `json:"projectId"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Prompt      string   `json:"prompt"`
-	Status      string   `json:"status"`
-	Priority    int      `json:"priority"`
-	BranchName  string   `json:"branchName"`
-	AssigneeID  string   `json:"assigneeId"`
-	DependsOn   []string `json:"dependsOn"`
-	Milestone   string   `json:"milestone"`
-	CreatedAt   string   `json:"createdAt"`
-	StartedAt   string   `json:"startedAt,omitempty"`
-	CompletedAt string   `json:"completedAt,omitempty"`
+	ID           string   `json:"id"`
+	ProjectID    string   `json:"projectId"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	Prompt       string   `json:"prompt"`
+	Status       string   `json:"status"`
+	Priority     int      `json:"priority"`
+	BranchName   string   `json:"branchName"`
+	AssigneeID   string   `json:"assigneeId"`
+	DependsOn    []string `json:"dependsOn"`
+	Milestone    string   `json:"milestone"`
+	ReviewerID   string   `json:"reviewerId,omitempty"`
+	ParentTaskID string   `json:"parentTaskId,omitempty"`
+	ReviewCount  int      `json:"reviewCount,omitempty"`
+	CreatedAt    string   `json:"createdAt"`
+	StartedAt    string   `json:"startedAt,omitempty"`
+	CompletedAt  string   `json:"completedAt,omitempty"`
 }
 
 func TaskToDTO(t *project.Task) TaskDTO {
 	dto := TaskDTO{
-		ID:          t.ID,
-		ProjectID:   t.ProjectID,
-		Title:       t.Title,
-		Description: t.Description,
-		Prompt:      t.Prompt,
-		Status:      string(t.Status),
-		Priority:    t.Priority,
-		BranchName:  t.BranchName,
-		AssigneeID:  t.AssigneeID,
-		DependsOn:   t.DependsOn,
-		Milestone:   t.Milestone,
-		CreatedAt:   t.CreatedAt.Format(time.RFC3339),
+		ID:           t.ID,
+		ProjectID:    t.ProjectID,
+		Title:        t.Title,
+		Description:  t.Description,
+		Prompt:       t.Prompt,
+		Status:       string(t.Status),
+		Priority:     t.Priority,
+		BranchName:   t.BranchName,
+		AssigneeID:   t.AssigneeID,
+		DependsOn:    t.DependsOn,
+		Milestone:    t.Milestone,
+		ReviewerID:   t.ReviewerID,
+		ParentTaskID: t.ParentTaskID,
+		ReviewCount:  t.ReviewCount,
+		CreatedAt:    t.CreatedAt.Format(time.RFC3339),
 	}
 	if t.StartedAt != nil {
 		dto.StartedAt = t.StartedAt.Format(time.RFC3339)
@@ -80,6 +86,11 @@ type WorkerDTO struct {
 	Name          string `json:"name"`
 	Avatar        string `json:"avatar"`
 	Status        string `json:"status"`
+	Tier          string `json:"tier"`
+	BackendID     string `json:"backendId,omitempty"`
+	ParentID      string `json:"parentId,omitempty"`
+	ModelVersion  string `json:"modelVersion,omitempty"`
+	CLITool       string `json:"cliTool,omitempty"`
 	CurrentTaskID string `json:"currentTaskId"`
 	TmuxSession   string `json:"tmuxSession"`
 	SessionID     string `json:"sessionId"`
@@ -92,6 +103,11 @@ func WorkerToDTO(w *worker.Worker) WorkerDTO {
 		Name:          w.Name,
 		Avatar:        w.Avatar,
 		Status:        string(w.Status),
+		Tier:          string(w.EffectiveTier()),
+		BackendID:     w.BackendID,
+		ParentID:      w.ParentID,
+		ModelVersion:  w.ModelVersion,
+		CLITool:       w.CLITool,
 		CurrentTaskID: w.CurrentTaskID,
 		TmuxSession:   w.TmuxSession,
 		SessionID:     w.SessionID,

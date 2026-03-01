@@ -29,6 +29,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/session"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
+	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -137,11 +138,29 @@ func main() {
 	}
 	git := gitops.New()
 	spawner := worker.NewSpawner(tmuxClient, git, sup, mgr)
+	if len(cfg.WorkerTiers) > 0 {
+		spawner.LoadTierConfigs(cfg.WorkerTiers)
+	}
 	completionMon := worker.NewCompletionMonitor(tmuxClient)
 	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
 	if err != nil {
 		log.Fatalf("setting up company manager: %v", err)
 	}
+
+	// Wire training collector if enabled
+	if cfg.Training.Enabled {
+		trainingDir := cfg.Training.DataDir
+		if trainingDir == "" {
+			trainingDir = filepath.Join(home, ".local", "share", "aisupervisor", "training")
+		} else if strings.HasPrefix(trainingDir, "~/") {
+			trainingDir = filepath.Join(home, trainingDir[2:])
+		}
+		if tLogger, logErr := training.NewLogger(trainingDir); logErr == nil {
+			collector := training.NewCollector(tLogger, git, tmuxClient, cfg.Training.CaptureDiffs)
+			companyMgr.SetCollector(collector)
+		}
+	}
+
 	companyApp := gui.NewCompanyApp(companyMgr, tmuxClient)
 
 	// Start messaging integrations if configured

@@ -79,7 +79,7 @@ func (m companyDashModel) View() string {
 			b.WriteString(normalStyle.Render("  No workers"))
 			b.WriteString("\n")
 		} else {
-			wh := fmt.Sprintf("  %-15s %-10s %-20s", "NAME", "STATUS", "TASK")
+			wh := fmt.Sprintf("  %-15s %-12s %-10s %-8s %-20s", "NAME", "TIER", "STATUS", "CLI", "TASK")
 			b.WriteString(normalStyle.Render(wh))
 			b.WriteString("\n")
 			for _, w := range workers {
@@ -87,8 +87,14 @@ func (m companyDashModel) View() string {
 				if w.CurrentTaskID != "" {
 					taskInfo = w.CurrentTaskID
 				}
+				cliTool := w.CLITool
+				if cliTool == "" {
+					cliTool = "claude"
+				}
 				statusStr := renderWorkerStatus(string(w.Status))
-				line := fmt.Sprintf("  %-15s %s  %-20s", truncate(w.Name, 15), statusStr, truncate(taskInfo, 20))
+				tierStr := renderTier(string(w.EffectiveTier()))
+				line := fmt.Sprintf("  %-15s %s %s  %-8s %-20s",
+					truncate(w.Name, 15), tierStr, statusStr, cliTool, truncate(taskInfo, 20))
 				b.WriteString(normalStyle.Render(line))
 				b.WriteString("\n")
 			}
@@ -117,6 +123,19 @@ func (m companyDashModel) View() string {
 	b.WriteString(helpStyle.Render("esc: back to dashboard | q: quit"))
 
 	return b.String()
+}
+
+func renderTier(tier string) string {
+	switch tier {
+	case "consultant":
+		return statusStopped.Render("consultant ")
+	case "manager":
+		return statusPaused.Render("manager    ")
+	case "engineer":
+		return statusActive.Render("engineer   ")
+	default:
+		return normalStyle.Render(fmt.Sprintf("%-11s", tier))
+	}
 }
 
 func renderWorkerStatus(s string) string {

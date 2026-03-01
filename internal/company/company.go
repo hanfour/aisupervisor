@@ -14,6 +14,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
+	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
 	"gopkg.in/yaml.v3"
 )
@@ -31,6 +32,8 @@ type Manager struct {
 	workers      map[string]*worker.Worker
 	cancels      map[string]context.CancelFunc
 	workersPath  string
+	review       *ReviewPipeline
+	collector    *training.Collector
 }
 
 type workersFile struct {
@@ -69,6 +72,7 @@ func New(
 		cancels:      make(map[string]context.CancelFunc),
 		workersPath:  filepath.Join(dataDir, "workers.yaml"),
 	}
+	m.review = newReviewPipeline(m)
 
 	if err := m.loadWorkers(); err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -189,7 +193,7 @@ func (m *Manager) ListTasks(projectID string) []*project.Task {
 
 // --- Worker operations ---
 
-func (m *Manager) CreateWorker(name, avatar string) (*worker.Worker, error) {
+func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*worker.Worker, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -201,6 +205,15 @@ func (m *Manager) CreateWorker(name, avatar string) (*worker.Worker, error) {
 		CreatedAt: time.Now(),
 	}
 
+	for _, opt := range opts {
+		opt(w)
+	}
+
+	// Validate hierarchy constraints
+	if err := m.validateHierarchy(w); err != nil {
+		return nil, err
+	}
+
 	m.workers[w.ID] = w
 	if err := m.saveWorkers(); err != nil {
 		return nil, err
@@ -209,9 +222,63 @@ func (m *Manager) CreateWorker(name, avatar string) (*worker.Worker, error) {
 	m.emit(Event{
 		Type:     EventWorkerSpawned,
 		WorkerID: w.ID,
-		Message:  fmt.Sprintf("Worker hired: %s", name),
+		Message:  fmt.Sprintf("Worker hired: %s (tier: %s)", name, w.EffectiveTier()),
 	})
 	return w, nil
+}
+
+// validateHierarchy checks that parent-child tier relationships are correct.
+func (m *Manager) validateHierarchy(w *worker.Worker) error {
+	if w.ParentID == "" {
+		return nil
+	}
+	parent, ok := m.workers[w.ParentID]
+	if !ok {
+		return fmt.Errorf("parent worker %q not found", w.ParentID)
+	}
+	tier := w.EffectiveTier()
+	parentTier := parent.EffectiveTier()
+
+	switch tier {
+	case worker.TierEngineer:
+		if parentTier != worker.TierManager {
+			return fmt.Errorf("engineer's parent must be a manager, got %s", parentTier)
+		}
+	case worker.TierManager:
+		if parentTier != worker.TierConsultant {
+			return fmt.Errorf("manager's parent must be a consultant, got %s", parentTier)
+		}
+	case worker.TierConsultant:
+		return fmt.Errorf("consultant cannot have a parent")
+	}
+	return nil
+}
+
+// GetSubordinates returns workers whose ParentID matches the given worker ID.
+func (m *Manager) GetSubordinates(workerID string) []*worker.Worker {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*worker.Worker
+	for _, w := range m.workers {
+		if w.ParentID == workerID {
+			result = append(result, w)
+		}
+	}
+	return result
+}
+
+// GetManager returns the parent (manager) of a worker.
+func (m *Manager) GetManager(workerID string) (*worker.Worker, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	w, ok := m.workers[workerID]
+	if !ok || w.ParentID == "" {
+		return nil, false
+	}
+	parent, ok := m.workers[w.ParentID]
+	return parent, ok
 }
 
 func (m *Manager) ListWorkers() []*worker.Worker {
@@ -323,6 +390,65 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	m.mu.Lock()
 
 	if result.Success {
+		// Check if this is a review task completed by a manager
+		if t.ParentTaskID != "" && w.EffectiveTier() == worker.TierManager {
+			// Reset manager to idle
+			w.Status = worker.WorkerIdle
+			w.CurrentTaskID = ""
+			m.saveWorkers()
+			m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
+			m.mu.Unlock()
+
+			// Handle review result
+			m.review.HandleReviewResult(w, t, p, result)
+
+			m.emit(Event{
+				Type:     EventWorkerIdle,
+				WorkerID: w.ID,
+				Message:  fmt.Sprintf("Manager %s is idle", w.Name),
+			})
+
+			// Try to drain review queue
+			go m.review.DrainQueue(context.Background())
+			return
+		}
+
+		// Check if engineer with a parent → route to manager review
+		if w.EffectiveTier() == worker.TierEngineer && w.ParentID != "" {
+			m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
+			m.emit(Event{
+				Type:      EventTaskCompleted,
+				ProjectID: p.ID,
+				TaskID:    t.ID,
+				WorkerID:  w.ID,
+				Message:   fmt.Sprintf("Task %q completed by engineer, routing to review", t.Title),
+			})
+
+			// Reset engineer to idle
+			w.Status = worker.WorkerIdle
+			w.CurrentTaskID = ""
+			m.saveWorkers()
+			m.mu.Unlock()
+
+			m.emit(Event{
+				Type:     EventWorkerIdle,
+				WorkerID: w.ID,
+				Message:  fmt.Sprintf("Worker %s is idle", w.Name),
+			})
+
+			// Start manager review
+			go func() {
+				ctx := context.Background()
+				m.review.StartReview(ctx, w, t, p)
+			}()
+
+			if m.autoSchedule {
+				go m.tryAutoAssign(w.ID)
+			}
+			return
+		}
+
+		// Default: no review needed (consultant or engineer without parent)
 		m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
 		m.emit(Event{
 			Type:      EventTaskCompleted,
@@ -475,6 +601,16 @@ func (m *Manager) Unsubscribe(ch <-chan Event) {
 // Events returns a new subscriber channel (backwards compatible).
 func (m *Manager) Events() <-chan Event {
 	return m.Subscribe()
+}
+
+// SetCollector attaches a training data collector.
+func (m *Manager) SetCollector(c *training.Collector) {
+	m.collector = c
+}
+
+// ReviewPipeline returns the review pipeline for external integration.
+func (m *Manager) ReviewPipeline() *ReviewPipeline {
+	return m.review
 }
 
 // ProjectStore returns the underlying project store.

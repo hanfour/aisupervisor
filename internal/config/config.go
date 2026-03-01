@@ -20,6 +20,23 @@ type Config struct {
 	Groups         []GroupConfig        `yaml:"groups,omitempty"`
 	SessionRoles   []SessionRoleBinding `yaml:"session_roles,omitempty"`
 	Messaging      MessagingConfig      `yaml:"messaging,omitempty"`
+	WorkerTiers    []WorkerTierConfig   `yaml:"worker_tiers,omitempty"`
+	Training       TrainingConfig       `yaml:"training,omitempty"`
+}
+
+type WorkerTierConfig struct {
+	Tier       string `yaml:"tier"`
+	CLITool    string `yaml:"cli_tool"`
+	CLIArgs    string `yaml:"cli_args,omitempty"`
+	BackendID  string `yaml:"backend_id,omitempty"`
+	MaxWorkers int    `yaml:"max_workers,omitempty"`
+	ReadyCheck string `yaml:"ready_check,omitempty"`
+}
+
+type TrainingConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	DataDir      string `yaml:"data_dir,omitempty"`
+	CaptureDiffs bool   `yaml:"capture_diffs,omitempty"`
 }
 
 type MessagingConfig struct {

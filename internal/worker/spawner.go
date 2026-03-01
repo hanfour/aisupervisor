@@ -3,9 +3,11 @@ package worker
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/session"
@@ -13,11 +15,19 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
 
+// TierSpawnConfig holds resolved spawn parameters for a worker tier.
+type TierSpawnConfig struct {
+	CLITool    string
+	CLIArgs    string
+	ReadyCheck *regexp.Regexp
+}
+
 type Spawner struct {
-	tmuxClient tmux.TmuxClient
-	gitOps     gitops.GitOps
-	sup        *supervisor.Supervisor
-	sessionMgr *session.Manager
+	tmuxClient  tmux.TmuxClient
+	gitOps      gitops.GitOps
+	sup         *supervisor.Supervisor
+	sessionMgr  *session.Manager
+	tierConfigs map[WorkerTier]TierSpawnConfig
 }
 
 func NewSpawner(
@@ -27,10 +37,28 @@ func NewSpawner(
 	sessionMgr *session.Manager,
 ) *Spawner {
 	return &Spawner{
-		tmuxClient: tmuxClient,
-		gitOps:     gitOps,
-		sup:        sup,
-		sessionMgr: sessionMgr,
+		tmuxClient:  tmuxClient,
+		gitOps:      gitOps,
+		sup:         sup,
+		sessionMgr:  sessionMgr,
+		tierConfigs: make(map[WorkerTier]TierSpawnConfig),
+	}
+}
+
+// LoadTierConfigs populates spawn configurations from config.
+func (s *Spawner) LoadTierConfigs(tiers []config.WorkerTierConfig) {
+	for _, tc := range tiers {
+		tier := WorkerTier(tc.Tier)
+		sc := TierSpawnConfig{
+			CLITool: tc.CLITool,
+			CLIArgs: tc.CLIArgs,
+		}
+		if tc.ReadyCheck != "" {
+			if re, err := regexp.Compile(tc.ReadyCheck); err == nil {
+				sc.ReadyCheck = re
+			}
+		}
+		s.tierConfigs[tier] = sc
 	}
 }
 
@@ -67,18 +95,22 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 		time.Sleep(1 * time.Second)
 	}
 
-	// 5. Launch Claude Code
-	s.tmuxClient.SendKeys(tmuxName, 0, 0, "claude Enter")
+	// 5. Launch CLI tool (claude or aider)
+	cliTool, cliArgs, readyRe := s.resolveCLI(w)
+	if cliArgs != "" {
+		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("%s %s", cliTool, cliArgs)+" Enter")
+	} else {
+		s.tmuxClient.SendKeys(tmuxName, 0, 0, cliTool+" Enter")
+	}
 
-	// 6. Wait for Claude Code to be ready
-	if err := s.waitForReady(ctx, tmuxName, 30*time.Second); err != nil {
-		// Cleanup on failure
+	// 6. Wait for CLI to be ready
+	if err := s.waitForReady(ctx, tmuxName, 30*time.Second, readyRe); err != nil {
 		s.tmuxClient.KillSession(tmuxName)
-		return fmt.Errorf("waiting for Claude Code: %w", err)
+		return fmt.Errorf("waiting for %s ready: %w", cliTool, err)
 	}
 
 	// 7. Send task prompt
-	prompt := buildPrompt(t, p)
+	prompt := buildPromptForTier(t, p, w.EffectiveTier())
 	s.tmuxClient.SendLiteralKeys(tmuxName, 0, 0, prompt)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
@@ -90,13 +122,17 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	w.CurrentTaskID = t.ID
 
 	// 9. Create MonitoredSession and register with supervisor
+	toolType := "claude_code"
+	if cliTool == "aider" {
+		toolType = "aider"
+	}
 	ms := &session.MonitoredSession{
 		ID:          fmt.Sprintf("worker-%s", w.ID),
 		Name:        fmt.Sprintf("Worker: %s", w.Name),
 		TmuxSession: tmuxName,
 		Window:      0,
 		Pane:        0,
-		ToolType:    "claude_code",
+		ToolType:    toolType,
 		TaskGoal:    t.Title,
 		ProjectDir:  p.RepoPath,
 		Status:      session.StatusActive,
@@ -126,8 +162,27 @@ func (s *Spawner) Cleanup(w *Worker) error {
 	return nil
 }
 
-// waitForReady polls the pane content until Claude Code shows its prompt indicator.
-func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout time.Duration) error {
+// resolveCLI determines the CLI command, args, and ready regex for a worker.
+func (s *Spawner) resolveCLI(w *Worker) (cliTool, cliArgs string, readyRe *regexp.Regexp) {
+	cliTool = "claude"
+	if w.CLITool != "" {
+		cliTool = w.CLITool
+	}
+
+	if tc, ok := s.tierConfigs[w.EffectiveTier()]; ok {
+		if tc.CLITool != "" {
+			cliTool = tc.CLITool
+		}
+		cliArgs = tc.CLIArgs
+		readyRe = tc.ReadyCheck
+	}
+
+	return cliTool, cliArgs, readyRe
+}
+
+// waitForReady polls the pane content until the CLI shows its prompt indicator.
+// If readyRe is provided, it is used instead of default Claude Code detection.
+func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout time.Duration, readyRe *regexp.Regexp) error {
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -137,29 +192,40 @@ func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
-			return fmt.Errorf("timeout waiting for Claude Code ready")
+			return fmt.Errorf("timeout waiting for CLI ready")
 		case <-ticker.C:
 			content, err := s.tmuxClient.CapturePane(tmuxSession, 0, 0, 10)
 			if err != nil {
 				continue
 			}
-			// Claude Code shows ">" as its prompt when ready
 			lines := strings.Split(content, "\n")
 			for _, line := range lines {
 				trimmed := strings.TrimSpace(line)
-				if trimmed == ">" || strings.HasPrefix(trimmed, "> ") || strings.Contains(line, "What can I help") {
-					return nil
+				if readyRe != nil {
+					if readyRe.MatchString(trimmed) {
+						return nil
+					}
+				} else {
+					// Default Claude Code detection
+					if trimmed == ">" || strings.HasPrefix(trimmed, "> ") || strings.Contains(line, "What can I help") {
+						return nil
+					}
 				}
 			}
 		}
 	}
 }
 
-func buildPrompt(t *project.Task, p *project.Project) string {
+// buildPromptForTier formats the task prompt based on the worker tier.
+func buildPromptForTier(t *project.Task, p *project.Project, tier WorkerTier) string {
 	var sb strings.Builder
 	sb.WriteString(t.Prompt)
 	if t.BranchName != "" {
 		sb.WriteString(fmt.Sprintf("\n\nYou are working on branch: %s", t.BranchName))
+	}
+	// Aider uses a simpler prompt format
+	if tier == TierEngineer {
+		return sb.String()
 	}
 	return sb.String()
 }

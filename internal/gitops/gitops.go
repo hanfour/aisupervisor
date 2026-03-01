@@ -20,6 +20,8 @@ type GitOps interface {
 	CreateBranch(repoPath, branch, baseBranch string) error
 	LatestCommit(repoPath, branch string) (CommitInfo, error)
 	HasUncommitted(repoPath string) (bool, error)
+	DiffBranch(repoPath, branch string) (string, error)
+	LatestCommitHash(repoPath, branch string) (string, error)
 }
 
 type gitOps struct{}
@@ -76,6 +78,34 @@ func (g *gitOps) HasUncommitted(repoPath string) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(out) != "", nil
+}
+
+// DiffBranch returns the diff of a branch against its merge base with HEAD.
+func (g *gitOps) DiffBranch(repoPath, branch string) (string, error) {
+	// Get merge base
+	base, err := g.run(repoPath, "merge-base", "HEAD", branch)
+	if err != nil {
+		// Fallback: diff against HEAD directly
+		out, err2 := g.run(repoPath, "diff", "HEAD", branch, "--stat")
+		if err2 != nil {
+			return "", err
+		}
+		return strings.TrimSpace(out), nil
+	}
+	out, err := g.run(repoPath, "diff", strings.TrimSpace(base), branch, "--stat")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// LatestCommitHash returns the latest commit hash of a branch.
+func (g *gitOps) LatestCommitHash(repoPath, branch string) (string, error) {
+	out, err := g.run(repoPath, "rev-parse", branch)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 func (g *gitOps) run(repoPath string, args ...string) (string, error) {

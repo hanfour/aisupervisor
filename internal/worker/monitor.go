@@ -21,11 +21,11 @@ func NewCompletionMonitor(tmuxClient tmux.TmuxClient) *CompletionMonitor {
 	return &CompletionMonitor{tmuxClient: tmuxClient}
 }
 
-// WatchForCompletion polls the pane content to detect when Claude Code
+// WatchForCompletion polls the pane content to detect when the CLI tool
 // has finished its task. It detects:
-// - Claude Code returning to idle prompt (">")
+// - CLI returning to idle prompt (">")
 // - No output change for N consecutive polls
-// - Shell prompt appearing (Claude Code exited)
+// - Shell prompt appearing (CLI exited)
 func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (CompletionResult, error) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -34,6 +34,7 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 	noChangeCount := 0
 	const noChangeThreshold = 15 // 30 seconds of no change after initial activity
 	hadActivity := false
+	useAider := w.CLITool == "aider"
 
 	for {
 		select {
@@ -45,14 +46,20 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 				continue
 			}
 
-			// Check for shell prompt (Claude Code has exited)
+			// Check for shell prompt (CLI has exited)
 			if isShellPrompt(content) && hadActivity {
 				return CompletionResult{Success: true, Reason: "shell_exit"}, nil
 			}
 
-			// Check for Claude Code idle prompt
-			if isClaudeIdle(content) && hadActivity {
-				return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
+			// Check for idle prompt based on CLI tool
+			if useAider {
+				if isAiderIdle(content) && hadActivity {
+					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
+				}
+			} else {
+				if isClaudeIdle(content) && hadActivity {
+					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
+				}
 			}
 
 			// Track content changes
@@ -75,6 +82,19 @@ func isClaudeIdle(content string) bool {
 	lines := strings.Split(content, "\n")
 	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
 		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == ">" || trimmed == "> " {
+			return true
+		}
+	}
+	return false
+}
+
+// isAiderIdle detects when aider returns to its ">" prompt.
+func isAiderIdle(content string) bool {
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		// Aider uses ">" as its prompt, sometimes with ANSI codes stripped
 		if trimmed == ">" || trimmed == "> " {
 			return true
 		}

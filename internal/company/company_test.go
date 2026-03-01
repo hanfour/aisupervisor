@@ -293,6 +293,43 @@ func TestEventsBackwardsCompat(t *testing.T) {
 	}
 }
 
+func TestUnsubscribe(t *testing.T) {
+	m, ch1 := testManager(t)
+	ch2 := m.Subscribe()
+
+	// Unsubscribe ch1
+	m.Unsubscribe(ch1)
+
+	m.CreateProject("unsub-test", "", "/tmp", "main", nil)
+
+	// ch1 should be closed (receive zero value)
+	select {
+	case _, ok := <-ch1:
+		if ok {
+			t.Fatal("ch1 should be closed after unsubscribe")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ch1 should be closed immediately")
+	}
+
+	// ch2 should still receive events
+	select {
+	case e := <-ch2:
+		if e.Type != EventProjectCreated {
+			t.Fatalf("ch2: expected project_created, got %s", e.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ch2 should still receive events")
+	}
+}
+
+func TestUnsubscribeNonexistent(t *testing.T) {
+	m, _ := testManager(t)
+	// Should not panic when unsubscribing a channel that was never subscribed
+	fakeCh := make(chan Event)
+	m.Unsubscribe(fakeCh) // no-op, should not panic
+}
+
 func TestAutoScheduleDisabled(t *testing.T) {
 	m, _ := testManager(t)
 	// autoSchedule is false in testManager

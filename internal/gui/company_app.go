@@ -119,6 +119,10 @@ func (c *CompanyApp) GetProjectProgress(projectID string) CompanyProgressDTO {
 // --- Worker pane content ---
 
 func (c *CompanyApp) GetPaneContent(workerID string) (string, error) {
+	return c.GetPaneContentLines(workerID, 100)
+}
+
+func (c *CompanyApp) GetPaneContentLines(workerID string, lines int) (string, error) {
 	w, ok := c.company.GetWorker(workerID)
 	if !ok {
 		return "", fmt.Errorf("worker %q not found", workerID)
@@ -129,5 +133,8 @@ func (c *CompanyApp) GetPaneContent(workerID string) (string, error) {
 	if c.tmuxClient == nil {
 		return "", fmt.Errorf("tmux client not available")
 	}
-	return c.tmuxClient.CapturePane(w.TmuxSession, 0, 0, 100)
+	if lines <= 0 {
+		lines = 100
+	}
+	return c.tmuxClient.CapturePane(w.TmuxSession, 0, 0, lines)
 }

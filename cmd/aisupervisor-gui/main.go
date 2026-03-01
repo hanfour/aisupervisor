@@ -232,6 +232,7 @@ func buildRoleManager(cfg *config.Config, backend ai.Backend) *role.Manager {
 
 func startMessaging(cfg *config.Config, companyMgr *company.Manager) {
 	var messengers []messaging.Messenger
+	var perMessengerFilters [][]string
 
 	if cfg.Messaging.Slack.Enabled {
 		botToken := os.Getenv(cfg.Messaging.Slack.BotTokenEnv)
@@ -239,6 +240,7 @@ func startMessaging(cfg *config.Config, companyMgr *company.Manager) {
 		if botToken != "" && appToken != "" {
 			m := messaging.NewSlackMessenger(botToken, appToken, cfg.Messaging.Slack.ChannelID)
 			messengers = append(messengers, m)
+			perMessengerFilters = append(perMessengerFilters, cfg.Messaging.Slack.NotifyEvents)
 			log.Println("Slack messenger enabled")
 		}
 	}
@@ -250,13 +252,20 @@ func startMessaging(cfg *config.Config, companyMgr *company.Manager) {
 			m, err := messaging.NewLineMessenger(secret, token, cfg.Messaging.Line.NotifyUserID, cfg.Messaging.Line.Port)
 			if err == nil {
 				messengers = append(messengers, m)
+				perMessengerFilters = append(perMessengerFilters, cfg.Messaging.Line.NotifyEvents)
 				log.Println("LINE messenger enabled")
 			}
 		}
 	}
 
 	if len(messengers) > 0 {
-		notifier := messaging.NewNotifier(companyMgr, messengers)
+		notifier := messaging.NewNotifier(companyMgr, messengers,
+			messaging.WithGlobalFilter(cfg.Messaging.NotifyEvents))
+		for i, f := range perMessengerFilters {
+			if len(f) > 0 {
+				notifier.SetMessengerFilter(i, f)
+			}
+		}
 		ctx := context.Background()
 		notifier.Start(ctx)
 	}

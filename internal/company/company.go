@@ -459,6 +459,19 @@ func (m *Manager) Subscribe() <-chan Event {
 	return ch
 }
 
+// Unsubscribe removes a previously subscribed channel and closes it.
+func (m *Manager) Unsubscribe(ch <-chan Event) {
+	m.subMu.Lock()
+	defer m.subMu.Unlock()
+	for i, sub := range m.subscribers {
+		if sub == ch {
+			m.subscribers = append(m.subscribers[:i], m.subscribers[i+1:]...)
+			close(sub)
+			return
+		}
+	}
+}
+
 // Events returns a new subscriber channel (backwards compatible).
 func (m *Manager) Events() <-chan Event {
 	return m.Subscribe()

@@ -34,7 +34,7 @@ type gotmuxClient struct {
 }
 
 func NewClient() (TmuxClient, error) {
-	t, err := gotmux.NewTmux("")
+	t, err := gotmux.DefaultTmux()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to tmux: %w", err)
 	}

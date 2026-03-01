@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	anthropicBackend "github.com/hanfourmini/aisupervisor/internal/ai/anthropic"
@@ -14,15 +16,19 @@ import (
 	ollamaBackend "github.com/hanfourmini/aisupervisor/internal/ai/ollama"
 	openaiBackend "github.com/hanfourmini/aisupervisor/internal/ai/openai"
 	"github.com/hanfourmini/aisupervisor/internal/audit"
+	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	sessionctx "github.com/hanfourmini/aisupervisor/internal/context"
 	"github.com/hanfourmini/aisupervisor/internal/detector"
+	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/group"
 	"github.com/hanfourmini/aisupervisor/internal/gui"
+	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/role"
 	"github.com/hanfourmini/aisupervisor/internal/session"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
+	"github.com/hanfourmini/aisupervisor/internal/worker"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -122,6 +128,21 @@ func main() {
 
 	app := gui.NewApp(sup, mgr, tmuxClient, cfg, gm, resolver, sessions)
 
+	// Company management system setup
+	companyDataDir := filepath.Join(home, ".local", "share", "aisupervisor", "company")
+	projectStore, err := project.NewStore(companyDataDir)
+	if err != nil {
+		log.Fatalf("setting up project store: %v", err)
+	}
+	git := gitops.New()
+	spawner := worker.NewSpawner(tmuxClient, git, sup, mgr)
+	completionMon := worker.NewCompletionMonitor(tmuxClient)
+	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+	if err != nil {
+		log.Fatalf("setting up company manager: %v", err)
+	}
+	companyApp := gui.NewCompanyApp(companyMgr)
+
 	if err := wails.Run(&options.App{
 		Title:  "aisupervisor",
 		Width:  1280,
@@ -129,10 +150,17 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		OnStartup:  app.Startup,
-		OnShutdown: app.Shutdown,
+		OnStartup: func(ctx context.Context) {
+			app.Startup(ctx)
+			companyApp.Startup(ctx)
+		},
+		OnShutdown: func(ctx context.Context) {
+			companyApp.Shutdown(ctx)
+			app.Shutdown(ctx)
+		},
 		Bind: []interface{}{
 			app,
+			companyApp,
 		},
 	}); err != nil {
 		log.Fatalf("wails error: %v", err)
@@ -205,11 +233,12 @@ func discoverSessions(cfg *config.Config, client tmux.TmuxClient, mgr *session.M
 			Status:   session.StatusActive,
 			ToolType: "auto",
 		}
-		var sessionName string
+		sessionName := flagSession
 		var window, pane int
-		n, _ := fmt.Sscanf(flagSession, "%[^:]:%d.%d", &sessionName, &window, &pane)
-		if n == 0 {
-			sessionName = flagSession
+		if idx := strings.LastIndex(flagSession, ":"); idx >= 0 {
+			sessionName = flagSession[:idx]
+			rest := flagSession[idx+1:]
+			fmt.Sscanf(rest, "%d.%d", &window, &pane)
 		}
 		sess.ID = sessionName
 		sess.Name = sessionName

@@ -27,6 +27,9 @@ type TmuxClient interface {
 	CapturePane(session string, window, pane, lines int) (string, error)
 	SendKeys(session string, window, pane int, keys string) error
 	SendLiteralKeys(session string, window, pane int, text string) error
+	CreateSession(name string) error
+	KillSession(name string) error
+	HasSession(name string) (bool, error)
 }
 
 type gotmuxClient struct {
@@ -148,4 +151,26 @@ func (c *gotmuxClient) SendLiteralKeys(session string, window, pane int, text st
 	target := fmt.Sprintf("%s:%d.%d", session, window, pane)
 	cmd := exec.Command("tmux", "send-keys", "-t", target, "-l", "--", text)
 	return cmd.Run()
+}
+
+func (c *gotmuxClient) CreateSession(name string) error {
+	cmd := exec.Command("tmux", "new-session", "-d", "-s", name)
+	return cmd.Run()
+}
+
+func (c *gotmuxClient) KillSession(name string) error {
+	cmd := exec.Command("tmux", "kill-session", "-t", name)
+	return cmd.Run()
+}
+
+func (c *gotmuxClient) HasSession(name string) (bool, error) {
+	cmd := exec.Command("tmux", "has-session", "-t", name)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }

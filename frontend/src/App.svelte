@@ -8,19 +8,26 @@
   import { loadSessions } from './lib/stores/sessions.js'
   import { loadRoles } from './lib/stores/roles.js'
   import { initDiscussionStore } from './lib/stores/discussions.js'
+  import { initCompanyStore } from './lib/stores/company.js'
   import { addError } from './lib/stores/errors.js'
+  import ProjectsPage from './lib/pages/ProjectsPage.svelte'
+  import WorkersPage from './lib/pages/WorkersPage.svelte'
 
   let currentPage = 'dashboard'
   let selectedSessionId = ''
+  let selectedProjectId = ''
 
   // Lazy-loaded page components for Phase 5
   let RolesPage = null
   let GroupsPage = null
   let SettingsPage = null
+  // Lazy-loaded company pages
+  let ProjectBoardPage = null
 
   onMount(async () => {
     initEventStore()
     initDiscussionStore()
+    initCompanyStore()
 
     // Listen for supervisor error events
     if (window.runtime && window.runtime.EventsOn) {
@@ -53,11 +60,17 @@
       const settingsModule = await import('./lib/pages/SettingsPage.svelte')
       SettingsPage = settingsModule.default
     } catch {}
+    // Company board page
+    try {
+      const boardModule = await import('./lib/pages/ProjectBoardPage.svelte')
+      ProjectBoardPage = boardModule.default
+    } catch {}
   })
 
-  function navigate(page, sessionId) {
+  function navigate(page, id) {
     currentPage = page
-    if (sessionId) selectedSessionId = sessionId
+    if (page === 'terminal' && id) selectedSessionId = id
+    if (page === 'board' && id) selectedProjectId = id
   }
 </script>
 
@@ -68,6 +81,12 @@
   <main class="main-content p-2">
     {#if currentPage === 'dashboard'}
       <DashboardPage onNavigate={navigate} />
+    {:else if currentPage === 'projects'}
+      <ProjectsPage onNavigate={navigate} />
+    {:else if currentPage === 'board' && ProjectBoardPage}
+      <svelte:component this={ProjectBoardPage} projectId={selectedProjectId} onNavigate={navigate} />
+    {:else if currentPage === 'workers'}
+      <WorkersPage />
     {:else if currentPage === 'terminal'}
       <TerminalPage
         sessionId={selectedSessionId}

@@ -43,6 +43,10 @@ func (f *fakeTmuxClient) SendLiteralKeys(session string, window, pane int, text 
 	return nil
 }
 
+func (f *fakeTmuxClient) CreateSession(name string) error        { return nil }
+func (f *fakeTmuxClient) KillSession(name string) error          { return nil }
+func (f *fakeTmuxClient) HasSession(name string) (bool, error)   { return false, nil }
+
 // fakeBackend returns a fixed decision
 type fakeBackend struct {
 	decision *ai.Decision

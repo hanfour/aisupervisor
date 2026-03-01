@@ -3,6 +3,9 @@
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
+    { id: 'projects', label: 'Projects', icon: '◈' },
+    { id: 'board', label: 'Board', icon: '▦' },
+    { id: 'workers', label: 'Workers', icon: '☺' },
     { id: 'terminal', label: 'Terminal', icon: '⊟' },
     { id: 'roles', label: 'Roles', icon: '★' },
     { id: 'groups', label: 'Groups', icon: '♦' },

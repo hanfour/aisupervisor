@@ -608,6 +608,30 @@ func (m *Manager) SetCollector(c *training.Collector) {
 	m.collector = c
 }
 
+// PromoteWorker upgrades a worker's tier (e.g. engineer → manager).
+func (m *Manager) PromoteWorker(workerID string, newTier worker.WorkerTier) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	w, ok := m.workers[workerID]
+	if !ok {
+		return fmt.Errorf("worker %q not found", workerID)
+	}
+
+	oldTier := w.EffectiveTier()
+	w.Tier = newTier
+	if err := m.saveWorkers(); err != nil {
+		return err
+	}
+
+	m.emit(Event{
+		Type:     EventWorkerPromoted,
+		WorkerID: workerID,
+		Message:  fmt.Sprintf("Worker %s promoted from %s to %s", w.Name, oldTier, newTier),
+	})
+	return nil
+}
+
 // ReviewPipeline returns the review pipeline for external integration.
 func (m *Manager) ReviewPipeline() *ReviewPipeline {
 	return m.review

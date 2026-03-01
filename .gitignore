@@ -2,6 +2,7 @@
 /build/
 /cmd/aisupervisor-gui/frontend/dist/
 /aisupervisor-gui
+/oauth-check
 
 # Dependencies
 frontend/node_modules/

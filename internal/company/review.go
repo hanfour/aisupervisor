@@ -43,6 +43,15 @@ func newReviewPipeline(mgr *Manager) *ReviewPipeline {
 	}
 }
 
+// PendingReviews returns a copy of the current review queue.
+func (rp *ReviewPipeline) PendingReviews() []ReviewRequest {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	out := make([]ReviewRequest, len(rp.reviewQueue))
+	copy(out, rp.reviewQueue)
+	return out
+}
+
 // StartReview initiates a manager review for a completed engineer task.
 // If the manager is idle, it spawns the review immediately. Otherwise it queues.
 func (rp *ReviewPipeline) StartReview(ctx context.Context, engineerWorker *worker.Worker, t *project.Task, p *project.Project) error {
@@ -291,13 +300,24 @@ func (rp *ReviewPipeline) captureTrainingData(originalTask *project.Task, manage
 	// Capture asynchronously to avoid blocking the review flow
 	go func() {
 		if err := rp.mgr.collector.CaptureReview(input); err == nil {
-			// Notify manager that training data was captured (for auto-trigger hooks)
 			rp.mgr.emit(Event{
 				Type:      EventTrainingCaptured,
 				ProjectID: p.ID,
 				TaskID:    originalTask.ID,
 				Message:   fmt.Sprintf("Training data captured for task %q (verdict: %s)", originalTask.Title, verdict),
 			})
+
+			// Check auto-trigger for fine-tuning
+			if rp.mgr.finetuneRunner != nil {
+				if shouldTrigger, _ := rp.mgr.finetuneRunner.CheckAutoTrigger(rp.mgr.finetuneCfg); shouldTrigger {
+					if job, err := rp.mgr.finetuneRunner.Launch(rp.mgr.finetuneCfg); err == nil {
+						rp.mgr.emit(Event{
+							Type:    EventTrainingCaptured,
+							Message: fmt.Sprintf("Auto-triggered fine-tune job %s (%d pairs threshold)", job.ID, rp.mgr.finetuneCfg.AutoTrigger),
+						})
+					}
+				}
+			}
 		}
 	}()
 }

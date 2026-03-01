@@ -144,7 +144,9 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	}
 
 	// 10. Wire into supervisor monitoring pipeline
-	go s.sup.Monitor(ctx, ms)
+	if s.sup != nil {
+		go s.sup.Monitor(ctx, ms)
+	}
 
 	return nil
 }

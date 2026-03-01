@@ -314,6 +314,44 @@ func TestBuildReviewPrompt(t *testing.T) {
 	}
 }
 
+func TestMaxWorkersEnforcement(t *testing.T) {
+	m, ch := testManager(t)
+
+	// Set max 2 engineers
+	m.SetMaxWorkers(worker.TierEngineer, 2)
+
+	_, err := m.CreateWorker("Dev1", "1")
+	if err != nil {
+		t.Fatalf("first engineer: %v", err)
+	}
+	drainCh(ch)
+
+	_, err = m.CreateWorker("Dev2", "2")
+	if err != nil {
+		t.Fatalf("second engineer: %v", err)
+	}
+	drainCh(ch)
+
+	// Third should fail
+	_, err = m.CreateWorker("Dev3", "3")
+	if err == nil {
+		t.Fatal("expected error: max workers reached")
+	}
+	if !strings.Contains(err.Error(), "max workers") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPendingReviews(t *testing.T) {
+	m, ch := testManager(t)
+
+	reviews := m.PendingReviews()
+	if len(reviews) != 0 {
+		t.Fatalf("expected 0 pending reviews, got %d", len(reviews))
+	}
+	drainCh(ch)
+}
+
 func testStoreWithDir(dir string) (*project.Store, error) {
 	return project.NewStore(dir)
 }

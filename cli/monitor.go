@@ -164,6 +164,11 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 		completionMon := worker.NewCompletionMonitor(tmuxClient)
 		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
 
+		// Load per-tier MaxWorkers
+		if len(cfg.WorkerTiers) > 0 {
+			companyMgr.LoadMaxWorkers(cfg.WorkerTiers)
+		}
+
 		// Wire training collector if enabled
 		if cfg.Training.Enabled {
 			trainingDir := cfg.Training.DataDir
@@ -175,6 +180,24 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 			if logger, err := training.NewLogger(trainingDir); err == nil {
 				collector := training.NewCollector(logger, git, tmuxClient, cfg.Training.CaptureDiffs)
 				companyMgr.SetCollector(collector)
+
+				// Wire finetune auto-trigger
+				if cfg.Training.Finetune.AutoTrigger > 0 {
+					registry, regErr := training.NewModelRegistry(trainingDir)
+					if regErr == nil {
+						exporter := training.NewExporter(trainingDir)
+						runner := training.NewFinetuneRunner(trainingDir, registry, exporter)
+						ftCfg := training.FinetuneConfig{
+							Method:      cfg.Training.Finetune.Method,
+							BaseModel:   cfg.Training.Finetune.BaseModel,
+							OutputModel: cfg.Training.Finetune.OutputModel,
+							ScriptPath:  cfg.Training.Finetune.ScriptPath,
+							AutoTrigger: cfg.Training.Finetune.AutoTrigger,
+							ValRatio:    cfg.Training.Finetune.ValRatio,
+						}
+						companyMgr.SetFinetuneRunner(runner, ftCfg)
+					}
+				}
 			}
 		}
 
@@ -200,6 +223,56 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 	// Headless mode
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Build company manager for headless mode too (training + review pipeline)
+	{
+		home, _ := os.UserHomeDir()
+		companyDataDir := filepath.Join(home, ".local", "share", "aisupervisor", "company")
+		projectStore, _ := project.NewStore(companyDataDir)
+		git := gitops.New()
+		hMgr, _ := session.NewManager(home + "/.local/share/aisupervisor")
+		spawner := worker.NewSpawner(tmuxClient, git, sup, hMgr)
+		if len(cfg.WorkerTiers) > 0 {
+			spawner.LoadTierConfigs(cfg.WorkerTiers)
+		}
+		completionMon := worker.NewCompletionMonitor(tmuxClient)
+		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+		if companyMgr != nil {
+			if len(cfg.WorkerTiers) > 0 {
+				companyMgr.LoadMaxWorkers(cfg.WorkerTiers)
+			}
+			if cfg.Training.Enabled {
+				trainingDir := cfg.Training.DataDir
+				if trainingDir == "" {
+					trainingDir = filepath.Join(home, ".local", "share", "aisupervisor", "training")
+				} else if strings.HasPrefix(trainingDir, "~/") {
+					trainingDir = filepath.Join(home, trainingDir[2:])
+				}
+				if logger, err := training.NewLogger(trainingDir); err == nil {
+					collector := training.NewCollector(logger, git, tmuxClient, cfg.Training.CaptureDiffs)
+					companyMgr.SetCollector(collector)
+
+					if cfg.Training.Finetune.AutoTrigger > 0 {
+						registry, regErr := training.NewModelRegistry(trainingDir)
+						if regErr == nil {
+							exporter := training.NewExporter(trainingDir)
+							runner := training.NewFinetuneRunner(trainingDir, registry, exporter)
+							ftCfg := training.FinetuneConfig{
+								Method:      cfg.Training.Finetune.Method,
+								BaseModel:   cfg.Training.Finetune.BaseModel,
+								OutputModel: cfg.Training.Finetune.OutputModel,
+								ScriptPath:  cfg.Training.Finetune.ScriptPath,
+								AutoTrigger: cfg.Training.Finetune.AutoTrigger,
+								ValRatio:    cfg.Training.Finetune.ValRatio,
+							}
+							companyMgr.SetFinetuneRunner(runner, ftCfg)
+						}
+					}
+				}
+			}
+			startMessagingCLI(cfg, companyMgr)
+		}
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

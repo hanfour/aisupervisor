@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
+	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
 	"github.com/spf13/cobra"
 )
@@ -280,6 +282,29 @@ var companyProgressCmd = &cobra.Command{
 	},
 }
 
+// --- Review Queue ---
+
+var companyReviewQueueCmd = &cobra.Command{
+	Use:   "review-queue",
+	Short: "Show pending review queue",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mgr, err := buildCompanyManager()
+		if err != nil {
+			return err
+		}
+		reviews := mgr.PendingReviews()
+		if len(reviews) == 0 {
+			fmt.Println("No pending reviews.")
+			return nil
+		}
+		fmt.Printf("%-20s %-20s %-20s %-20s\n", "TASK", "PROJECT", "ENGINEER", "MANAGER")
+		for _, r := range reviews {
+			fmt.Printf("%-20s %-20s %-20s %-20s\n", r.TaskID, r.ProjectID, r.EngineerID, r.ManagerID)
+		}
+		return nil
+	},
+}
+
 // --- Hierarchy view ---
 
 var companyHierarchyCmd = &cobra.Command{
@@ -383,7 +408,26 @@ func buildCompanyManagerWithTmux() (*company.Manager, error) {
 	}
 
 	completionMon := worker.NewCompletionMonitor(tmuxClient)
-	return company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Wire training collector if enabled
+	if cfg.Training.Enabled {
+		trainingDir := cfg.Training.DataDir
+		if trainingDir == "" {
+			trainingDir = filepath.Join(home, ".local", "share", "aisupervisor", "training")
+		} else if strings.HasPrefix(trainingDir, "~/") {
+			trainingDir = filepath.Join(home, trainingDir[2:])
+		}
+		if logger, logErr := training.NewLogger(trainingDir); logErr == nil {
+			collector := training.NewCollector(logger, git, tmuxClient, cfg.Training.CaptureDiffs)
+			companyMgr.SetCollector(collector)
+		}
+	}
+
+	return companyMgr, nil
 }
 
 func init() {
@@ -436,6 +480,7 @@ func init() {
 	companyCmd.AddCommand(companyAssignTaskCmd)
 	companyCmd.AddCommand(companyPromoteWorkerCmd)
 	companyCmd.AddCommand(companyProgressCmd)
+	companyCmd.AddCommand(companyReviewQueueCmd)
 	companyCmd.AddCommand(companyHierarchyCmd)
 	rootCmd.AddCommand(companyCmd)
 }

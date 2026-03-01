@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
@@ -32,8 +33,11 @@ type Manager struct {
 	workers      map[string]*worker.Worker
 	cancels      map[string]context.CancelFunc
 	workersPath  string
-	review       *ReviewPipeline
-	collector    *training.Collector
+	review         *ReviewPipeline
+	collector      *training.Collector
+	finetuneRunner *training.FinetuneRunner
+	finetuneCfg    training.FinetuneConfig
+	maxWorkers     map[worker.WorkerTier]int // per-tier worker limits (0 = unlimited)
 }
 
 type workersFile struct {
@@ -71,6 +75,7 @@ func New(
 		workers:      make(map[string]*worker.Worker),
 		cancels:      make(map[string]context.CancelFunc),
 		workersPath:  filepath.Join(dataDir, "workers.yaml"),
+		maxWorkers:   make(map[worker.WorkerTier]int),
 	}
 	m.review = newReviewPipeline(m)
 
@@ -212,6 +217,19 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 	// Validate hierarchy constraints
 	if err := m.validateHierarchy(w); err != nil {
 		return nil, err
+	}
+
+	// Enforce MaxWorkers per tier
+	if max, ok := m.maxWorkers[w.EffectiveTier()]; ok && max > 0 {
+		count := 0
+		for _, existing := range m.workers {
+			if existing.EffectiveTier() == w.EffectiveTier() {
+				count++
+			}
+		}
+		if count >= max {
+			return nil, fmt.Errorf("max workers (%d) reached for tier %s", max, w.EffectiveTier())
+		}
 	}
 
 	m.workers[w.ID] = w
@@ -510,6 +528,12 @@ func (m *Manager) tryAutoAssign(workerID string) {
 	task := candidates[0]
 	ctx := context.Background()
 	if err := m.AssignTask(ctx, workerID, task.ID); err != nil {
+		m.emit(Event{
+			Type:     EventTaskFailed,
+			TaskID:   task.ID,
+			WorkerID: workerID,
+			Message:  fmt.Sprintf("Auto-assign failed for task %q to worker %s: %v", task.Title, workerID, err),
+		})
 		return
 	}
 
@@ -608,6 +632,30 @@ func (m *Manager) SetCollector(c *training.Collector) {
 	m.collector = c
 }
 
+// SetFinetuneRunner sets the fine-tune runner and config for auto-trigger.
+func (m *Manager) SetFinetuneRunner(runner *training.FinetuneRunner, cfg training.FinetuneConfig) {
+	m.finetuneRunner = runner
+	m.finetuneCfg = cfg
+}
+
+// SetMaxWorkers sets the maximum number of workers per tier.
+func (m *Manager) SetMaxWorkers(tier worker.WorkerTier, max int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.maxWorkers[tier] = max
+}
+
+// LoadMaxWorkers loads per-tier limits from config.
+func (m *Manager) LoadMaxWorkers(tiers []config.WorkerTierConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, tc := range tiers {
+		if tc.MaxWorkers > 0 {
+			m.maxWorkers[worker.WorkerTier(tc.Tier)] = tc.MaxWorkers
+		}
+	}
+}
+
 // PromoteWorker upgrades a worker's tier (e.g. engineer → manager).
 func (m *Manager) PromoteWorker(workerID string, newTier worker.WorkerTier) error {
 	m.mu.Lock()
@@ -635,6 +683,14 @@ func (m *Manager) PromoteWorker(workerID string, newTier worker.WorkerTier) erro
 // ReviewPipeline returns the review pipeline for external integration.
 func (m *Manager) ReviewPipeline() *ReviewPipeline {
 	return m.review
+}
+
+// PendingReviews returns the current review queue.
+func (m *Manager) PendingReviews() []ReviewRequest {
+	if m.review == nil {
+		return nil
+	}
+	return m.review.PendingReviews()
 }
 
 // ProjectStore returns the underlying project store.

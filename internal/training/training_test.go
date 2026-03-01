@@ -210,6 +210,106 @@ func TestBenchmarkGenerator(t *testing.T) {
 	}
 }
 
+func TestEvalRunPersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	run := &EvalRun{
+		ID:         "eval-test-1",
+		SuiteID:    "suite-1",
+		ModelVer:   "v1",
+		TotalTasks: 5,
+		Passed:     4,
+		Failed:     1,
+		AvgScore:   0.85,
+		PassRate:   0.80,
+		StartedAt:  time.Now(),
+		CompletedAt: time.Now(),
+	}
+
+	if err := SaveEvalRun(dir, run); err != nil {
+		t.Fatalf("SaveEvalRun: %v", err)
+	}
+
+	// Save another
+	run2 := &EvalRun{
+		ID:       "eval-test-2",
+		SuiteID:  "suite-1",
+		ModelVer: "v2",
+		AvgScore: 0.92,
+	}
+	if err := SaveEvalRun(dir, run2); err != nil {
+		t.Fatalf("SaveEvalRun 2: %v", err)
+	}
+
+	runs, err := LoadEvalRuns(dir)
+	if err != nil {
+		t.Fatalf("LoadEvalRuns: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 eval runs, got %d", len(runs))
+	}
+	if runs[0].ID != "eval-test-1" {
+		t.Fatalf("expected first run ID eval-test-1, got %s", runs[0].ID)
+	}
+}
+
+func TestLoadEvalRunsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	runs, err := LoadEvalRuns(dir)
+	if err != nil {
+		t.Fatalf("LoadEvalRuns empty: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("expected 0 runs, got %d", len(runs))
+	}
+}
+
+func TestComputeReviewStats(t *testing.T) {
+	dir := t.TempDir()
+	logger, _ := NewLogger(dir)
+
+	// Log mixed verdicts
+	for i := 0; i < 8; i++ {
+		verdict := VerdictAccepted
+		if i >= 6 {
+			verdict = VerdictRejected
+		}
+		logger.Log(ReviewPair{
+			TaskID:  "t1",
+			Verdict: verdict,
+		})
+	}
+
+	stats, err := ComputeReviewStats(dir)
+	if err != nil {
+		t.Fatalf("ComputeReviewStats: %v", err)
+	}
+	if stats.TotalPairs != 8 {
+		t.Fatalf("expected 8 pairs, got %d", stats.TotalPairs)
+	}
+	if stats.Accepted != 6 {
+		t.Fatalf("expected 6 accepted, got %d", stats.Accepted)
+	}
+	if stats.Rejected != 2 {
+		t.Fatalf("expected 2 rejected, got %d", stats.Rejected)
+	}
+	expectedRate := 6.0 / 8.0
+	if stats.ApprovalRate < expectedRate-0.01 || stats.ApprovalRate > expectedRate+0.01 {
+		t.Fatalf("expected approval rate ~%.2f, got %.2f", expectedRate, stats.ApprovalRate)
+	}
+}
+
+func TestComputeReviewStatsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	stats, err := ComputeReviewStats(dir)
+	if err != nil {
+		t.Fatalf("ComputeReviewStats empty: %v", err)
+	}
+	if stats.TotalPairs != 0 {
+		t.Fatalf("expected 0 pairs, got %d", stats.TotalPairs)
+	}
+}
+
 func TestPromotionChecker(t *testing.T) {
 	dir := t.TempDir()
 	reg, _ := NewModelRegistry(dir)

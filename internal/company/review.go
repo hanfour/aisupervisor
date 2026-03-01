@@ -312,7 +312,7 @@ func (rp *ReviewPipeline) captureTrainingData(originalTask *project.Task, manage
 				if shouldTrigger, _ := rp.mgr.finetuneRunner.CheckAutoTrigger(rp.mgr.finetuneCfg); shouldTrigger {
 					if job, err := rp.mgr.finetuneRunner.Launch(rp.mgr.finetuneCfg); err == nil {
 						rp.mgr.emit(Event{
-							Type:    EventTrainingCaptured,
+							Type:    EventFinetuneStarted,
 							Message: fmt.Sprintf("Auto-triggered fine-tune job %s (%d pairs threshold)", job.ID, rp.mgr.finetuneCfg.AutoTrigger),
 						})
 					}

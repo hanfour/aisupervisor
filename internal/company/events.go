@@ -18,9 +18,12 @@ const (
 	EventReviewStarted   EventType = "review_started"
 	EventReviewApproved  EventType = "review_approved"
 	EventReviewRejected  EventType = "review_rejected"
-	EventTaskRevision      EventType = "task_revision"
-	EventWorkerPromoted    EventType = "worker_promoted"
-	EventTrainingCaptured  EventType = "training_captured"
+	EventTaskRevision        EventType = "task_revision"
+	EventWorkerPromoted      EventType = "worker_promoted"
+	EventTrainingCaptured    EventType = "training_captured"
+	EventFinetuneStarted     EventType = "finetune_started"
+	EventFinetuneCompleted   EventType = "finetune_completed"
+	EventBenchmarkCompleted  EventType = "benchmark_completed"
 )
 
 type Event struct {

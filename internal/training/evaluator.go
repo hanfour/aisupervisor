@@ -1,8 +1,12 @@
 package training
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -111,6 +115,88 @@ func (e *Evaluator) RunBenchmark(ctx context.Context, suite *BenchmarkSuite, mod
 	}
 
 	return run, nil
+}
+
+// SaveEvalRun persists an eval run to the eval_runs.jsonl file.
+func SaveEvalRun(dataDir string, run *EvalRun) error {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(run)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dataDir, "eval_runs.jsonl")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(append(data, '\n'))
+	return err
+}
+
+// LoadEvalRuns reads all eval runs from the JSONL file.
+func LoadEvalRuns(dataDir string) ([]EvalRun, error) {
+	path := filepath.Join(dataDir, "eval_runs.jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	var runs []EvalRun
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var run EvalRun
+		if json.Unmarshal(scanner.Bytes(), &run) == nil {
+			runs = append(runs, run)
+		}
+	}
+	return runs, scanner.Err()
+}
+
+// ReviewStats computes statistics from review pairs JSONL.
+type ReviewStats struct {
+	TotalPairs   int     `json:"total_pairs"`
+	Accepted     int     `json:"accepted"`
+	Rejected     int     `json:"rejected"`
+	ApprovalRate float64 `json:"approval_rate"`
+}
+
+// ComputeReviewStats reads review_pairs.jsonl and returns aggregate stats.
+func ComputeReviewStats(dataDir string) (ReviewStats, error) {
+	path := filepath.Join(dataDir, "review_pairs.jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ReviewStats{}, nil
+		}
+		return ReviewStats{}, err
+	}
+	defer f.Close()
+
+	var stats ReviewStats
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var pair ReviewPair
+		if json.Unmarshal(scanner.Bytes(), &pair) == nil {
+			stats.TotalPairs++
+			switch pair.Verdict {
+			case VerdictAccepted:
+				stats.Accepted++
+			case VerdictRejected:
+				stats.Rejected++
+			}
+		}
+	}
+	if stats.TotalPairs > 0 {
+		stats.ApprovalRate = float64(stats.Accepted) / float64(stats.TotalPairs)
+	}
+	return stats, scanner.Err()
 }
 
 // BuildEvalPrompt creates the evaluation prompt sent to the consultant AI.

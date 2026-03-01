@@ -142,6 +142,29 @@ type CompanyEventDTO struct {
 	Timestamp string `json:"timestamp"`
 }
 
+type ReviewRequestDTO struct {
+	TaskID     string `json:"taskId"`
+	ProjectID  string `json:"projectId"`
+	EngineerID string `json:"engineerId"`
+	ManagerID  string `json:"managerId"`
+}
+
+func ReviewRequestToDTO(r company.ReviewRequest) ReviewRequestDTO {
+	return ReviewRequestDTO{
+		TaskID:     r.TaskID,
+		ProjectID:  r.ProjectID,
+		EngineerID: r.EngineerID,
+		ManagerID:  r.ManagerID,
+	}
+}
+
+type TrainingStatsDTO struct {
+	TotalPairs   int     `json:"totalPairs"`
+	Accepted     int     `json:"accepted"`
+	Rejected     int     `json:"rejected"`
+	ApprovalRate float64 `json:"approvalRate"`
+}
+
 func CompanyEventToDTO(e company.Event) CompanyEventDTO {
 	return CompanyEventDTO{
 		Type:      string(e.Type),

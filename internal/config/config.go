@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -203,6 +204,36 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// Validate checks the config for common errors.
+func (c *Config) Validate() error {
+	validTiers := map[string]bool{"consultant": true, "manager": true, "engineer": true}
+	for _, wt := range c.WorkerTiers {
+		if !validTiers[wt.Tier] {
+			return fmt.Errorf("invalid worker tier %q (must be consultant, manager, or engineer)", wt.Tier)
+		}
+		if wt.MaxWorkers < 0 {
+			return fmt.Errorf("max_workers for tier %q must be >= 0", wt.Tier)
+		}
+	}
+
+	if c.Training.Promotion.MinBenchmarkScore < 0 || c.Training.Promotion.MinBenchmarkScore > 1 {
+		return fmt.Errorf("min_benchmark_score must be between 0.0 and 1.0")
+	}
+	if c.Training.Promotion.MinApprovalRate < 0 || c.Training.Promotion.MinApprovalRate > 1 {
+		return fmt.Errorf("min_approval_rate must be between 0.0 and 1.0")
+	}
+
+	if c.Training.Finetune.AutoTrigger < 0 {
+		return fmt.Errorf("auto_trigger must be >= 0")
+	}
+
+	if c.Decision.ConfidenceThreshold < 0 || c.Decision.ConfidenceThreshold > 1 {
+		return fmt.Errorf("confidence_threshold must be between 0.0 and 1.0")
+	}
+
+	return nil
 }
 
 func (c *Config) Save(path string) error {

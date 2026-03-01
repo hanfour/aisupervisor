@@ -101,6 +101,25 @@ func (m companyDashModel) View() string {
 		}
 	}
 
+	// Review Queue
+	if m.companyMgr != nil {
+		reviews := m.companyMgr.PendingReviews()
+		b.WriteString("\n")
+		b.WriteString(headerStyle.Render(fmt.Sprintf("Review Queue (%d pending)", len(reviews))))
+		b.WriteString("\n")
+		if len(reviews) == 0 {
+			b.WriteString(normalStyle.Render("  No pending reviews"))
+			b.WriteString("\n")
+		} else {
+			for _, r := range reviews {
+				line := fmt.Sprintf("  Task: %-15s Engineer: %-15s Manager: %s",
+					truncate(r.TaskID, 15), truncate(r.EngineerID, 15), truncate(r.ManagerID, 15))
+				b.WriteString(normalStyle.Render(line))
+				b.WriteString("\n")
+			}
+		}
+	}
+
 	// Recent company events
 	b.WriteString("\n")
 	b.WriteString(headerStyle.Render("Recent Events"))

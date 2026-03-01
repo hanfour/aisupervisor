@@ -6,19 +6,26 @@ import (
 
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
+	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
 )
 
 // CompanyApp is the Wails binding for the company management system.
 // It is separate from the existing App to avoid bloating it.
 type CompanyApp struct {
-	ctx        context.Context
-	company    *company.Manager
-	tmuxClient tmux.TmuxClient
+	ctx          context.Context
+	company      *company.Manager
+	tmuxClient   tmux.TmuxClient
+	trainingDir  string
 }
 
 func NewCompanyApp(company *company.Manager, tmuxClient tmux.TmuxClient) *CompanyApp {
 	return &CompanyApp{company: company, tmuxClient: tmuxClient}
+}
+
+// SetTrainingDir sets the training data directory for stats queries.
+func (c *CompanyApp) SetTrainingDir(dir string) {
+	c.trainingDir = dir
 }
 
 // Startup is called by Wails when the application starts.
@@ -176,4 +183,33 @@ func (c *CompanyApp) GetPaneContentLines(workerID string, lines int) (string, er
 		lines = 100
 	}
 	return c.tmuxClient.CapturePane(w.TmuxSession, 0, 0, lines)
+}
+
+// --- Review Queue ---
+
+func (c *CompanyApp) GetReviewQueue() []ReviewRequestDTO {
+	reviews := c.company.PendingReviews()
+	dtos := make([]ReviewRequestDTO, len(reviews))
+	for i, r := range reviews {
+		dtos[i] = ReviewRequestToDTO(r)
+	}
+	return dtos
+}
+
+// --- Training Stats ---
+
+func (c *CompanyApp) GetTrainingStats() (*TrainingStatsDTO, error) {
+	if c.trainingDir == "" {
+		return &TrainingStatsDTO{}, nil
+	}
+	stats, err := training.ComputeReviewStats(c.trainingDir)
+	if err != nil {
+		return nil, err
+	}
+	return &TrainingStatsDTO{
+		TotalPairs:   stats.TotalPairs,
+		Accepted:     stats.Accepted,
+		Rejected:     stats.Rejected,
+		ApprovalRate: stats.ApprovalRate,
+	}, nil
 }

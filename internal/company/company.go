@@ -395,6 +395,13 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 }
 
 func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *project.Task, p *project.Project) {
+	defer func() {
+		// Clean up cancel func from map to prevent leaks
+		m.mu.Lock()
+		delete(m.cancels, w.ID)
+		m.mu.Unlock()
+	}()
+
 	result, err := m.monitor.WatchForCompletion(ctx, w)
 	if err != nil {
 		// Context cancelled — not an error

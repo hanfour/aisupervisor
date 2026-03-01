@@ -312,11 +312,17 @@ var trainingCheckPromotionCmd = &cobra.Command{
 			modelVer = latest.Version
 		}
 
-		// For now, use placeholder values (would need actual eval runs in production)
-		status := checker.Check(modelVer, nil, 0, 0)
+		// Fetch actual review stats and eval runs
+		reviewStats, _ := training.ComputeReviewStats(dataDir)
+		evalRuns, _ := training.LoadEvalRuns(dataDir)
+
+		status := checker.Check(modelVer, evalRuns, reviewStats.ApprovalRate, reviewStats.TotalPairs)
 
 		fmt.Printf("Worker: %s\n", workerID)
 		fmt.Printf("Model Version: %s\n", modelVer)
+		fmt.Printf("Training Pairs: %d (accepted: %d, rejected: %d)\n",
+			reviewStats.TotalPairs, reviewStats.Accepted, reviewStats.Rejected)
+		fmt.Printf("Approval Rate: %.1f%%\n", reviewStats.ApprovalRate*100)
 		fmt.Printf("Eligible: %v\n", status.Eligible)
 		if !status.Eligible {
 			fmt.Println("Reasons:")
@@ -361,6 +367,98 @@ var trainingRunBenchmarkCmd = &cobra.Command{
 			fmt.Printf("  [%s] %-8s %s\n", task.ID, task.Difficulty, prompt)
 		}
 		fmt.Println("\nTo evaluate, assign these tasks to the model under test and compare outputs.")
+		return nil
+	},
+}
+
+// --- Finetune Jobs ---
+
+var trainingFinetuneJobsCmd = &cobra.Command{
+	Use:   "finetune-jobs",
+	Short: "List fine-tune jobs and their status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dataDir, err := trainingDataDir()
+		if err != nil {
+			return err
+		}
+
+		registry, err := training.NewModelRegistry(dataDir)
+		if err != nil {
+			return err
+		}
+
+		exporter := training.NewExporter(dataDir)
+		runner := training.NewFinetuneRunner(dataDir, registry, exporter)
+		jobs := runner.ListJobs()
+		if len(jobs) == 0 {
+			fmt.Println("No fine-tune jobs.")
+			return nil
+		}
+
+		fmt.Printf("%-20s %-12s %-15s %-15s %-8s %s\n",
+			"ID", "STATUS", "BASE MODEL", "OUTPUT MODEL", "PAIRS", "STARTED")
+		for _, j := range jobs {
+			fmt.Printf("%-20s %-12s %-15s %-15s %-8d %s\n",
+				j.ID, j.Status, j.Config.BaseModel, j.Config.OutputModel,
+				j.PairsUsed, j.StartedAt.Format("2006-01-02 15:04"))
+		}
+		return nil
+	},
+}
+
+// --- Benchmark Results ---
+
+var trainingBenchmarkResultsCmd = &cobra.Command{
+	Use:   "benchmark-results",
+	Short: "Show evaluation run results",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dataDir, err := trainingDataDir()
+		if err != nil {
+			return err
+		}
+
+		runs, err := training.LoadEvalRuns(dataDir)
+		if err != nil {
+			return err
+		}
+		if len(runs) == 0 {
+			fmt.Println("No evaluation runs.")
+			return nil
+		}
+
+		fmt.Printf("%-20s %-15s %-10s %-6s %-6s %-8s %s\n",
+			"ID", "SUITE", "MODEL", "PASS", "FAIL", "AVG", "DATE")
+		for _, r := range runs {
+			fmt.Printf("%-20s %-15s %-10s %-6d %-6d %-8.2f %s\n",
+				r.ID, r.SuiteID, r.ModelVer, r.Passed, r.Failed,
+				r.AvgScore, r.CompletedAt.Format("2006-01-02 15:04"))
+		}
+		return nil
+	},
+}
+
+// --- Review Stats ---
+
+var trainingReviewStatsCmd = &cobra.Command{
+	Use:   "review-stats",
+	Short: "Show review pair statistics and approval rate",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dataDir, err := trainingDataDir()
+		if err != nil {
+			return err
+		}
+
+		stats, err := training.ComputeReviewStats(dataDir)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("Total Review Pairs: %d\n", stats.TotalPairs)
+		fmt.Printf("Accepted: %d\n", stats.Accepted)
+		fmt.Printf("Rejected: %d\n", stats.Rejected)
+		if stats.TotalPairs > 0 {
+			fmt.Printf("Approval Rate: %.1f%%\n", stats.ApprovalRate*100)
+		}
 		return nil
 	},
 }
@@ -418,5 +516,8 @@ func init() {
 	trainingCmd.AddCommand(trainingStatsCmd)
 	trainingCmd.AddCommand(trainingCheckPromotionCmd)
 	trainingCmd.AddCommand(trainingRunBenchmarkCmd)
+	trainingCmd.AddCommand(trainingFinetuneJobsCmd)
+	trainingCmd.AddCommand(trainingBenchmarkResultsCmd)
+	trainingCmd.AddCommand(trainingReviewStatsCmd)
 	rootCmd.AddCommand(trainingCmd)
 }

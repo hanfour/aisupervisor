@@ -20,6 +20,10 @@ import (
 
 const tokenEndpoint = "https://console.anthropic.com/api/oauth/token"
 
+// OAuthBackend uses Claude Code's OAuth credentials from the macOS Keychain.
+// NOTE: As of Feb 2026, Anthropic restricts OAuth tokens (sk-ant-oat01-*) to
+// Claude Code / Claude.ai only. Third-party usage returns 401.
+// Use APIBackend with ANTHROPIC_API_KEY instead.
 type OAuthBackend struct {
 	name  string
 	model string
@@ -66,7 +70,12 @@ func (b *OAuthBackend) getClient(ctx context.Context) (sdk.Client, error) {
 	}
 
 	return sdk.NewClient(
-		option.WithAPIKey(b.accessToken),
+		option.WithAPIKey("placeholder"), // required by SDK but overridden by Bearer header
+		option.WithMiddleware(func(r *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+			r.Header.Set("Authorization", "Bearer "+b.accessToken)
+			r.Header.Del("X-Api-Key")
+			return next(r)
+		}),
 	), nil
 }
 

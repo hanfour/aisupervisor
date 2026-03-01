@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -345,12 +346,14 @@ func parseSessionFlag(flag string) (*session.MonitoredSession, error) {
 		ToolType: "auto",
 	}
 
-	var sessionName string
+	sessionName := flag
 	var window, pane int
 
-	n, _ := fmt.Sscanf(flag, "%[^:]:%d.%d", &sessionName, &window, &pane)
-	if n == 0 {
-		sessionName = flag
+	// Parse "session:window.pane" format manually (Go's Sscanf doesn't support %[^:])
+	if idx := strings.LastIndex(flag, ":"); idx >= 0 {
+		sessionName = flag[:idx]
+		rest := flag[idx+1:]
+		fmt.Sscanf(rest, "%d.%d", &window, &pane)
 	}
 
 	sess.ID = sessionName

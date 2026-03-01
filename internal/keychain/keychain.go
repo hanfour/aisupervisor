@@ -11,7 +11,16 @@ import (
 type ClaudeCredentials struct {
 	AccessToken  string    `json:"accessToken"`
 	RefreshToken string    `json:"refreshToken"`
-	ExpiresAt    time.Time `json:"expiresAt"`
+	ExpiresAt    time.Time `json:"-"`
+}
+
+// rawCredentials matches the keychain JSON structure.
+type rawCredentials struct {
+	ClaudeAiOauth struct {
+		AccessToken  string `json:"accessToken"`
+		RefreshToken string `json:"refreshToken"`
+		ExpiresAt    int64  `json:"expiresAt"` // Unix timestamp in milliseconds
+	} `json:"claudeAiOauth"`
 }
 
 func ReadClaudeCredentials() (*ClaudeCredentials, error) {
@@ -24,12 +33,21 @@ func ReadClaudeCredentials() (*ClaudeCredentials, error) {
 
 	raw := strings.TrimSpace(string(out))
 
-	var creds ClaudeCredentials
-	if err := json.Unmarshal([]byte(raw), &creds); err != nil {
+	var wrapper rawCredentials
+	if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
 		return nil, fmt.Errorf("parsing credentials: %w", err)
 	}
 
-	return &creds, nil
+	oauth := wrapper.ClaudeAiOauth
+	if oauth.AccessToken == "" {
+		return nil, fmt.Errorf("no accessToken found in keychain credentials")
+	}
+
+	return &ClaudeCredentials{
+		AccessToken:  oauth.AccessToken,
+		RefreshToken: oauth.RefreshToken,
+		ExpiresAt:    time.UnixMilli(oauth.ExpiresAt),
+	}, nil
 }
 
 func (c *ClaudeCredentials) IsExpired() bool {

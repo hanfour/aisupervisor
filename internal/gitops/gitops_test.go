@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -113,6 +114,53 @@ func TestHasUncommitted(t *testing.T) {
 	}
 	if !has {
 		t.Fatal("should have uncommitted changes")
+	}
+}
+
+func TestDiffBranch(t *testing.T) {
+	repo := initTempRepo(t)
+	g := New()
+
+	baseBranch, _ := g.CurrentBranch(repo)
+
+	// Create a feature branch with a new file
+	run(t, repo, "git", "branch", "feature/diff-test", baseBranch)
+	run(t, repo, "git", "checkout", "feature/diff-test")
+	os.WriteFile(filepath.Join(repo, "new-file.go"), []byte("package main\n"), 0o644)
+	run(t, repo, "git", "add", ".")
+	run(t, repo, "git", "commit", "-m", "add new file")
+	run(t, repo, "git", "checkout", baseBranch)
+
+	diff, err := g.DiffBranch(repo, "feature/diff-test")
+	if err != nil {
+		t.Fatalf("DiffBranch: %v", err)
+	}
+	if diff == "" {
+		t.Fatal("expected non-empty diff")
+	}
+	if !strings.Contains(diff, "new-file.go") {
+		t.Fatalf("diff should mention new-file.go, got: %s", diff)
+	}
+}
+
+func TestLatestCommitHash(t *testing.T) {
+	repo := initTempRepo(t)
+	g := New()
+
+	baseBranch, _ := g.CurrentBranch(repo)
+
+	hash, err := g.LatestCommitHash(repo, baseBranch)
+	if err != nil {
+		t.Fatalf("LatestCommitHash: %v", err)
+	}
+	if len(hash) < 40 {
+		t.Fatalf("expected full SHA hash, got %q", hash)
+	}
+
+	// Verify it matches LatestCommit
+	info, _ := g.LatestCommit(repo, baseBranch)
+	if hash != info.Hash {
+		t.Fatalf("LatestCommitHash %q != LatestCommit.Hash %q", hash, info.Hash)
 	}
 }
 

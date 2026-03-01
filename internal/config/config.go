@@ -34,9 +34,28 @@ type WorkerTierConfig struct {
 }
 
 type TrainingConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	DataDir      string `yaml:"data_dir,omitempty"`
-	CaptureDiffs bool   `yaml:"capture_diffs,omitempty"`
+	Enabled      bool            `yaml:"enabled"`
+	DataDir      string          `yaml:"data_dir,omitempty"`
+	CaptureDiffs bool            `yaml:"capture_diffs,omitempty"`
+	Finetune     FinetuneConfig  `yaml:"finetune,omitempty"`
+	Promotion    PromotionConfig `yaml:"promotion,omitempty"`
+}
+
+type FinetuneConfig struct {
+	Method       string  `yaml:"method,omitempty"`        // "sft" or "dpo"
+	BaseModel    string  `yaml:"base_model,omitempty"`
+	OutputModel  string  `yaml:"output_model,omitempty"`
+	ScriptPath   string  `yaml:"script_path,omitempty"`
+	AutoTrigger  int     `yaml:"auto_trigger,omitempty"`  // min pairs before auto-trigger (0=disabled)
+	ValRatio     float64 `yaml:"val_ratio,omitempty"`
+}
+
+type PromotionConfig struct {
+	Enabled            bool    `yaml:"enabled,omitempty"`
+	MinTrainingPairs   int     `yaml:"min_training_pairs,omitempty"`
+	MinBenchmarkScore  float64 `yaml:"min_benchmark_score,omitempty"`
+	ConsecutivePasses  int     `yaml:"consecutive_passes,omitempty"`
+	MinApprovalRate    float64 `yaml:"min_approval_rate,omitempty"`
 }
 
 type MessagingConfig struct {

@@ -264,6 +264,107 @@ var trainingStatsCmd = &cobra.Command{
 	},
 }
 
+// --- Check Promotion ---
+
+var trainingCheckPromotionCmd = &cobra.Command{
+	Use:   "check-promotion",
+	Short: "Check if a worker meets promotion criteria",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		workerID, _ := cmd.Flags().GetString("worker")
+		if workerID == "" {
+			return fmt.Errorf("--worker is required")
+		}
+
+		cfg, err := config.Load(cfgFile)
+		if err != nil {
+			return err
+		}
+
+		dataDir, err := trainingDataDir()
+		if err != nil {
+			return err
+		}
+
+		registry, err := training.NewModelRegistry(dataDir)
+		if err != nil {
+			return err
+		}
+
+		criteria := training.DefaultPromotionCriteria()
+		if cfg.Training.Promotion.MinTrainingPairs > 0 {
+			criteria.MinTrainingPairs = cfg.Training.Promotion.MinTrainingPairs
+		}
+		if cfg.Training.Promotion.MinBenchmarkScore > 0 {
+			criteria.MinBenchmarkScore = cfg.Training.Promotion.MinBenchmarkScore
+		}
+		if cfg.Training.Promotion.ConsecutivePasses > 0 {
+			criteria.ConsecutivePasses = cfg.Training.Promotion.ConsecutivePasses
+		}
+		if cfg.Training.Promotion.MinApprovalRate > 0 {
+			criteria.MinApprovalRate = cfg.Training.Promotion.MinApprovalRate
+		}
+
+		checker := training.NewPromotionChecker(criteria, registry)
+
+		// Get model version from latest registry entry
+		modelVer := ""
+		if latest := registry.Latest(); latest != nil {
+			modelVer = latest.Version
+		}
+
+		// For now, use placeholder values (would need actual eval runs in production)
+		status := checker.Check(modelVer, nil, 0, 0)
+
+		fmt.Printf("Worker: %s\n", workerID)
+		fmt.Printf("Model Version: %s\n", modelVer)
+		fmt.Printf("Eligible: %v\n", status.Eligible)
+		if !status.Eligible {
+			fmt.Println("Reasons:")
+			for _, r := range status.Reasons {
+				fmt.Printf("  - %s\n", r)
+			}
+		}
+		return nil
+	},
+}
+
+// --- Run Benchmark Eval ---
+
+var trainingRunBenchmarkCmd = &cobra.Command{
+	Use:   "run-benchmark",
+	Short: "Run a benchmark suite (generates tasks for evaluation)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		suiteID, _ := cmd.Flags().GetString("suite")
+		if suiteID == "" {
+			return fmt.Errorf("--suite is required")
+		}
+
+		dataDir, err := trainingDataDir()
+		if err != nil {
+			return err
+		}
+
+		gen := training.NewBenchmarkGenerator(dataDir)
+		suite, err := gen.LoadSuite(suiteID)
+		if err != nil {
+			return fmt.Errorf("loading suite: %w", err)
+		}
+
+		fmt.Printf("Benchmark Suite: %s (%s)\n", suite.Name, suite.ID)
+		fmt.Printf("Tasks: %d\n", len(suite.Tasks))
+		fmt.Println("\nBenchmark tasks:")
+		for _, task := range suite.Tasks {
+			prompt := task.Prompt
+			if len(prompt) > 60 {
+				prompt = prompt[:60] + "..."
+			}
+			fmt.Printf("  [%s] %-8s %s\n", task.ID, task.Difficulty, prompt)
+		}
+		fmt.Println("\nTo evaluate, assign these tasks to the model under test and compare outputs.")
+		return nil
+	},
+}
+
 func trainingDataDir() (string, error) {
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
@@ -301,6 +402,12 @@ func init() {
 	trainingBenchmarkGenCmd.Flags().String("name", "default", "Benchmark suite name")
 	trainingBenchmarkGenCmd.Flags().Int("max-tasks", 50, "Max benchmark tasks")
 
+	// Check promotion
+	trainingCheckPromotionCmd.Flags().String("worker", "", "Worker ID to check")
+
+	// Run benchmark
+	trainingRunBenchmarkCmd.Flags().String("suite", "", "Benchmark suite ID")
+
 	// Build tree
 	trainingCmd.AddCommand(trainingExportCmd)
 	trainingCmd.AddCommand(trainingModelsCmd)
@@ -309,5 +416,7 @@ func init() {
 	trainingCmd.AddCommand(trainingBenchmarkGenCmd)
 	trainingCmd.AddCommand(trainingBenchmarkListCmd)
 	trainingCmd.AddCommand(trainingStatsCmd)
+	trainingCmd.AddCommand(trainingCheckPromotionCmd)
+	trainingCmd.AddCommand(trainingRunBenchmarkCmd)
 	rootCmd.AddCommand(trainingCmd)
 }

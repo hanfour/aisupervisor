@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/project"
+	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
 )
 
@@ -18,15 +20,27 @@ type ReviewRequest struct {
 	ManagerID  string
 }
 
+// reviewMeta tracks per-review metadata for training data capture.
+type reviewMeta struct {
+	StartTime      time.Time
+	EngineerTmux   string
+	EngineerWindow int
+	EngineerPane   int
+}
+
 // ReviewPipeline manages the code review flow between engineers and managers.
 type ReviewPipeline struct {
-	mu          sync.Mutex
-	reviewQueue []ReviewRequest
-	mgr         *Manager
+	mu              sync.Mutex
+	reviewQueue     []ReviewRequest
+	mgr             *Manager
+	reviewStartMeta map[string]reviewMeta // keyed by original task ID
 }
 
 func newReviewPipeline(mgr *Manager) *ReviewPipeline {
-	return &ReviewPipeline{mgr: mgr}
+	return &ReviewPipeline{
+		mgr:             mgr,
+		reviewStartMeta: make(map[string]reviewMeta),
+	}
 }
 
 // StartReview initiates a manager review for a completed engineer task.
@@ -37,6 +51,16 @@ func (rp *ReviewPipeline) StartReview(ctx context.Context, engineerWorker *worke
 		// No manager assigned — skip review, go straight to done
 		return nil
 	}
+
+	// Capture engineer pane state before review begins (for training data)
+	rp.mu.Lock()
+	rp.reviewStartMeta[t.ID] = reviewMeta{
+		StartTime:      time.Now(),
+		EngineerTmux:   engineerWorker.TmuxSession,
+		EngineerWindow: engineerWorker.Window,
+		EngineerPane:   engineerWorker.Pane,
+	}
+	rp.mu.Unlock()
 
 	req := ReviewRequest{
 		TaskID:     t.ID,
@@ -147,6 +171,9 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 	output := rp.captureManagerOutput(managerWorker)
 	approved := parseReviewVerdict(output)
 
+	// Capture training data via collector
+	rp.captureTrainingData(originalTask, managerWorker, p, output, approved)
+
 	if approved {
 		rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskDone)
 		rp.mgr.emit(Event{
@@ -203,6 +230,76 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			}
 		}
 	}
+}
+
+// captureTrainingData collects review pair data for model fine-tuning.
+func (rp *ReviewPipeline) captureTrainingData(originalTask *project.Task, managerWorker *worker.Worker, p *project.Project, managerOutput string, approved bool) {
+	if rp.mgr.collector == nil {
+		return
+	}
+
+	verdict := training.VerdictRejected
+	if approved {
+		verdict = training.VerdictAccepted
+	}
+
+	// Retrieve start metadata
+	rp.mu.Lock()
+	meta, hasMeta := rp.reviewStartMeta[originalTask.ID]
+	delete(rp.reviewStartMeta, originalTask.ID)
+	rp.mu.Unlock()
+
+	// Look up engineer worker for model info
+	var engineerModel, managerModel string
+	rp.mgr.mu.RLock()
+	if eng, ok := rp.mgr.workers[originalTask.AssigneeID]; ok {
+		engineerModel = eng.ModelVersion
+		if engineerModel == "" {
+			engineerModel = eng.BackendID
+		}
+	}
+	managerModel = managerWorker.ModelVersion
+	if managerModel == "" {
+		managerModel = managerWorker.BackendID
+	}
+	rp.mgr.mu.RUnlock()
+
+	input := training.CaptureReviewInput{
+		TaskID:        originalTask.ID,
+		ProjectID:     p.ID,
+		RepoPath:      p.RepoPath,
+		BranchName:    originalTask.BranchName,
+		EngineerID:    originalTask.AssigneeID,
+		ManagerID:     managerWorker.ID,
+		EngineerModel: engineerModel,
+		ManagerModel:  managerModel,
+		Prompt:        originalTask.Prompt,
+		ManagerTmux:   managerWorker.TmuxSession,
+		ManagerWindow: managerWorker.Window,
+		ManagerPane:   managerWorker.Pane,
+		Verdict:       verdict,
+		Feedback:      managerOutput,
+	}
+
+	if hasMeta {
+		input.StartTime = meta.StartTime
+		input.EngineerTmux = meta.EngineerTmux
+		input.EngineerWindow = meta.EngineerWindow
+		input.EngineerPane = meta.EngineerPane
+	}
+
+	// Capture asynchronously to avoid blocking the review flow
+	go func() {
+		if err := rp.mgr.collector.CaptureReview(input); err == nil {
+			// Notify manager that training data was captured (for auto-trigger hooks)
+			rp.mgr.emit(Event{
+				Type:      EventTrainingCaptured,
+				ProjectID: p.ID,
+				TaskID:    originalTask.ID,
+				Message:   fmt.Sprintf("Training data captured for task %q (verdict: %s)", originalTask.Title, verdict),
+			})
+		}
+	}()
 }
 
 func (rp *ReviewPipeline) captureManagerOutput(w *worker.Worker) string {

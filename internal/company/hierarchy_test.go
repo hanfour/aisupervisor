@@ -1,6 +1,7 @@
 package company
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hanfourmini/aisupervisor/internal/project"
@@ -250,6 +251,67 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func TestReviewPipelineStartReview(t *testing.T) {
+	m, ch := testManager(t)
+
+	// Build hierarchy: consultant → manager → engineer
+	consultant, _ := m.CreateWorker("Boss", "crown", WithTier(worker.TierConsultant))
+	drainCh(ch)
+	mgr, _ := m.CreateWorker("Lead", "glasses", WithTier(worker.TierManager), WithParent(consultant.ID))
+	drainCh(ch)
+	eng, _ := m.CreateWorker("Dev", "laptop", WithTier(worker.TierEngineer), WithParent(mgr.ID))
+	drainCh(ch)
+
+	// Create project and task
+	p, _ := m.CreateProject("proj", "desc", "/tmp/repo", "main", nil)
+	drainCh(ch)
+
+	task := &project.Task{
+		ProjectID:   p.ID,
+		Title:       "Implement feature",
+		Description: "Build the thing",
+		Prompt:      "Implement X",
+		Status:      project.TaskReady,
+		BranchName:  "ai/proj/t1-feature",
+		AssigneeID:  eng.ID,
+	}
+	m.projectStore.SaveTask(task)
+
+	// Verify the review pipeline was initialized
+	if m.review == nil {
+		t.Fatal("review pipeline should be initialized")
+	}
+
+	// Verify manager relationship
+	parent, ok := m.GetManager(eng.ID)
+	if !ok || parent.ID != mgr.ID {
+		t.Fatalf("expected engineer's manager to be %s", mgr.ID)
+	}
+}
+
+func TestBuildReviewPrompt(t *testing.T) {
+	task := &project.Task{
+		Title:       "Fix bug",
+		Description: "Fix the login bug",
+		BranchName:  "ai/proj/t1-fix",
+	}
+	p := &project.Project{}
+
+	prompt := buildReviewPrompt(task, p)
+	if prompt == "" {
+		t.Fatal("expected non-empty review prompt")
+	}
+	if !strings.Contains(prompt, "ai/proj/t1-fix") {
+		t.Error("prompt should contain branch name")
+	}
+	if !strings.Contains(prompt, "Fix bug") {
+		t.Error("prompt should contain task title")
+	}
+	if !strings.Contains(prompt, "APPROVED") {
+		t.Error("prompt should mention APPROVED verdict")
+	}
 }
 
 func testStoreWithDir(dir string) (*project.Store, error) {

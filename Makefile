@@ -10,12 +10,15 @@ build:
 
 build-gui:
 	cd frontend && npm install && npm run build
-	go build -o $(BUILD_DIR)/$(BINARY)-gui $(CMD_GUI)
+	cd $(CMD_GUI) && ~/go/bin/wails build -s -skipbindings
+
+build-gui-full:
+	cd $(CMD_GUI) && ~/go/bin/wails build -skipbindings
 
 build-all: build build-gui
 
 dev-gui:
-	wails dev
+	cd $(CMD_GUI) && ~/go/bin/wails dev -skipbindings
 
 install:
 	go install $(CMD)

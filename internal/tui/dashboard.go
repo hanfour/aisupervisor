@@ -103,7 +103,7 @@ func (m dashboardModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("j/k: navigate | enter: details | a: add session | r: roles | q: quit"))
+	b.WriteString(helpStyle.Render("j/k: navigate | enter: details | a: add session | r: roles | c: company | q: quit"))
 
 	return b.String()
 }

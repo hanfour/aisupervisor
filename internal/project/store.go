@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -149,6 +150,26 @@ func (s *Store) ReadyTasks(projectID string) []*Task {
 			result = append(result, t)
 		}
 	}
+	return result
+}
+
+// ReadyTasksByPriority returns all ready tasks across all projects, sorted by priority (1=highest).
+func (s *Store) ReadyTasksByPriority() []*Task {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*Task
+	for _, t := range s.tasks {
+		if t.Status == TaskReady {
+			result = append(result, t)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Priority == result[j].Priority {
+			return result[i].CreatedAt.Before(result[j].CreatedAt)
+		}
+		return result[i].Priority < result[j].Priority
+	})
 	return result
 }
 

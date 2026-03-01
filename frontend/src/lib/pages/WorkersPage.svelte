@@ -2,11 +2,13 @@
   import { onMount } from 'svelte'
   import { workers, loadWorkers, createWorker } from '../stores/workers.js'
   import WorkerCard from '../components/WorkerCard.svelte'
+  import WorkerLogPanel from '../components/WorkerLogPanel.svelte'
   import { addError } from '../stores/errors.js'
 
   let showHire = false
   let newName = ''
   let newAvatar = 'robot'
+  let logWorker = null
 
   const avatarOptions = [
     { id: 'robot', label: 'Robot' },
@@ -49,13 +51,21 @@
 
     <div class="workers-grid">
       {#each $workers as w}
-        <WorkerCard worker={w} />
+        <WorkerCard worker={w} onClick={(worker) => logWorker = worker} />
       {/each}
       {#if $workers.length === 0}
         <p class="empty-msg">No workers hired yet. Hire AI employees to start working!</p>
       {/if}
     </div>
   </section>
+
+  {#if logWorker}
+    <WorkerLogPanel
+      workerId={logWorker.id}
+      workerName={logWorker.name}
+      onClose={() => logWorker = null}
+    />
+  {/if}
 
   {#if showHire}
     <div class="dialog-overlay" on:click={() => showHire = false} on:keydown={(e) => e.key === 'Escape' && (showHire = false)} role="presentation">

@@ -8,8 +8,11 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/line/line-bot-sdk-go/v8 v8.19.0
 	github.com/openai/openai-go v1.12.0
+	github.com/slack-go/slack v0.18.0
 	github.com/spf13/cobra v1.10.2
+	github.com/wailsapp/wails/v2 v2.11.0
 	google.golang.org/genai v1.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -67,7 +70,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	github.com/wailsapp/wails/v2 v2.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect

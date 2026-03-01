@@ -17,15 +17,20 @@ import (
 	ollamaBackend "github.com/hanfourmini/aisupervisor/internal/ai/ollama"
 	openaiBackend "github.com/hanfourmini/aisupervisor/internal/ai/openai"
 	"github.com/hanfourmini/aisupervisor/internal/audit"
+	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
+	"github.com/hanfourmini/aisupervisor/internal/messaging"
 	sessionctx "github.com/hanfourmini/aisupervisor/internal/context"
 	"github.com/hanfourmini/aisupervisor/internal/detector"
+	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/group"
+	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/role"
 	"github.com/hanfourmini/aisupervisor/internal/session"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/tui"
+	"github.com/hanfourmini/aisupervisor/internal/worker"
 	"github.com/spf13/cobra"
 )
 
@@ -146,7 +151,19 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 	if monitorTUI {
 		home, _ := os.UserHomeDir()
 		mgr, _ := session.NewManager(home + "/.local/share/aisupervisor")
-		app := tui.NewApp(sup, tmuxClient, mgr, sessions)
+
+		// Build company manager for TUI company view
+		companyDataDir := filepath.Join(home, ".local", "share", "aisupervisor", "company")
+		projectStore, _ := project.NewStore(companyDataDir)
+		git := gitops.New()
+		spawner := worker.NewSpawner(tmuxClient, git, sup, mgr)
+		completionMon := worker.NewCompletionMonitor(tmuxClient)
+		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+
+		// Start messaging if configured
+		startMessagingCLI(cfg, companyMgr)
+
+		app := tui.NewApp(sup, tmuxClient, mgr, sessions, tui.WithCompanyManager(companyMgr))
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -190,6 +207,38 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 	fmt.Println("\nShutting down...")
 	cancel()
 	return nil
+}
+
+func startMessagingCLI(cfg *config.Config, companyMgr *company.Manager) {
+	var messengers []messaging.Messenger
+
+	if cfg.Messaging.Slack.Enabled {
+		botToken := os.Getenv(cfg.Messaging.Slack.BotTokenEnv)
+		appToken := os.Getenv(cfg.Messaging.Slack.AppTokenEnv)
+		if botToken != "" && appToken != "" {
+			m := messaging.NewSlackMessenger(botToken, appToken, cfg.Messaging.Slack.ChannelID)
+			messengers = append(messengers, m)
+			log.Println("Slack messenger enabled")
+		}
+	}
+
+	if cfg.Messaging.Line.Enabled {
+		secret := os.Getenv(cfg.Messaging.Line.ChannelSecretEnv)
+		token := os.Getenv(cfg.Messaging.Line.ChannelTokenEnv)
+		if secret != "" && token != "" {
+			m, err := messaging.NewLineMessenger(secret, token, cfg.Messaging.Line.NotifyUserID, cfg.Messaging.Line.Port)
+			if err == nil {
+				messengers = append(messengers, m)
+				log.Println("LINE messenger enabled")
+			}
+		}
+	}
+
+	if len(messengers) > 0 {
+		notifier := messaging.NewNotifier(companyMgr, messengers)
+		ctx := context.Background()
+		notifier.Start(ctx)
+	}
 }
 
 func buildRoleManager(cfg *config.Config, backend ai.Backend) *role.Manager {

@@ -1,5 +1,6 @@
 <script>
   export let worker = {}
+  export let onClick = null
 
   const avatars = {
     'robot': 'i.nes-octocat',
@@ -25,7 +26,7 @@
   }
 </script>
 
-<div class="nes-container is-rounded worker-card">
+<div class="nes-container is-rounded worker-card" class:clickable={!!onClick} on:click={() => onClick && onClick(worker)} on:keydown={(e) => e.key === 'Enter' && onClick && onClick(worker)} role="button" tabindex="0">
   <div class="card-avatar">
     <i class={avatars[worker.avatar] || 'nes-octocat'}></i>
   </div>
@@ -49,6 +50,14 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
+  }
+
+  .worker-card.clickable {
+    cursor: pointer;
+  }
+
+  .worker-card.clickable:hover {
+    border-color: var(--accent-green);
   }
 
   .card-avatar i {

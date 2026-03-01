@@ -2,19 +2,22 @@ package gui
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hanfourmini/aisupervisor/internal/company"
+	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
 
 // CompanyApp is the Wails binding for the company management system.
 // It is separate from the existing App to avoid bloating it.
 type CompanyApp struct {
-	ctx     context.Context
-	company *company.Manager
+	ctx        context.Context
+	company    *company.Manager
+	tmuxClient tmux.TmuxClient
 }
 
-func NewCompanyApp(company *company.Manager) *CompanyApp {
-	return &CompanyApp{company: company}
+func NewCompanyApp(company *company.Manager, tmuxClient tmux.TmuxClient) *CompanyApp {
+	return &CompanyApp{company: company, tmuxClient: tmuxClient}
 }
 
 // Startup is called by Wails when the application starts.
@@ -111,4 +114,20 @@ func (c *CompanyApp) AssignTask(workerID, taskID string) error {
 
 func (c *CompanyApp) GetProjectProgress(projectID string) CompanyProgressDTO {
 	return ProgressToDTO(c.company.ProjectProgress(projectID))
+}
+
+// --- Worker pane content ---
+
+func (c *CompanyApp) GetPaneContent(workerID string) (string, error) {
+	w, ok := c.company.GetWorker(workerID)
+	if !ok {
+		return "", fmt.Errorf("worker %q not found", workerID)
+	}
+	if w.TmuxSession == "" {
+		return "", fmt.Errorf("worker %q has no active tmux session", workerID)
+	}
+	if c.tmuxClient == nil {
+		return "", fmt.Errorf("tmux client not available")
+	}
+	return c.tmuxClient.CapturePane(w.TmuxSession, 0, 0, 100)
 }

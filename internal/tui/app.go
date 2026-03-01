@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/session"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
@@ -18,6 +19,7 @@ const (
 	addSessionView
 	confirmView
 	rolesListView
+	companyView
 )
 
 type App struct {
@@ -27,10 +29,12 @@ type App struct {
 	addSession    addSessionModel
 	confirm       confirmModel
 	roles         rolesModel
+	companyDash   companyDashModel
 
 	supervisor    *supervisor.Supervisor
 	tmuxClient    tmux.TmuxClient
 	sessionMgr    *session.Manager
+	companyMgr    *company.Manager
 	sessions      []*session.MonitoredSession
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -42,13 +46,14 @@ func NewApp(
 	client tmux.TmuxClient,
 	mgr *session.Manager,
 	sessions []*session.MonitoredSession,
+	opts ...AppOption,
 ) *App {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Get roles from role manager
 	roleList := sup.RoleManager().List()
 
-	return &App{
+	a := &App{
 		currentView: dashboardView,
 		dashboard:   newDashboardModel(sessions),
 		roles:       newRolesModel(roleList),
@@ -59,13 +64,35 @@ func NewApp(
 		ctx:         ctx,
 		cancel:      cancel,
 	}
+
+	for _, opt := range opts {
+		opt(a)
+	}
+
+	if a.companyMgr != nil {
+		a.companyDash = newCompanyDashModel(a.companyMgr)
+	}
+
+	return a
+}
+
+type AppOption func(*App)
+
+func WithCompanyManager(mgr *company.Manager) AppOption {
+	return func(a *App) {
+		a.companyMgr = mgr
+	}
 }
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		a.listenEvents(),
 		a.tickPaneContent(),
-	)
+	}
+	if a.companyMgr != nil {
+		cmds = append(cmds, a.listenCompanyEvents())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -101,6 +128,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.currentView = rolesListView
 				return a, nil
 			}
+		case "c":
+			if a.currentView == dashboardView && a.companyMgr != nil {
+				a.currentView = companyView
+				return a, nil
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -120,6 +152,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.currentView = confirmView
 		}
 		return a, a.listenEvents()
+
+	case companyEventMsg:
+		a.companyDash, _ = a.companyDash.Update(msg)
+		return a, a.listenCompanyEvents()
 
 	case paneContentMsg:
 		if a.currentView == sessionDetailView {
@@ -162,6 +198,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case rolesListView:
 		a.roles, cmd = a.roles.Update(msg)
+	case companyView:
+		a.companyDash, cmd = a.companyDash.Update(msg)
 	}
 
 	return a, cmd
@@ -177,6 +215,8 @@ func (a *App) View() string {
 		return a.confirm.View()
 	case rolesListView:
 		return a.roles.View()
+	case companyView:
+		return a.companyDash.View()
 	default:
 		return a.dashboard.View()
 	}
@@ -190,6 +230,24 @@ func (a *App) listenEvents() tea.Cmd {
 				return nil
 			}
 			return supervisorEventMsg(e)
+		case <-a.ctx.Done():
+			return nil
+		}
+	}
+}
+
+func (a *App) listenCompanyEvents() tea.Cmd {
+	if a.companyMgr == nil {
+		return nil
+	}
+	ch := a.companyMgr.Subscribe()
+	return func() tea.Msg {
+		select {
+		case e, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			return companyEventMsg(e)
 		case <-a.ctx.Done():
 			return nil
 		}

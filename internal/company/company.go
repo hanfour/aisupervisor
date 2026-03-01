@@ -25,7 +25,9 @@ type Manager struct {
 	gitOps       gitops.GitOps
 	monitor      *worker.CompletionMonitor
 	tmuxClient   tmux.TmuxClient
-	events       chan Event
+	subscribers  []chan Event
+	subMu        sync.Mutex
+	autoSchedule bool
 	workers      map[string]*worker.Worker
 	cancels      map[string]context.CancelFunc
 	workersPath  string
@@ -62,7 +64,7 @@ func New(
 		gitOps:       gitOps,
 		monitor:      monitor,
 		tmuxClient:   tmuxClient,
-		events:       make(chan Event, 100),
+		autoSchedule: true,
 		workers:      make(map[string]*worker.Worker),
 		cancels:      make(map[string]context.CancelFunc),
 		workersPath:  filepath.Join(dataDir, "workers.yaml"),
@@ -319,7 +321,6 @@ func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *proj
 
 func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *project.Project, result worker.CompletionResult) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if result.Success {
 		m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
@@ -362,6 +363,36 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			Message:   fmt.Sprintf("Task %q is now ready (dependencies resolved)", pt.Title),
 		})
 	}
+
+	shouldAutoSchedule := m.autoSchedule
+	workerID := w.ID
+
+	m.mu.Unlock()
+
+	if shouldAutoSchedule {
+		go m.tryAutoAssign(workerID)
+	}
+}
+
+// tryAutoAssign picks the highest-priority ready task and assigns it to the given idle worker.
+func (m *Manager) tryAutoAssign(workerID string) {
+	candidates := m.projectStore.ReadyTasksByPriority()
+	if len(candidates) == 0 {
+		return
+	}
+
+	task := candidates[0]
+	ctx := context.Background()
+	if err := m.AssignTask(ctx, workerID, task.ID); err != nil {
+		return
+	}
+
+	m.emit(Event{
+		Type:     EventAutoAssigned,
+		TaskID:   task.ID,
+		WorkerID: workerID,
+		Message:  fmt.Sprintf("Auto-assigned task %q to worker %s", task.Title, workerID),
+	})
 }
 
 // CompleteTask manually marks a task as done (used by supervisor/UI for review → done).
@@ -419,9 +450,23 @@ func (m *Manager) ProjectProgress(projectID string) ProgressDTO {
 	return dto
 }
 
-// Events returns the read-only event channel.
+// Subscribe creates a new event channel that receives all future events.
+func (m *Manager) Subscribe() <-chan Event {
+	ch := make(chan Event, 100)
+	m.subMu.Lock()
+	m.subscribers = append(m.subscribers, ch)
+	m.subMu.Unlock()
+	return ch
+}
+
+// Events returns a new subscriber channel (backwards compatible).
 func (m *Manager) Events() <-chan Event {
-	return m.events
+	return m.Subscribe()
+}
+
+// ProjectStore returns the underlying project store.
+func (m *Manager) ProjectStore() *project.Store {
+	return m.projectStore
 }
 
 // Shutdown cleans up all active workers.
@@ -436,11 +481,14 @@ func (m *Manager) Shutdown() {
 
 func (m *Manager) emit(e Event) {
 	e.Timestamp = time.Now()
-	select {
-	case m.events <- e:
-	default:
-		// Drop event if channel is full
+	m.subMu.Lock()
+	for _, ch := range m.subscribers {
+		select {
+		case ch <- e:
+		default:
+		}
 	}
+	m.subMu.Unlock()
 }
 
 func (m *Manager) loadWorkers() error {

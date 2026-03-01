@@ -244,6 +244,42 @@ func TestPersistence(t *testing.T) {
 	}
 }
 
+func TestReadyTasksByPriority(t *testing.T) {
+	s := tempStore(t)
+
+	// Create tasks with different priorities — all ready (no deps)
+	s.SaveTask(&Task{ProjectID: "p1", Title: "low priority", Priority: 3, Status: TaskReady})
+	s.SaveTask(&Task{ProjectID: "p1", Title: "high priority", Priority: 1, Status: TaskReady})
+	s.SaveTask(&Task{ProjectID: "p2", Title: "medium priority", Priority: 2, Status: TaskReady})
+	s.SaveTask(&Task{ProjectID: "p1", Title: "in progress", Priority: 1, Status: TaskInProgress})
+
+	ready := s.ReadyTasksByPriority()
+
+	// Should only include ready tasks (not in_progress)
+	if len(ready) != 3 {
+		t.Fatalf("expected 3 ready tasks, got %d", len(ready))
+	}
+
+	// Should be sorted by priority ascending (1 first)
+	if ready[0].Priority != 1 {
+		t.Fatalf("expected first task priority 1, got %d", ready[0].Priority)
+	}
+	if ready[1].Priority != 2 {
+		t.Fatalf("expected second task priority 2, got %d", ready[1].Priority)
+	}
+	if ready[2].Priority != 3 {
+		t.Fatalf("expected third task priority 3, got %d", ready[2].Priority)
+	}
+}
+
+func TestReadyTasksByPriorityEmpty(t *testing.T) {
+	s := tempStore(t)
+	ready := s.ReadyTasksByPriority()
+	if len(ready) != 0 {
+		t.Fatalf("expected 0 ready tasks, got %d", len(ready))
+	}
+}
+
 func TestNewStoreCreatesDir(t *testing.T) {
 	dir := t.TempDir() + "/sub/dir"
 	_, err := NewStore(dir)

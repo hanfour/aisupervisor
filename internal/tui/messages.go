@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
@@ -8,6 +9,8 @@ import (
 // Tea messages
 
 type supervisorEventMsg supervisor.Event
+
+type companyEventMsg company.Event
 
 type paneContentMsg struct {
 	SessionID string

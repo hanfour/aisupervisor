@@ -1,9 +1,11 @@
 <script>
+  import { onMount } from 'svelte'
   import { sessions } from '../stores/sessions.js'
   import TerminalCard from '../components/TerminalCard.svelte'
   import EventLog from '../components/EventLog.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
   import { events } from '../stores/events.js'
+  import { companyStats, loadCompanyStats } from '../stores/company.js'
 
   export let onNavigate = () => {}
 
@@ -18,6 +20,10 @@
       showConfirm = true
     }
   }
+
+  onMount(() => {
+    loadCompanyStats()
+  })
 
   function handleApprove() {
     if (confirmEvent && window.go?.gui?.App) {
@@ -36,6 +42,24 @@
 </script>
 
 <div class="dashboard">
+  <section class="nes-container with-title is-dark">
+    <p class="title">Company</p>
+    <div class="stat-cards">
+      <div class="nes-container is-rounded stat-card">
+        <span class="stat-value">{$companyStats.projects}</span>
+        <span class="stat-label">Projects</span>
+      </div>
+      <div class="nes-container is-rounded stat-card">
+        <span class="stat-value">{$companyStats.inProgress}</span>
+        <span class="stat-label">In Progress</span>
+      </div>
+      <div class="nes-container is-rounded stat-card">
+        <span class="stat-value">{$companyStats.idleWorkers}</span>
+        <span class="stat-label">Idle Workers</span>
+      </div>
+    </div>
+  </section>
+
   <section class="nes-container with-title is-dark">
     <p class="title">Sessions</p>
     <div class="sessions-grid">
@@ -71,6 +95,32 @@
     gap: 16px;
     height: 100%;
     overflow: hidden;
+  }
+
+  .stat-cards {
+    display: flex;
+    gap: 12px;
+  }
+
+  .stat-card {
+    padding: 12px 16px !important;
+    margin: 0 !important;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 100px;
+  }
+
+  .stat-value {
+    font-size: 20px;
+    color: var(--accent-green);
+    font-weight: bold;
+  }
+
+  .stat-label {
+    font-size: 9px;
+    color: var(--text-secondary);
+    margin-top: 4px;
   }
 
   .sessions-grid {

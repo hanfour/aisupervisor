@@ -23,6 +23,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/group"
 	"github.com/hanfourmini/aisupervisor/internal/gui"
+	"github.com/hanfourmini/aisupervisor/internal/messaging"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/role"
 	"github.com/hanfourmini/aisupervisor/internal/session"
@@ -141,7 +142,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("setting up company manager: %v", err)
 	}
-	companyApp := gui.NewCompanyApp(companyMgr)
+	companyApp := gui.NewCompanyApp(companyMgr, tmuxClient)
+
+	// Start messaging integrations if configured
+	startMessaging(cfg, companyMgr)
 
 	if err := wails.Run(&options.App{
 		Title:  "aisupervisor",
@@ -224,6 +228,38 @@ func buildRoleManager(cfg *config.Config, backend ai.Backend) *role.Manager {
 		}
 	}
 	return role.NewManager(roles...)
+}
+
+func startMessaging(cfg *config.Config, companyMgr *company.Manager) {
+	var messengers []messaging.Messenger
+
+	if cfg.Messaging.Slack.Enabled {
+		botToken := os.Getenv(cfg.Messaging.Slack.BotTokenEnv)
+		appToken := os.Getenv(cfg.Messaging.Slack.AppTokenEnv)
+		if botToken != "" && appToken != "" {
+			m := messaging.NewSlackMessenger(botToken, appToken, cfg.Messaging.Slack.ChannelID)
+			messengers = append(messengers, m)
+			log.Println("Slack messenger enabled")
+		}
+	}
+
+	if cfg.Messaging.Line.Enabled {
+		secret := os.Getenv(cfg.Messaging.Line.ChannelSecretEnv)
+		token := os.Getenv(cfg.Messaging.Line.ChannelTokenEnv)
+		if secret != "" && token != "" {
+			m, err := messaging.NewLineMessenger(secret, token, cfg.Messaging.Line.NotifyUserID, cfg.Messaging.Line.Port)
+			if err == nil {
+				messengers = append(messengers, m)
+				log.Println("LINE messenger enabled")
+			}
+		}
+	}
+
+	if len(messengers) > 0 {
+		notifier := messaging.NewNotifier(companyMgr, messengers)
+		ctx := context.Background()
+		notifier.Start(ctx)
+	}
 }
 
 func discoverSessions(cfg *config.Config, client tmux.TmuxClient, mgr *session.Manager) []*session.MonitoredSession {

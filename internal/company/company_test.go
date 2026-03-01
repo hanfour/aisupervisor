@@ -17,21 +17,23 @@ func testStore(t *testing.T) *project.Store {
 	return s
 }
 
-func testManager(t *testing.T) *Manager {
+func testManager(t *testing.T) (*Manager, <-chan Event) {
 	t.Helper()
 	dir := t.TempDir()
 	store := testStore(t)
 
-	// Create manager without spawner/gitops/monitor (nil) for unit tests
 	m, err := New(store, nil, nil, nil, nil, dir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return m
+	// Disable auto-schedule for predictable tests
+	m.autoSchedule = false
+	ch := m.Subscribe()
+	return m, ch
 }
 
 func TestCreateProject(t *testing.T) {
-	m := testManager(t)
+	m, ch := testManager(t)
 
 	p, err := m.CreateProject("test", "desc", "/tmp/repo", "main", []string{"goal1"})
 	if err != nil {
@@ -44,9 +46,8 @@ func TestCreateProject(t *testing.T) {
 		t.Fatalf("expected name 'test', got %s", p.Name)
 	}
 
-	// Verify event emitted
 	select {
-	case e := <-m.events:
+	case e := <-ch:
 		if e.Type != EventProjectCreated {
 			t.Fatalf("expected project_created event, got %s", e.Type)
 		}
@@ -56,12 +57,11 @@ func TestCreateProject(t *testing.T) {
 }
 
 func TestListProjects(t *testing.T) {
-	m := testManager(t)
+	m, ch := testManager(t)
 
 	m.CreateProject("a", "", "/tmp/a", "main", nil)
 	m.CreateProject("b", "", "/tmp/b", "main", nil)
-	// Drain events
-	drainEvents(m.events)
+	drainCh(ch)
 
 	list := m.ListProjects()
 	if len(list) != 2 {
@@ -70,10 +70,10 @@ func TestListProjects(t *testing.T) {
 }
 
 func TestAddTask(t *testing.T) {
-	m := testManager(t)
+	m, ch := testManager(t)
 
 	p, _ := m.CreateProject("proj", "", "/tmp", "main", nil)
-	drainEvents(m.events)
+	drainCh(ch)
 
 	task, err := m.AddTask(p.ID, "do thing", "desc", "prompt text", nil, 1, "v1")
 	if err != nil {
@@ -90,7 +90,7 @@ func TestAddTask(t *testing.T) {
 	}
 
 	select {
-	case e := <-m.events:
+	case e := <-ch:
 		if e.Type != EventTaskCreated {
 			t.Fatalf("expected task_created, got %s", e.Type)
 		}
@@ -100,26 +100,25 @@ func TestAddTask(t *testing.T) {
 }
 
 func TestAddTaskWithDeps(t *testing.T) {
-	m := testManager(t)
+	m, ch := testManager(t)
 
 	p, _ := m.CreateProject("proj", "", "/tmp", "main", nil)
-	drainEvents(m.events)
+	drainCh(ch)
 
 	t1, _ := m.AddTask(p.ID, "first", "", "prompt1", nil, 1, "")
-	drainEvents(m.events)
+	drainCh(ch)
 
 	t2, err := m.AddTask(p.ID, "second", "", "prompt2", []string{t1.ID}, 2, "")
 	if err != nil {
 		t.Fatalf("AddTask with deps: %v", err)
 	}
-	// Task with deps should default to backlog
 	if t2.Status != project.TaskBacklog {
 		t.Fatalf("expected backlog for task with deps, got %s", t2.Status)
 	}
 }
 
 func TestAddTaskProjectNotFound(t *testing.T) {
-	m := testManager(t)
+	m, _ := testManager(t)
 	_, err := m.AddTask("nonexistent", "task", "", "prompt", nil, 1, "")
 	if err == nil {
 		t.Fatal("expected error for nonexistent project")
@@ -127,7 +126,7 @@ func TestAddTaskProjectNotFound(t *testing.T) {
 }
 
 func TestCreateWorker(t *testing.T) {
-	m := testManager(t)
+	m, ch := testManager(t)
 
 	w, err := m.CreateWorker("Alice", "robot")
 	if err != nil {
@@ -141,7 +140,7 @@ func TestCreateWorker(t *testing.T) {
 	}
 
 	select {
-	case e := <-m.events:
+	case e := <-ch:
 		if e.Type != EventWorkerSpawned {
 			t.Fatalf("expected worker_spawned, got %s", e.Type)
 		}
@@ -151,11 +150,11 @@ func TestCreateWorker(t *testing.T) {
 }
 
 func TestListWorkers(t *testing.T) {
-	m := testManager(t)
+	m, ch := testManager(t)
 
 	m.CreateWorker("A", "robot")
 	m.CreateWorker("B", "kirby")
-	drainEvents(m.events)
+	drainCh(ch)
 
 	workers := m.ListWorkers()
 	if len(workers) != 2 {
@@ -170,9 +169,7 @@ func TestWorkerPersistence(t *testing.T) {
 
 	m1, _ := New(store, nil, nil, nil, nil, dir)
 	m1.CreateWorker("Persist", "mario")
-	drainEvents(m1.events)
 
-	// Reload
 	m2, err := New(store, nil, nil, nil, nil, dir)
 	if err != nil {
 		t.Fatalf("reload manager: %v", err)
@@ -188,20 +185,19 @@ func TestWorkerPersistence(t *testing.T) {
 }
 
 func TestProjectProgress(t *testing.T) {
-	m := testManager(t)
+	m, ch := testManager(t)
 
 	p, _ := m.CreateProject("prog", "", "/tmp", "main", nil)
-	drainEvents(m.events)
+	drainCh(ch)
 
 	m.AddTask(p.ID, "t1", "", "p1", nil, 1, "")
 	m.AddTask(p.ID, "t2", "", "p2", nil, 1, "")
 	m.AddTask(p.ID, "t3", "", "p3", nil, 1, "")
-	drainEvents(m.events)
+	drainCh(ch)
 
 	tasks := m.ListTasks(p.ID)
-	// Complete first task
 	m.CompleteTask(tasks[0].ID)
-	drainEvents(m.events)
+	drainCh(ch)
 
 	prog := m.ProjectProgress(p.ID)
 	if prog.Total != 3 {
@@ -216,21 +212,19 @@ func TestProjectProgress(t *testing.T) {
 }
 
 func TestCompleteTask(t *testing.T) {
-	m := testManager(t)
+	m, ch := testManager(t)
 
 	p, _ := m.CreateProject("p", "", "/tmp", "main", nil)
-	drainEvents(m.events)
+	drainCh(ch)
 
 	t1, _ := m.AddTask(p.ID, "first", "", "p1", nil, 1, "")
 	t2, _ := m.AddTask(p.ID, "second", "", "p2", []string{t1.ID}, 2, "")
-	drainEvents(m.events)
+	drainCh(ch)
 
-	// Complete t1 — should promote t2 to ready
 	if err := m.CompleteTask(t1.ID); err != nil {
 		t.Fatalf("CompleteTask: %v", err)
 	}
 
-	// Check t2 is now ready
 	got, _ := m.projectStore.GetTask(t2.ID)
 	if got.Status != project.TaskReady {
 		t.Fatalf("expected t2 ready after t1 done, got %s", got.Status)
@@ -254,7 +248,60 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
-func drainEvents(ch chan Event) {
+// --- New tests for subscriber + auto-scheduling ---
+
+func TestSubscriberMultiple(t *testing.T) {
+	m, ch1 := testManager(t)
+	ch2 := m.Subscribe()
+
+	m.CreateProject("multi", "", "/tmp", "main", nil)
+
+	// Both subscribers should receive the event
+	select {
+	case e := <-ch1:
+		if e.Type != EventProjectCreated {
+			t.Fatalf("ch1: expected project_created, got %s", e.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ch1: expected event")
+	}
+
+	select {
+	case e := <-ch2:
+		if e.Type != EventProjectCreated {
+			t.Fatalf("ch2: expected project_created, got %s", e.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ch2: expected event")
+	}
+}
+
+func TestEventsBackwardsCompat(t *testing.T) {
+	m, _ := testManager(t)
+
+	// Events() should return a subscriber channel
+	ch := m.Events()
+	m.CreateProject("compat", "", "/tmp", "main", nil)
+
+	select {
+	case e := <-ch:
+		if e.Type != EventProjectCreated {
+			t.Fatalf("expected project_created via Events(), got %s", e.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected event via Events()")
+	}
+}
+
+func TestAutoScheduleDisabled(t *testing.T) {
+	m, _ := testManager(t)
+	// autoSchedule is false in testManager
+	if m.autoSchedule {
+		t.Fatal("expected autoSchedule to be false in test")
+	}
+}
+
+func drainCh(ch <-chan Event) {
 	for {
 		select {
 		case <-ch:

@@ -14,6 +14,7 @@ const (
 	EventWorkerIdle     EventType = "worker_idle"
 	EventBranchCreated  EventType = "branch_created"
 	EventCommitDetected EventType = "commit_detected"
+	EventAutoAssigned   EventType = "auto_assigned"
 )
 
 type Event struct {

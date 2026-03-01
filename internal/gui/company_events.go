@@ -9,11 +9,12 @@ import (
 
 // startCompanyEventForwarding forwards company events to the Wails frontend.
 func startCompanyEventForwarding(ctx context.Context, mgr *company.Manager) {
+	ch := mgr.Subscribe()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case e, ok := <-mgr.Events():
+		case e, ok := <-ch:
 			if !ok {
 				return
 			}

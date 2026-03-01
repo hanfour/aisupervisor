@@ -19,6 +19,27 @@ type Config struct {
 	RolesDir       string               `yaml:"roles_dir,omitempty"`
 	Groups         []GroupConfig        `yaml:"groups,omitempty"`
 	SessionRoles   []SessionRoleBinding `yaml:"session_roles,omitempty"`
+	Messaging      MessagingConfig      `yaml:"messaging,omitempty"`
+}
+
+type MessagingConfig struct {
+	Slack SlackConfig `yaml:"slack,omitempty"`
+	Line  LineConfig  `yaml:"line,omitempty"`
+}
+
+type SlackConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	BotTokenEnv   string `yaml:"bot_token_env"`
+	AppTokenEnv   string `yaml:"app_token_env"`
+	ChannelID  string `yaml:"channel_id"`
+}
+
+type LineConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	ChannelSecretEnv string `yaml:"channel_secret_env"`
+	ChannelTokenEnv  string `yaml:"channel_token_env"`
+	NotifyUserID     string `yaml:"notify_user_id"`
+	Port             int    `yaml:"port"`
 }
 
 type GroupConfig struct {

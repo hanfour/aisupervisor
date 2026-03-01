@@ -1,0 +1,24 @@
+# Build output
+/build/
+/cmd/aisupervisor-gui/frontend/dist/
+/aisupervisor-gui
+
+# Dependencies
+frontend/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Wails
+wails.dev.json

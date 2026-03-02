@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/hanfourmini/aisupervisor/internal/company"
+	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
@@ -13,10 +14,11 @@ import (
 // CompanyApp is the Wails binding for the company management system.
 // It is separate from the existing App to avoid bloating it.
 type CompanyApp struct {
-	ctx          context.Context
-	company      *company.Manager
-	tmuxClient   tmux.TmuxClient
-	trainingDir  string
+	ctx           context.Context
+	company       *company.Manager
+	tmuxClient    tmux.TmuxClient
+	trainingDir   string
+	skillProfiles []config.SkillProfile
 }
 
 func NewCompanyApp(company *company.Manager, tmuxClient tmux.TmuxClient) *CompanyApp {
@@ -26,6 +28,25 @@ func NewCompanyApp(company *company.Manager, tmuxClient tmux.TmuxClient) *Compan
 // SetTrainingDir sets the training data directory for stats queries.
 func (c *CompanyApp) SetTrainingDir(dir string) {
 	c.trainingDir = dir
+}
+
+// SetSkillProfiles sets the available skill profiles for listing.
+func (c *CompanyApp) SetSkillProfiles(profiles []config.SkillProfile) {
+	c.skillProfiles = profiles
+}
+
+// ListSkillProfiles returns all available skill profiles.
+func (c *CompanyApp) ListSkillProfiles() []SkillProfileDTO {
+	dtos := make([]SkillProfileDTO, len(c.skillProfiles))
+	for i, sp := range c.skillProfiles {
+		dtos[i] = SkillProfileDTO{
+			ID:          sp.ID,
+			Name:        sp.Name,
+			Description: sp.Description,
+			Icon:        sp.Icon,
+		}
+	}
+	return dtos
 }
 
 // Startup is called by Wails when the application starts.
@@ -109,7 +130,7 @@ func (c *CompanyApp) CreateWorker(name, avatar string) (*WorkerDTO, error) {
 }
 
 // CreateWorkerWithTier creates a worker with tier and hierarchy options.
-func (c *CompanyApp) CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool string) (*WorkerDTO, error) {
+func (c *CompanyApp) CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile string) (*WorkerDTO, error) {
 	var opts []company.WorkerOption
 	if tier != "" {
 		opts = append(opts, company.WithTier(worker.WorkerTier(tier)))
@@ -122,6 +143,9 @@ func (c *CompanyApp) CreateWorkerWithTier(name, avatar, tier, parentID, backendI
 	}
 	if cliTool != "" {
 		opts = append(opts, company.WithCLITool(cliTool))
+	}
+	if skillProfile != "" {
+		opts = append(opts, company.WithSkillProfile(skillProfile))
 	}
 	w, err := c.company.CreateWorker(name, avatar, opts...)
 	if err != nil {
@@ -173,6 +197,16 @@ func (c *CompanyApp) GetManager(workerID string) (*WorkerDTO, error) {
 	}
 	dto := WorkerToDTO(w)
 	return &dto, nil
+}
+
+// DeleteWorker removes a worker by ID.
+func (c *CompanyApp) DeleteWorker(workerID string) error {
+	return c.company.DeleteWorker(workerID)
+}
+
+// UpdateWorkerFields updates optional fields on a worker.
+func (c *CompanyApp) UpdateWorkerFields(workerID, parentID, modelVersion, backendID string) error {
+	return c.company.UpdateWorkerFields(workerID, parentID, modelVersion, backendID)
 }
 
 // GetHierarchy returns workers organized by tier.

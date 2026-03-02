@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { workers, loadWorkers, createWorkerWithTier, promoteWorker, hierarchy, loadHierarchy } from '../stores/workers.js'
+  import { workers, loadWorkers, createWorkerWithTier, promoteWorker, hierarchy, loadHierarchy, skillProfiles, loadSkillProfiles } from '../stores/workers.js'
   import WorkerCard from '../components/WorkerCard.svelte'
   import WorkerDetailDrawer from '../components/WorkerDetailDrawer.svelte'
   import { addError } from '../stores/errors.js'
@@ -12,6 +12,7 @@
   let newParentID = ''
   let newBackendID = ''
   let newCliTool = 'claude'
+  let newSkillProfile = ''
   let selectedWorkerId = null
 
   const avatarOptions = [
@@ -44,6 +45,7 @@
     try {
       await loadWorkers()
       await loadHierarchy()
+      await loadSkillProfiles()
     } catch (e) {
       addError('Failed to load workers: ' + e.message)
     }
@@ -52,13 +54,14 @@
   async function handleHire() {
     if (!newName) return
     try {
-      await createWorkerWithTier(newName, newAvatar, newTier, newParentID, newBackendID, newCliTool)
+      await createWorkerWithTier(newName, newAvatar, newTier, newParentID, newBackendID, newCliTool, newSkillProfile)
       newName = ''
       newAvatar = 'robot'
       newTier = 'engineer'
       newParentID = ''
       newBackendID = ''
       newCliTool = 'claude'
+      newSkillProfile = ''
       showHire = false
     } catch (e) {
       addError('Failed to hire worker: ' + e.message)
@@ -100,6 +103,12 @@
             {#each tierWorkers as w}
               <div class="worker-wrap">
                 <WorkerCard worker={w} onClick={(worker) => selectedWorkerId = worker.id} />
+                {#if w.skillProfile}
+                  {@const sp = $skillProfiles.find(p => p.id === w.skillProfile)}
+                  {#if sp}
+                    <div class="skill-badge" title={sp.description}>{sp.icon} {sp.name}</div>
+                  {/if}
+                {/if}
                 {#if w.parentName}
                   <div class="parent-link">
                     <span class="parent-arrow">&uarr;</span> Manager: {w.parentName}
@@ -183,6 +192,24 @@
                 {/each}
               </select>
             </div>
+          </div>
+
+          <div class="nes-field">
+            <label for="w-skill">Skill Profile</label>
+            <div class="nes-select is-dark">
+              <select id="w-skill" bind:value={newSkillProfile}>
+                <option value="">None</option>
+                {#each $skillProfiles as sp}
+                  <option value={sp.id}>{sp.icon} {sp.name}</option>
+                {/each}
+              </select>
+            </div>
+            {#if newSkillProfile}
+              {@const selected = $skillProfiles.find(sp => sp.id === newSkillProfile)}
+              {#if selected}
+                <p class="skill-desc">{selected.description}</p>
+              {/if}
+            {/if}
           </div>
 
           <div class="nes-field">
@@ -338,5 +365,21 @@
   .empty-msg {
     color: var(--text-secondary);
     font-size: 10px;
+  }
+
+  .skill-badge {
+    font-size: 8px;
+    text-align: center;
+    color: var(--accent-green);
+    background: rgba(0, 255, 65, 0.08);
+    border: 1px solid rgba(0, 255, 65, 0.2);
+    padding: 1px 6px;
+    border-radius: 2px;
+  }
+
+  .skill-desc {
+    font-size: 8px;
+    color: var(--text-secondary);
+    margin: 4px 0 0;
   }
 </style>

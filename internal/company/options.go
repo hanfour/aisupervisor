@@ -34,3 +34,9 @@ func WithModelVersion(v string) WorkerOption {
 		w.ModelVersion = v
 	}
 }
+
+func WithSkillProfile(profile string) WorkerOption {
+	return func(w *worker.Worker) {
+		w.SkillProfile = profile
+	}
+}

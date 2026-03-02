@@ -23,11 +23,12 @@ type TierSpawnConfig struct {
 }
 
 type Spawner struct {
-	tmuxClient  tmux.TmuxClient
-	gitOps      gitops.GitOps
-	sup         *supervisor.Supervisor
-	sessionMgr  *session.Manager
-	tierConfigs map[WorkerTier]TierSpawnConfig
+	tmuxClient    tmux.TmuxClient
+	gitOps        gitops.GitOps
+	sup           *supervisor.Supervisor
+	sessionMgr    *session.Manager
+	tierConfigs   map[WorkerTier]TierSpawnConfig
+	skillProfiles map[string]config.SkillProfile
 }
 
 func NewSpawner(
@@ -37,11 +38,12 @@ func NewSpawner(
 	sessionMgr *session.Manager,
 ) *Spawner {
 	return &Spawner{
-		tmuxClient:  tmuxClient,
-		gitOps:      gitOps,
-		sup:         sup,
-		sessionMgr:  sessionMgr,
-		tierConfigs: make(map[WorkerTier]TierSpawnConfig),
+		tmuxClient:    tmuxClient,
+		gitOps:        gitOps,
+		sup:           sup,
+		sessionMgr:    sessionMgr,
+		tierConfigs:   make(map[WorkerTier]TierSpawnConfig),
+		skillProfiles: make(map[string]config.SkillProfile),
 	}
 }
 
@@ -60,6 +62,48 @@ func (s *Spawner) LoadTierConfigs(tiers []config.WorkerTierConfig) {
 		}
 		s.tierConfigs[tier] = sc
 	}
+}
+
+// LoadSkillProfiles populates skill profile configurations from config.
+func (s *Spawner) LoadSkillProfiles(profiles []config.SkillProfile) {
+	for _, sp := range profiles {
+		s.skillProfiles[sp.ID] = sp
+	}
+}
+
+// buildSkillArgs converts a worker's skill profile into CLI flags.
+func (s *Spawner) buildSkillArgs(w *Worker) string {
+	sp, ok := s.skillProfiles[w.SkillProfile]
+	if !ok {
+		return ""
+	}
+	var parts []string
+	if sp.SystemPrompt != "" {
+		parts = append(parts, "--append-system-prompt", shellEscape(sp.SystemPrompt))
+	}
+	if len(sp.AllowedTools) > 0 {
+		// Each tool is a separate argument: --allowedTools "Bash" "Edit" "Read"
+		parts = append(parts, "--allowedTools")
+		for _, tool := range sp.AllowedTools {
+			parts = append(parts, shellEscape(tool))
+		}
+	}
+	if len(sp.DisallowedTools) > 0 {
+		parts = append(parts, "--disallowedTools")
+		for _, tool := range sp.DisallowedTools {
+			parts = append(parts, shellEscape(tool))
+		}
+	}
+	if sp.Model != "" {
+		parts = append(parts, "--model", sp.Model)
+	}
+	if sp.PermissionMode != "" {
+		parts = append(parts, "--permission-mode", sp.PermissionMode)
+	}
+	if sp.ExtraCLIArgs != "" {
+		parts = append(parts, sp.ExtraCLIArgs)
+	}
+	return strings.Join(parts, " ")
 }
 
 // SpawnForTask creates a tmux session, sets up the git branch, launches Claude Code,
@@ -177,6 +221,18 @@ func (s *Spawner) resolveCLI(w *Worker) (cliTool, cliArgs string, readyRe *regex
 		}
 		cliArgs = tc.CLIArgs
 		readyRe = tc.ReadyCheck
+	}
+
+	// Append skill profile flags
+	if w.SkillProfile != "" {
+		skillArgs := s.buildSkillArgs(w)
+		if skillArgs != "" {
+			if cliArgs != "" {
+				cliArgs = cliArgs + " " + skillArgs
+			} else {
+				cliArgs = skillArgs
+			}
+		}
 	}
 
 	return cliTool, cliArgs, readyRe

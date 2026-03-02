@@ -141,6 +141,7 @@ func main() {
 	if len(cfg.WorkerTiers) > 0 {
 		spawner.LoadTierConfigs(cfg.WorkerTiers)
 	}
+	spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 	completionMon := worker.NewCompletionMonitor(tmuxClient)
 	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
 	if err != nil {
@@ -173,6 +174,7 @@ func main() {
 		}
 		companyApp.SetTrainingDir(trainingDir)
 	}
+	companyApp.SetSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 
 	// Start messaging integrations if configured
 	startMessaging(cfg, companyMgr)

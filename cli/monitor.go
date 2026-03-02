@@ -161,6 +161,7 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 		if len(cfg.WorkerTiers) > 0 {
 			spawner.LoadTierConfigs(cfg.WorkerTiers)
 		}
+		spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 		completionMon := worker.NewCompletionMonitor(tmuxClient)
 		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
 
@@ -237,6 +238,7 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 		if len(cfg.WorkerTiers) > 0 {
 			spawner.LoadTierConfigs(cfg.WorkerTiers)
 		}
+		spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 		completionMon := worker.NewCompletionMonitor(tmuxClient)
 		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
 		if companyMgr != nil {

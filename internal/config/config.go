@@ -23,6 +23,7 @@ type Config struct {
 	SessionRoles   []SessionRoleBinding `yaml:"session_roles,omitempty"`
 	Messaging      MessagingConfig      `yaml:"messaging,omitempty"`
 	WorkerTiers    []WorkerTierConfig   `yaml:"worker_tiers,omitempty"`
+	SkillProfiles  []SkillProfile       `yaml:"skill_profiles,omitempty"`
 	Training       TrainingConfig       `yaml:"training,omitempty"`
 }
 
@@ -33,6 +34,19 @@ type WorkerTierConfig struct {
 	BackendID  string `yaml:"backend_id,omitempty"`
 	MaxWorkers int    `yaml:"max_workers,omitempty"`
 	ReadyCheck string `yaml:"ready_check,omitempty"`
+}
+
+type SkillProfile struct {
+	ID              string   `yaml:"id"`
+	Name            string   `yaml:"name"`
+	Description     string   `yaml:"description,omitempty"`
+	Icon            string   `yaml:"icon,omitempty"`
+	SystemPrompt    string   `yaml:"system_prompt,omitempty"`
+	AllowedTools    []string `yaml:"allowed_tools,omitempty"`
+	DisallowedTools []string `yaml:"disallowed_tools,omitempty"`
+	Model           string   `yaml:"model,omitempty"`
+	PermissionMode  string   `yaml:"permission_mode,omitempty"`
+	ExtraCLIArgs    string   `yaml:"extra_cli_args,omitempty"`
 }
 
 type TrainingConfig struct {

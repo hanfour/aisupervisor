@@ -2,6 +2,7 @@ import { writable } from 'svelte/store'
 
 export const workers = writable([])
 export const hierarchy = writable({ consultant: [], manager: [], engineer: [] })
+export const skillProfiles = writable([])
 
 export async function loadWorkers() {
   if (window.go && window.go.gui && window.go.gui.CompanyApp) {
@@ -28,12 +29,22 @@ export async function createWorker(name, avatar) {
   }
 }
 
-export async function createWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool) {
+export async function createWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile) {
   if (!window.go?.gui?.CompanyApp) return
-  const w = await window.go.gui.CompanyApp.CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool)
+  const w = await window.go.gui.CompanyApp.CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile)
   await loadWorkers()
   await loadHierarchy()
   return w
+}
+
+export async function loadSkillProfiles() {
+  if (!window.go?.gui?.CompanyApp) return
+  try {
+    const result = await window.go.gui.CompanyApp.ListSkillProfiles()
+    skillProfiles.set(result || [])
+  } catch {
+    // ignore
+  }
 }
 
 export async function promoteWorker(workerID, newTier) {

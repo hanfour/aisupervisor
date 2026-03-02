@@ -91,10 +91,18 @@ type WorkerDTO struct {
 	ParentID      string `json:"parentId,omitempty"`
 	ModelVersion  string `json:"modelVersion,omitempty"`
 	CLITool       string `json:"cliTool,omitempty"`
+	SkillProfile  string `json:"skillProfile,omitempty"`
 	CurrentTaskID string `json:"currentTaskId"`
 	TmuxSession   string `json:"tmuxSession"`
 	SessionID     string `json:"sessionId"`
 	CreatedAt     string `json:"createdAt"`
+}
+
+type SkillProfileDTO struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
 }
 
 func WorkerToDTO(w *worker.Worker) WorkerDTO {
@@ -108,6 +116,7 @@ func WorkerToDTO(w *worker.Worker) WorkerDTO {
 		ParentID:      w.ParentID,
 		ModelVersion:  w.ModelVersion,
 		CLITool:       w.CLITool,
+		SkillProfile:  w.SkillProfile,
 		CurrentTaskID: w.CurrentTaskID,
 		TmuxSession:   w.TmuxSession,
 		SessionID:     w.SessionID,

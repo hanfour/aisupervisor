@@ -35,6 +35,7 @@ type Worker struct {
 	ParentID      string       `yaml:"parent_id,omitempty" json:"parentId,omitempty"`
 	ModelVersion  string       `yaml:"model_version,omitempty" json:"modelVersion,omitempty"`
 	CLITool       string       `yaml:"cli_tool,omitempty" json:"cliTool,omitempty"`
+	SkillProfile  string       `yaml:"skill_profile,omitempty" json:"skillProfile,omitempty"`
 	CreatedAt     time.Time    `yaml:"created_at" json:"createdAt"`
 }
 

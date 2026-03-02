@@ -41,34 +41,35 @@ const FLOOR_MAP = [
   [1,8,8,8,7,7,8,8,8,8,8,8,8,8,8,8,8,8,8,1],
 ]
 
-// Desk positions with zone labels
-// Each desk has a tile position and a character standing position (offset)
+// Desk positions — 19 total
+// tile: [col, row] of the desk furniture tile (tile type 2)
+// charTile: [col, row] where the character stands (one row above desk)
 const DESKS = [
-  // Open office — engineers (top-left quadrant)
-  { id: 'eng-1', tile: [2,2],  charTile: [2,1],  zone: 'engineer' },
-  { id: 'eng-2', tile: [5,2],  charTile: [5,1],  zone: 'engineer' },
-  { id: 'eng-3', tile: [8,2],  charTile: [8,1],  zone: 'engineer' },
-  { id: 'eng-4', tile: [2,4],  charTile: [2,3],  zone: 'engineer' },
-  { id: 'eng-5', tile: [5,4],  charTile: [5,3],  zone: 'engineer' },
-  { id: 'eng-6', tile: [8,4],  charTile: [8,3],  zone: 'engineer' },
-  // Open office — engineers (top-right quadrant)
-  { id: 'eng-7', tile: [12,2], charTile: [12,1], zone: 'engineer' },
-  { id: 'eng-8', tile: [15,2], charTile: [15,1], zone: 'engineer' },
-  { id: 'eng-9', tile: [12,4], charTile: [12,3], zone: 'engineer' },
-  { id: 'eng-10',tile: [15,4], charTile: [15,3], zone: 'engineer' },
-  // Manager offices (bottom-left)
-  { id: 'mgr-1', tile: [4,9],  charTile: [4,8],  zone: 'manager' },
-  { id: 'mgr-2', tile: [13,9], charTile: [13,8], zone: 'manager' },
-  // Consultant corner (bottom-left room)
-  { id: 'con-1', tile: [4,9],  charTile: [3,8],  zone: 'consultant' },
-  // Reception
-  { id: 'rec-1', tile: [13,9], charTile: [14,8], zone: 'reception' },
+  // ── Open Office — Engineers row A (desks at row 2, chars at row 1) ─────
+  { id: 'eng-1',  tile: [2,2],   charTile: [2,1],   zone: 'engineer' },
+  { id: 'eng-2',  tile: [5,2],   charTile: [5,1],   zone: 'engineer' },
+  { id: 'eng-3',  tile: [8,2],   charTile: [8,1],   zone: 'engineer' },
+  { id: 'eng-4',  tile: [11,2],  charTile: [11,1],  zone: 'engineer' },
+  { id: 'eng-5',  tile: [14,2],  charTile: [14,1],  zone: 'engineer' },
+  { id: 'eng-6',  tile: [17,2],  charTile: [17,1],  zone: 'engineer' },
+  // ── Open Office — Engineers row B (desks at row 4, chars at row 3) ─────
+  { id: 'eng-7',  tile: [2,4],   charTile: [2,3],   zone: 'engineer' },
+  { id: 'eng-8',  tile: [5,4],   charTile: [5,3],   zone: 'engineer' },
+  { id: 'eng-9',  tile: [8,4],   charTile: [8,3],   zone: 'engineer' },
+  { id: 'eng-10', tile: [11,4],  charTile: [11,3],  zone: 'engineer' },
+  { id: 'eng-11', tile: [14,4],  charTile: [14,3],  zone: 'engineer' },
+  { id: 'eng-12', tile: [17,4],  charTile: [17,3],  zone: 'engineer' },
+  // ── Manager Alcoves — semi-private, cols 1-7 ───────────────────────────
+  { id: 'mgr-1',  tile: [2,9],   charTile: [2,8],   zone: 'manager' },
+  { id: 'mgr-2',  tile: [5,9],   charTile: [5,8],   zone: 'manager' },
+  { id: 'mgr-3',  tile: [2,11],  charTile: [2,10],  zone: 'manager' },
+  { id: 'mgr-4',  tile: [5,11],  charTile: [5,10],  zone: 'manager' },
+  // ── Consultant Corner ──────────────────────────────────────────────────
+  { id: 'con-1',  tile: [9,12],  charTile: [9,11],  zone: 'consultant' },
+  // ── Reception ─────────────────────────────────────────────────────────
+  { id: 'rec-1',  tile: [12,12], charTile: [12,11], zone: 'reception' },
+  { id: 'rec-2',  tile: [15,12], charTile: [15,11], zone: 'reception' },
 ]
-
-// Remove duplicate tile positions — consultant shares with manager, offset differently
-// Actually let's fix: consultant gets a unique desk
-DESKS[12] = { id: 'con-1', tile: [4,10], charTile: [3,10], zone: 'consultant' }
-DESKS[13] = { id: 'rec-1', tile: [13,10], charTile: [14,10], zone: 'reception' }
 
 export function getDesks() {
   return DESKS
@@ -143,6 +144,34 @@ export function buildWorkerDeskMap(assignments) {
     }
   }
   return map
+}
+
+
+// Zone boundary rectangles (inclusive col/row ranges)
+const ZONE_BOUNDS = {
+  openOffice:    { colMin: 0,  colMax: 19, rowMin: 0,  rowMax: 5  },
+  meeting:       { colMin: 11, colMax: 15, rowMin: 8,  rowMax: 10 },
+  breakArea:     { colMin: 17, colMax: 18, rowMin: 8,  rowMax: 12 },
+  managerOffice: { colMin: 0,  colMax: 8,  rowMin: 8,  rowMax: 11 },
+  reception:     { colMin: 8,  colMax: 19, rowMin: 11, rowMax: 13 },
+}
+
+// Returns [{col, row}, ...] for all non-wall tiles within a named zone.
+// zoneName: 'meeting' | 'breakArea' | 'openOffice' | 'managerOffice' | 'reception'
+export function getZoneTiles(zoneName) {
+  const bounds = ZONE_BOUNDS[zoneName]
+  if (!bounds) return []
+  const { colMin, colMax, rowMin, rowMax } = bounds
+  const result = []
+  for (let row = rowMin; row <= rowMax; row++) {
+    for (let col = colMin; col <= colMax; col++) {
+      const tile = FLOOR_MAP[row]?.[col]
+      if (tile !== undefined && tile !== 1) {
+        result.push({ col, row })
+      }
+    }
+  }
+  return result
 }
 
 export { DESKS, FLOOR_MAP }

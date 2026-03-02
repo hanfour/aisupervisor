@@ -318,6 +318,66 @@ func (m *Manager) GetWorker(id string) (*worker.Worker, bool) {
 	return w, ok
 }
 
+// DeleteWorker removes a worker by ID.
+func (m *Manager) DeleteWorker(workerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	w, ok := m.workers[workerID]
+	if !ok {
+		return fmt.Errorf("worker %q not found", workerID)
+	}
+	if w.Status != worker.WorkerIdle {
+		return fmt.Errorf("cannot delete worker %q: status is %s (must be idle)", workerID, w.Status)
+	}
+
+	delete(m.workers, workerID)
+	if err := m.saveWorkers(); err != nil {
+		return err
+	}
+
+	m.emit(Event{
+		Type:     EventWorkerSpawned,
+		WorkerID: workerID,
+		Message:  fmt.Sprintf("Worker removed: %s", w.Name),
+	})
+	return nil
+}
+
+// UpdateWorkerFields updates optional fields on a worker (parentID, modelVersion, backendID, skillProfile).
+func (m *Manager) UpdateWorkerFields(workerID, parentID, modelVersion, backendID, skillProfile string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	w, ok := m.workers[workerID]
+	if !ok {
+		return fmt.Errorf("worker %q not found", workerID)
+	}
+
+	if parentID != "" {
+		w.ParentID = parentID
+	}
+	if modelVersion != "" {
+		w.ModelVersion = modelVersion
+	}
+	if backendID != "" {
+		w.BackendID = backendID
+	}
+	// Allow clearing skill profile with special value "-"
+	if skillProfile == "-" {
+		w.SkillProfile = ""
+	} else if skillProfile != "" {
+		w.SkillProfile = skillProfile
+	}
+
+	// Re-validate hierarchy after changes
+	if err := m.validateHierarchy(w); err != nil {
+		return err
+	}
+
+	return m.saveWorkers()
+}
+
 // --- Assignment + lifecycle ---
 
 func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error {

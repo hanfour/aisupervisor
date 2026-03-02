@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getWorker, getManager, getSubordinates } from '../stores/workers.js'
+  import { getWorker, getManager, getSubordinates, skillProfiles, loadSkillProfiles, loadWorkers, loadHierarchy } from '../stores/workers.js'
   import WorkerLogPanel from './WorkerLogPanel.svelte'
 
   export let workerId = ''
@@ -11,7 +11,9 @@
   let manager = null
   let subordinates = []
   let showLogs = false
-  let loading = true
+  let loading = false
+  let editingSkill = false
+  let selectedSkill = ''
 
   const avatarMap = {
     robot: '🤖', cat: '🐱', kirby: '⭐', mario: '🍄',
@@ -30,8 +32,24 @@
     if (worker) {
       manager = await getManager(id)
       subordinates = await getSubordinates(id)
+      selectedSkill = worker.skillProfile || ''
+      await loadSkillProfiles()
     }
     loading = false
+  }
+
+  async function handleSkillChange() {
+    if (!worker) return
+    try {
+      const val = selectedSkill || '-'
+      await window.go.gui.CompanyApp.UpdateWorkerFields(worker.id, '', '', '', val)
+      editingSkill = false
+      await loadData(worker.id)
+      await loadWorkers()
+      await loadHierarchy()
+    } catch (e) {
+      // ignore
+    }
   }
 
   $: if (workerId) loadData(workerId)
@@ -89,6 +107,43 @@
             <span class="value">{worker.modelVersion}</span>
           </div>
         {/if}
+
+        <!-- Skill Profile -->
+        <div class="detail-row">
+          <span class="label">Skill Profile</span>
+          {#if editingSkill}
+            <div class="skill-edit">
+              <select class="skill-select" bind:value={selectedSkill}>
+                <option value="">None</option>
+                {#each $skillProfiles as sp}
+                  <option value={sp.id}>{sp.icon} {sp.name}</option>
+                {/each}
+              </select>
+              <button class="nes-btn is-success btn-sm" on:click={handleSkillChange}>OK</button>
+              <button class="nes-btn btn-sm" on:click={() => { editingSkill = false; selectedSkill = worker.skillProfile || '' }}>X</button>
+            </div>
+          {:else}
+            <span class="value skill-value" on:click={() => editingSkill = true} on:keydown={(e) => e.key === 'Enter' && (editingSkill = true)} role="button" tabindex="0">
+              {#if worker.skillProfile}
+                {@const sp = $skillProfiles.find(p => p.id === worker.skillProfile)}
+                {#if sp}
+                  {sp.icon} {sp.name}
+                {:else}
+                  {worker.skillProfile}
+                {/if}
+              {:else}
+                <span class="empty-text">None (click to set)</span>
+              {/if}
+            </span>
+          {/if}
+        </div>
+        {#if worker.skillProfile && !editingSkill}
+          {@const sp = $skillProfiles.find(p => p.id === worker.skillProfile)}
+          {#if sp}
+            <div class="skill-description">{sp.description}</div>
+          {/if}
+        {/if}
+
         {#if worker.createdAt}
           <div class="detail-row">
             <span class="label">Created</span>
@@ -281,5 +336,44 @@
     text-align: center;
     color: var(--text-secondary);
     font-size: 10px;
+  }
+
+  .skill-value {
+    cursor: pointer;
+    padding: 2px 4px;
+    border: 1px dashed transparent;
+    transition: border-color 0.2s;
+  }
+
+  .skill-value:hover {
+    border-color: var(--accent-green);
+  }
+
+  .skill-edit {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .skill-select {
+    font-size: 9px;
+    padding: 2px 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 2px solid var(--border-color);
+    max-width: 140px;
+  }
+
+  .btn-sm {
+    font-size: 7px !important;
+    padding: 1px 6px !important;
+  }
+
+  .skill-description {
+    font-size: 8px;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    background: rgba(0,255,65,0.05);
+    border-left: 2px solid var(--accent-green);
   }
 </style>

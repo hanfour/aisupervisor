@@ -205,8 +205,8 @@ func (c *CompanyApp) DeleteWorker(workerID string) error {
 }
 
 // UpdateWorkerFields updates optional fields on a worker.
-func (c *CompanyApp) UpdateWorkerFields(workerID, parentID, modelVersion, backendID string) error {
-	return c.company.UpdateWorkerFields(workerID, parentID, modelVersion, backendID)
+func (c *CompanyApp) UpdateWorkerFields(workerID, parentID, modelVersion, backendID, skillProfile string) error {
+	return c.company.UpdateWorkerFields(workerID, parentID, modelVersion, backendID, skillProfile)
 }
 
 // GetHierarchy returns workers organized by tier.

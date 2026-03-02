@@ -1,7 +1,7 @@
 // Canvas 2D rendering engine for Pixel Office — Hacker Base Edition
 
 import { TILE_SIZE, SCALE, COLS, ROWS, CANVAS_W, CANVAS_H, getFloorMap, getDesks, buildWorkerDeskMap } from './layout.js'
-import { prerenderCharacter, prerenderFurniture, prerenderEnvSprite, getCharacterType, loadAllSprites, spritesReady } from './sprites.js'
+import { prerenderCharacter, prerenderFurniture, prerenderEnvSprite, getCharacterType } from './sprites.js'
 import { AnimationState, statusToAnim, ENV_ANIM } from './animation.js'
 import { startAmbient, stopAmbient, playKeyClatter } from './sounds.js'
 import { MovementController } from './movement.js'
@@ -120,8 +120,14 @@ export class OfficeRenderer {
     this.lastTime = 0
     this.running = false
 
+    // Pre-rendered scanline overlay (static, drawn once)
+    this.scanlineCanvas = document.createElement('canvas')
+    this.scanlineCanvas.width = CANVAS_W
+    this.scanlineCanvas.height = CANVAS_H
+
     this._drawBackground()
     this._findScreenTiles()
+    this._prerenderScanlines()
   }
 
   _findScreenTiles() {
@@ -220,8 +226,11 @@ export class OfficeRenderer {
       if (!this.animStates[w.id]) {
         this.animStates[w.id] = new AnimationState()
       }
-      const anim = statusToAnim(w.status)
-      this.animStates[w.id].setState(anim)
+      // Only update status-based animation when worker is stationary
+      if (!this.movement.isMoving(w.id)) {
+        const anim = statusToAnim(w.status)
+        this.animStates[w.id].setState(anim)
+      }
 
       const charType = getCharacterType(w)
       // Retry prerender if previous attempt returned null (sprites weren't ready)
@@ -279,10 +288,30 @@ export class OfficeRenderer {
     this.globalTime += delta
     this.dataStreamPhase = (this.globalTime % ENV_ANIM.dataStreamSpeed) / ENV_ANIM.dataStreamSpeed
 
-    // Update character animations
+    // Update subsystems
+    this.movement.update(delta)
+    this.bubbles.update(delta)
+    this.simulation?.update(delta)
+
+    // Single pass: update animation, apply walk override, trigger sounds
+    let clattered = false
     for (const w of this.workers) {
       const anim = this.animStates[w.id]
-      if (anim) anim.update(delta)
+      if (!anim) continue
+
+      // Walk direction overrides status-based animation
+      const walkAnim = this.movement.getWalkAnimation(w.id)
+      if (walkAnim) {
+        anim.setState(walkAnim)
+      }
+
+      anim.update(delta)
+
+      // Occasional key clatter for working workers
+      if (!clattered && anim.state === 'working' && Math.random() < 0.001) {
+        playKeyClatter()
+        clattered = true
+      }
     }
 
     // Spawn binary particles near screen tiles
@@ -298,28 +327,6 @@ export class OfficeRenderer {
       this.particles[i].update(delta)
       if (this.particles[i].dead) this.particles.splice(i, 1)
     }
-
-    // Update movement, bubbles, and simulation
-    this.movement.update(delta)
-    this.bubbles.update(delta)
-    this.simulation?.update(delta)
-
-    // Override animation state with walk direction when moving
-    for (const w of this.workers) {
-      const walkAnim = this.movement.getWalkAnimation(w.id)
-      if (walkAnim) {
-        this.animStates[w.id]?.setState(walkAnim)
-      }
-    }
-
-    // Trigger key clatter for working workers occasionally
-    for (const w of this.workers) {
-      const anim = this.animStates[w.id]
-      if (anim && anim.state === 'working' && Math.random() < 0.001) {
-        playKeyClatter()
-        break
-      }
-    }
   }
 
   _draw() {
@@ -333,101 +340,77 @@ export class OfficeRenderer {
     this._drawScreenGlow(ctx)
 
     // 3. Characters (shadow + sprite + name + bubble)
-    let dbgTotal = this.workers.length
-    let dbgNoDesk = 0, dbgNoAnim = 0, dbgNoCache = 0, dbgNoFrames = 0, dbgRendered = 0, dbgErrors = []
     const positionMap = {}
     for (const w of this.workers) {
-      try {
-        const desk = this.workerDeskMap[w.id]
-        if (!desk) { dbgNoDesk++; continue }
-        const anim = this.animStates[w.id]
-        if (!anim) { dbgNoAnim++; continue }
+      const desk = this.workerDeskMap[w.id]
+      if (!desk) continue
+      const anim = this.animStates[w.id]
+      if (!anim) continue
 
-        const charType = getCharacterType(w)
-        const cache = this.charCache[charType]
-        if (!cache) { dbgNoCache++; continue }
+      const charType = getCharacterType(w)
+      const cache = this.charCache[charType]
+      if (!cache) continue
 
-        const frames = cache[anim.state]
-        if (!frames) { dbgNoFrames++; continue }
-        const frame = frames[anim.getFrame()]
-        if (!frame) { dbgNoFrames++; continue }
+      const frames = cache[anim.state]
+      if (!frames) continue
+      const frame = frames[anim.getFrame()]
+      if (!frame) continue
 
-        // Dynamic position from MovementController (falls back to desk tile)
-        const pos = this.movement.getPosition(w.id)
-        let px, py
-        if (pos) {
-          px = pos.pixelX - TILE_PX / 2
-          py = pos.pixelY - TILE_PX / 2
-        } else {
-          px = desk.charTile[0] * TILE_PX
-          py = desk.charTile[1] * TILE_PX
-        }
+      // Dynamic position from MovementController (falls back to desk tile)
+      const pos = this.movement.getPosition(w.id)
+      let px, py
+      if (pos) {
+        px = pos.pixelX - TILE_PX / 2
+        py = pos.pixelY - TILE_PX / 2
+      } else {
+        px = desk.charTile[0] * TILE_PX
+        py = desk.charTile[1] * TILE_PX
+      }
 
-        // Track position for bubble rendering
-        positionMap[w.id] = { pixelX: px, pixelY: py }
+      positionMap[w.id] = { pixelX: px, pixelY: py }
 
-        // Shadow ellipse under character
-        ctx.save()
-        ctx.globalAlpha = 0.3
-        ctx.fillStyle = '#000'
-        ctx.beginPath()
-        ctx.ellipse(px + TILE_PX / 2, py + TILE_PX + 2, TILE_PX * 0.35, 4, 0, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.restore()
+      // Shadow ellipse under character
+      ctx.save()
+      ctx.globalAlpha = 0.3
+      ctx.fillStyle = '#000'
+      ctx.beginPath()
+      ctx.ellipse(px + TILE_PX / 2, py + TILE_PX + 2, TILE_PX * 0.35, 4, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
 
-        // Character sprite
-        ctx.drawImage(frame, px, py, TILE_PX, TILE_PX)
+      // Character sprite
+      ctx.drawImage(frame, px, py, TILE_PX, TILE_PX)
 
-        // Name label
-        ctx.save()
-        ctx.font = '7px "Press Start 2P", monospace'
-        ctx.textAlign = 'center'
-        const nameX = px + TILE_PX / 2
-        ctx.fillStyle = 'rgba(0,0,0,0.7)'
-        const nameW = ctx.measureText(w.name).width
-        ctx.fillRect(nameX - nameW / 2 - 2, py + TILE_PX + 2, nameW + 4, 10)
-        ctx.fillStyle = '#ddd'
-        ctx.fillText(w.name, nameX, py + TILE_PX + 10)
-        ctx.restore()
+      // Name label
+      ctx.save()
+      ctx.font = '7px "Press Start 2P", monospace'
+      ctx.textAlign = 'center'
+      const nameX = px + TILE_PX / 2
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'
+      const nameW = ctx.measureText(w.name).width
+      ctx.fillRect(nameX - nameW / 2 - 2, py + TILE_PX + 2, nameW + 4, 10)
+      ctx.fillStyle = '#ddd'
+      ctx.fillText(w.name, nameX, py + TILE_PX + 10)
+      ctx.restore()
 
-        // Hover highlight
-        if (this.hoveredWorkerId === w.id) {
-          ctx.strokeStyle = '#00ff41'
-          ctx.lineWidth = 2
-          ctx.strokeRect(px - 2, py - 2, TILE_PX + 4, TILE_PX + 4)
-        }
+      // Hover highlight
+      if (this.hoveredWorkerId === w.id) {
+        ctx.strokeStyle = '#00ff41'
+        ctx.lineWidth = 2
+        ctx.strokeRect(px - 2, py - 2, TILE_PX + 4, TILE_PX + 4)
+      }
 
-        // Status bubble (only show when not moving and no BubbleManager bubbles active)
-        const bubble = BUBBLE_MAP[anim.state]
-        if (bubble && !this.movement.isMoving(w.id)) {
-          this._drawPixelBubble(ctx, px + TILE_PX - 4, py - 10, bubble)
-        }
-        dbgRendered++
-      } catch (e) {
-        dbgErrors.push(`${w.name}: ${e.message}`)
+      // Status bubble (only when stationary)
+      const bubble = BUBBLE_MAP[anim.state]
+      if (bubble && !this.movement.isMoving(w.id)) {
+        this._drawPixelBubble(ctx, px + TILE_PX - 4, py - 10, bubble)
       }
     }
 
     // 4. BubbleManager overlay (speech/thought/discussion/meeting bubbles)
     this.bubbles.draw(ctx, positionMap)
 
-    // Debug overlay (temporary)
-    ctx.save()
-    ctx.font = '9px monospace'
-    ctx.fillStyle = 'rgba(0,0,0,0.8)'
-    ctx.fillRect(0, 0, 520, 14 + dbgErrors.length * 12)
-    const dbgDeskKeys = Object.keys(this.workerDeskMap).length
-    const dbgCacheKeys = Object.keys(this.charCache).length
-    const dbgSprites = spritesReady() ? 'Y' : 'N'
-    ctx.fillStyle = dbgRendered === dbgTotal ? '#0f0' : '#f00'
-    ctx.fillText(`W:${dbgTotal} R:${dbgRendered} noDesk:${dbgNoDesk} noAnim:${dbgNoAnim} noCache:${dbgNoCache} noFrame:${dbgNoFrames} err:${dbgErrors.length} dMap:${dbgDeskKeys} cCache:${dbgCacheKeys} spr:${dbgSprites}`, 4, 11)
-    ctx.fillStyle = '#ff0'
-    for (let i = 0; i < dbgErrors.length; i++) {
-      ctx.fillText(dbgErrors[i].slice(0, 50), 4, 23 + i * 12)
-    }
-    ctx.restore()
-
-    // 6. Floating binary particles
+    // 5. Floating binary particles
     this._drawParticles(ctx)
 
     // 7. CRT scanline overlay
@@ -491,24 +474,35 @@ export class OfficeRenderer {
     ctx.restore()
   }
 
-  _drawScanlines(ctx) {
-    ctx.save()
+  _prerenderScanlines() {
+    const ctx = this.scanlineCanvas.getContext('2d')
     ctx.fillStyle = 'rgba(0,0,0,0.06)'
     for (let y = 0; y < CANVAS_H; y += 3) {
       ctx.fillRect(0, y, CANVAS_W, 1)
     }
-    ctx.restore()
+  }
+
+  _drawScanlines(ctx) {
+    ctx.drawImage(this.scanlineCanvas, 0, 0)
   }
 
   getWorkerAtPixel(x, y) {
-    const tileX = Math.floor(x / TILE_PX)
-    const tileY = Math.floor(y / TILE_PX)
-
     for (const w of this.workers) {
-      const desk = this.workerDeskMap[w.id]
-      if (!desk) continue
-      const [dx, dy] = desk.charTile
-      if (Math.abs(tileX - dx) <= 1 && Math.abs(tileY - dy) <= 1) {
+      // Use dynamic position if available, otherwise desk position
+      const pos = this.movement.getPosition(w.id)
+      let wx, wy
+      if (pos) {
+        wx = pos.pixelX - TILE_PX / 2
+        wy = pos.pixelY - TILE_PX / 2
+      } else {
+        const desk = this.workerDeskMap[w.id]
+        if (!desk) continue
+        wx = desk.charTile[0] * TILE_PX
+        wy = desk.charTile[1] * TILE_PX
+      }
+      // Hit test with some padding around the sprite
+      if (x >= wx - TILE_PX / 2 && x <= wx + TILE_PX * 1.5 &&
+          y >= wy - TILE_PX / 2 && y <= wy + TILE_PX * 1.5) {
         return w
       }
     }

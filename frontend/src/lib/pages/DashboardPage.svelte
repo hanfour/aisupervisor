@@ -4,8 +4,10 @@
   import TerminalCard from '../components/TerminalCard.svelte'
   import EventLog from '../components/EventLog.svelte'
   import ConfirmDialog from '../components/ConfirmDialog.svelte'
+  import ReviewQueuePanel from '../components/ReviewQueuePanel.svelte'
+  import TrainingStatsPanel from '../components/TrainingStatsPanel.svelte'
   import { events } from '../stores/events.js'
-  import { companyStats, loadCompanyStats } from '../stores/company.js'
+  import { companyStats, loadCompanyStats, loadReviewQueue, loadTrainingStats } from '../stores/company.js'
 
   export let onNavigate = () => {}
 
@@ -23,6 +25,8 @@
 
   onMount(() => {
     loadCompanyStats()
+    loadReviewQueue()
+    loadTrainingStats()
   })
 
   function handleApprove() {
@@ -57,7 +61,25 @@
         <span class="stat-value">{$companyStats.idleWorkers}</span>
         <span class="stat-label">Idle Workers</span>
       </div>
+      <div class="nes-container is-rounded stat-card">
+        <span class="stat-value">{$companyStats.reviewsPending}</span>
+        <span class="stat-label">Reviews Pending</span>
+      </div>
+      <div class="nes-container is-rounded stat-card">
+        <span class="stat-value">{$companyStats.trainingPairs}</span>
+        <span class="stat-label">Training Pairs</span>
+      </div>
     </div>
+  </section>
+
+  <section class="nes-container with-title is-dark">
+    <p class="title">Review Queue</p>
+    <ReviewQueuePanel />
+  </section>
+
+  <section class="nes-container with-title is-dark">
+    <p class="title">Training Stats</p>
+    <TrainingStatsPanel />
   </section>
 
   <section class="nes-container with-title is-dark">
@@ -100,6 +122,7 @@
   .stat-cards {
     display: flex;
     gap: 12px;
+    flex-wrap: wrap;
   }
 
   .stat-card {

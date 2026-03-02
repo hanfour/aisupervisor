@@ -23,6 +23,7 @@
   let SettingsPage = null
   // Lazy-loaded company pages
   let ProjectBoardPage = null
+  let HierarchyPage = null
 
   onMount(async () => {
     initEventStore()
@@ -65,6 +66,11 @@
       const boardModule = await import('./lib/pages/ProjectBoardPage.svelte')
       ProjectBoardPage = boardModule.default
     } catch {}
+    // Hierarchy page
+    try {
+      const hierarchyModule = await import('./lib/pages/HierarchyPage.svelte')
+      HierarchyPage = hierarchyModule.default
+    } catch {}
   })
 
   function navigate(page, id) {
@@ -87,6 +93,8 @@
       <svelte:component this={ProjectBoardPage} projectId={selectedProjectId} onNavigate={navigate} />
     {:else if currentPage === 'workers'}
       <WorkersPage />
+    {:else if currentPage === 'hierarchy' && HierarchyPage}
+      <svelte:component this={HierarchyPage} />
     {:else if currentPage === 'terminal'}
       <TerminalPage
         sessionId={selectedSessionId}

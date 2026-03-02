@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { workers, loadWorkers, createWorker } from '../stores/workers.js'
+  import { workers, loadWorkers, createWorkerWithTier, promoteWorker, hierarchy, loadHierarchy } from '../stores/workers.js'
   import WorkerCard from '../components/WorkerCard.svelte'
   import WorkerLogPanel from '../components/WorkerLogPanel.svelte'
   import { addError } from '../stores/errors.js'
@@ -8,6 +8,10 @@
   let showHire = false
   let newName = ''
   let newAvatar = 'robot'
+  let newTier = 'engineer'
+  let newParentID = ''
+  let newBackendID = ''
+  let newCliTool = 'claude'
   let logWorker = null
 
   const avatarOptions = [
@@ -21,9 +25,25 @@
     { id: 'pokeball', label: 'Pokeball' },
   ]
 
+  const tierOptions = [
+    { id: 'consultant', label: 'Consultant' },
+    { id: 'manager', label: 'Manager' },
+    { id: 'engineer', label: 'Engineer' },
+  ]
+
+  const cliToolOptions = [
+    { id: 'claude', label: 'Claude' },
+    { id: 'codex', label: 'Codex' },
+    { id: 'gemini', label: 'Gemini' },
+  ]
+
+  // Available managers for parent selection
+  $: managers = [...($hierarchy.consultant || []), ...($hierarchy.manager || [])]
+
   onMount(async () => {
     try {
       await loadWorkers()
+      await loadHierarchy()
     } catch (e) {
       addError('Failed to load workers: ' + e.message)
     }
@@ -32,14 +52,36 @@
   async function handleHire() {
     if (!newName) return
     try {
-      await createWorker(newName, newAvatar)
+      await createWorkerWithTier(newName, newAvatar, newTier, newParentID, newBackendID, newCliTool)
       newName = ''
       newAvatar = 'robot'
+      newTier = 'engineer'
+      newParentID = ''
+      newBackendID = ''
+      newCliTool = 'claude'
       showHire = false
     } catch (e) {
       addError('Failed to hire worker: ' + e.message)
     }
   }
+
+  async function handlePromote(worker) {
+    const tiers = ['engineer', 'manager', 'consultant']
+    const currentIdx = tiers.indexOf(worker.tier)
+    if (currentIdx < 0 || currentIdx >= tiers.length - 1) return
+    const nextTier = tiers[currentIdx + 1]
+    try {
+      await promoteWorker(worker.id, nextTier)
+    } catch (e) {
+      addError('Failed to promote worker: ' + e.message)
+    }
+  }
+
+  function tierLabel(tier) {
+    return tier.charAt(0).toUpperCase() + tier.slice(1) + 's'
+  }
+
+  const tierOrder = ['consultant', 'manager', 'engineer']
 </script>
 
 <div class="workers-page">
@@ -49,13 +91,33 @@
       <button class="nes-btn is-success" on:click={() => showHire = true}>+ Hire Worker</button>
     </div>
 
-    <div class="workers-grid">
-      {#each $workers as w}
-        <WorkerCard worker={w} onClick={(worker) => logWorker = worker} />
+    <div class="hierarchy-grid">
+      {#each tierOrder as tier}
+        {@const tierWorkers = $hierarchy[tier] || []}
+        <div class="tier-column">
+          <h3 class="tier-header">{tierLabel(tier)} ({tierWorkers.length})</h3>
+          <div class="tier-workers">
+            {#each tierWorkers as w}
+              <div class="worker-wrap">
+                <WorkerCard worker={w} onClick={(worker) => logWorker = worker} />
+                {#if w.parentName}
+                  <div class="parent-link">
+                    <span class="parent-arrow">&uarr;</span> Manager: {w.parentName}
+                  </div>
+                {/if}
+                {#if tier !== 'consultant'}
+                  <button class="nes-btn is-warning promote-btn" on:click|stopPropagation={() => handlePromote(w)}>
+                    Promote
+                  </button>
+                {/if}
+              </div>
+            {/each}
+            {#if tierWorkers.length === 0}
+              <p class="empty-msg">No {tier}s</p>
+            {/if}
+          </div>
+        </div>
       {/each}
-      {#if $workers.length === 0}
-        <p class="empty-msg">No workers hired yet. Hire AI employees to start working!</p>
-      {/if}
     </div>
   </section>
 
@@ -76,6 +138,7 @@
             <label for="w-name">Name</label>
             <input type="text" id="w-name" class="nes-input is-dark" bind:value={newName} placeholder="e.g. Alice" />
           </div>
+
           <div class="nes-field">
             <label>Avatar</label>
             <div class="avatar-grid">
@@ -87,6 +150,46 @@
               {/each}
             </div>
           </div>
+
+          <div class="nes-field">
+            <label for="w-tier">Tier</label>
+            <div class="nes-select is-dark">
+              <select id="w-tier" bind:value={newTier}>
+                {#each tierOptions as opt}
+                  <option value={opt.id}>{opt.label}</option>
+                {/each}
+              </select>
+            </div>
+          </div>
+
+          <div class="nes-field">
+            <label for="w-parent">Parent (Manager)</label>
+            <div class="nes-select is-dark">
+              <select id="w-parent" bind:value={newParentID}>
+                <option value="">None</option>
+                {#each managers as m}
+                  <option value={m.id}>{m.name} ({m.tier})</option>
+                {/each}
+              </select>
+            </div>
+          </div>
+
+          <div class="nes-field">
+            <label for="w-cli">CLI Tool</label>
+            <div class="nes-select is-dark">
+              <select id="w-cli" bind:value={newCliTool}>
+                {#each cliToolOptions as opt}
+                  <option value={opt.id}>{opt.label}</option>
+                {/each}
+              </select>
+            </div>
+          </div>
+
+          <div class="nes-field">
+            <label for="w-backend">Backend ID (optional)</label>
+            <input type="text" id="w-backend" class="nes-input is-dark" bind:value={newBackendID} placeholder="e.g. gpt-4" />
+          </div>
+
           <div class="dialog-actions">
             <button type="submit" class="nes-btn is-success">Hire</button>
             <button type="button" class="nes-btn" on:click={() => showHire = false}>Cancel</button>
@@ -113,10 +216,53 @@
     font-size: 10px;
   }
 
-  .workers-grid {
-    display: flex;
-    flex-wrap: wrap;
+  .hierarchy-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 12px;
+    min-height: 200px;
+  }
+
+  .tier-column {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .tier-header {
+    font-size: 11px;
+    color: var(--accent-blue);
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 6px;
+    margin: 0;
+  }
+
+  .tier-workers {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .worker-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .parent-link {
+    font-size: 9px;
+    color: var(--text-secondary);
+    text-align: center;
+  }
+
+  .parent-arrow {
+    color: var(--accent-blue);
+  }
+
+  .promote-btn {
+    font-size: 8px;
+    padding: 2px 6px;
+    align-self: center;
   }
 
   .dialog-overlay {
@@ -133,7 +279,9 @@
   }
 
   .nes-dialog {
-    width: 400px;
+    width: 450px;
+    max-height: 85vh;
+    overflow-y: auto;
     padding: 24px !important;
   }
 
@@ -150,6 +298,10 @@
   .nes-field input[type="text"] {
     font-size: 10px;
     width: 100%;
+  }
+
+  .nes-field select {
+    font-size: 10px;
   }
 
   .avatar-grid {

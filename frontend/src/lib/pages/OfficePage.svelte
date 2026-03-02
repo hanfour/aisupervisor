@@ -1,14 +1,17 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import { workers as workersStore, loadWorkers } from '../stores/workers.js'
   import { events } from '../stores/events.js'
   import { assignDesksToWorkers } from '../office/layout.js'
   import { OfficeRenderer } from '../office/officeRenderer.js'
+  import { SimulationEngine } from '../office/simulation.js'
+  import { loadAllSprites } from '../office/sprites.js'
   import { playFinished, playError, playAssign, setSoundEnabled, isSoundEnabled } from '../office/sounds.js'
   import CharacterProfilePage from '../components/CharacterProfilePage.svelte'
 
   let canvasEl
   let renderer
+  let simulation
   let selectedWorkerId = null
   let soundOn = isSoundEnabled()
   let pollTimer
@@ -20,8 +23,18 @@
   $: allWorkers = $workersStore || []
 
   onMount(async () => {
+    // Clear stale desk assignments from previous sessions
+    localStorage.removeItem('pixelOffice_deskAssignments')
+
+    await loadAllSprites()  // load MetroCity PNG spritesheets
     await loadWorkers()
+    await tick()  // ensure canvas element is bound
     initRenderer()
+
+    // Retry renderer init after a delay in case sprites weren't fully decoded
+    setTimeout(() => updateRenderer(), 500)
+    setTimeout(() => updateRenderer(), 1500)
+
     pollTimer = setInterval(async () => {
       await loadWorkers()
       updateRenderer()
@@ -36,12 +49,17 @@
   function initRenderer() {
     if (!canvasEl) return
     renderer = new OfficeRenderer(canvasEl)
+    simulation = new SimulationEngine(renderer)
+    renderer.setSimulation(simulation)
     updateRenderer()
     renderer.start()
   }
 
   function updateRenderer() {
-    if (!renderer) return
+    if (!renderer) {
+      initRenderer()  // retry init if renderer wasn't created yet
+      if (!renderer) return
+    }
     const workers = $workersStore || []
     const assignments = assignDesksToWorkers(workers)
     renderer.setWorkers(workers, assignments)
@@ -65,6 +83,8 @@
   // React to event store changes
   $: if ($events) {
     updateRenderer()
+    const latest = $events[$events.length - 1]
+    if (latest && simulation) simulation.handleEvent(latest)
   }
 
   function handleCanvasClick(e) {
@@ -102,20 +122,15 @@
   }
 </script>
 
-{#if selectedWorkerId}
-  <CharacterProfilePage
-    workerId={selectedWorkerId}
-    onBack={() => selectedWorkerId = null}
-    onSelectWorker={handleSelectWorker}
-  />
-{:else}
+<div class="office-wrapper">
+  <!-- Office canvas always in DOM and always rendering -->
   <div class="office-page">
     <div class="office-header">
-      <h2 class="office-title">▣ PIXEL OFFICE</h2>
+      <h2 class="office-title">&#9635; PIXEL OFFICE</h2>
       <div class="header-controls">
         <span class="worker-count">{allWorkers.length} workers</span>
         <button class="nes-btn sound-btn" class:is-primary={soundOn} on:click={toggleSound}>
-          {soundOn ? '♪ ON' : '♪ OFF'}
+          {soundOn ? '&#9835; ON' : '&#9835; OFF'}
         </button>
       </div>
     </div>
@@ -142,14 +157,42 @@
       </div>
     {/if}
   </div>
-{/if}
+
+  <!-- Character profile overlays on top -->
+  {#if selectedWorkerId}
+    <div class="profile-overlay">
+      <CharacterProfilePage
+        workerId={selectedWorkerId}
+        onBack={() => selectedWorkerId = null}
+        onSelectWorker={handleSelectWorker}
+      />
+    </div>
+  {/if}
+</div>
 
 <style>
+  .office-wrapper {
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+  }
+
   .office-page {
     display: flex;
     flex-direction: column;
     height: 100%;
     gap: 8px;
+  }
+
+  .profile-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    background: var(--bg-color, #0d1117);
+    overflow: auto;
   }
 
   .office-header {

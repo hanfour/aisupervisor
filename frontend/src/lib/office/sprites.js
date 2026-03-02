@@ -1,771 +1,222 @@
-// Pixel Office — JRPG-style 16×16 sprite data for characters & hacker-base furniture
-// Each sprite row is a 16-char string mapped to an expanded palette.
+// Pixel Office — MetroCity spritesheet characters + hacker-base furniture
+// Characters use MetroCity Free Top Down Character Pack (CC0) by JIK-A-4
+// Furniture/env sprites remain as pixel-string data.
 
-// ── Expanded Character Palettes (11+ colors per class) ──────────────────────
-const PALETTES = {
-  coder: {
-    skin: '#fdd', skinShade: '#dbb', skinHi: '#fee',
-    hair: '#543', hairShade: '#321', hairHi: '#876',
-    shirt: '#48f', shirtShade: '#26a', shirtHi: '#6af',
-    pants: '#336', pantsShade: '#224',
-    shoes: '#222', eye: '#111', eyeHi: '#fff', accent: '#ff4444',
-  },
-  hacker: {
-    skin: '#fed', skinShade: '#dca', skinHi: '#ffe',
-    hair: '#111', hairShade: '#000', hairHi: '#333',
-    shirt: '#1a1', shirtShade: '#070', shirtHi: '#3d3',
-    pants: '#222', pantsShade: '#111',
-    shoes: '#111', eye: '#00ff41', eyeHi: '#aaffaa', accent: '#00ff41',
-  },
-  designer: {
-    skin: '#fec', skinShade: '#dca', skinHi: '#ffe',
-    hair: '#f80', hairShade: '#c50', hairHi: '#fb3',
-    shirt: '#f4a', shirtShade: '#c27', shirtHi: '#f8d',
-    pants: '#537', pantsShade: '#325',
-    shoes: '#433', eye: '#111', eyeHi: '#fff', accent: '#ff44ff',
-  },
-  analyst: {
-    skin: '#edb', skinShade: '#cb9', skinHi: '#fed',
-    hair: '#654', hairShade: '#432', hairHi: '#987',
-    shirt: '#fff', shirtShade: '#ccc', shirtHi: '#fff',
-    pants: '#447', pantsShade: '#225',
-    shoes: '#333', eye: '#111', eyeHi: '#fff', accent: '#88ccff',
-  },
-  architect: {
-    skin: '#fdd', skinShade: '#dbb', skinHi: '#fee',
-    hair: '#888', hairShade: '#555', hairHi: '#bbb',
-    shirt: '#669', shirtShade: '#447', shirtHi: '#88b',
-    pants: '#334', pantsShade: '#112',
-    shoes: '#222', eye: '#111', eyeHi: '#fff', accent: '#cc88ff',
-  },
-  devops: {
-    skin: '#dc9', skinShade: '#ba7', skinHi: '#fed',
-    hair: '#320', hairShade: '#100', hairHi: '#653',
-    shirt: '#f62', shirtShade: '#c30', shirtHi: '#f94',
-    pants: '#333', pantsShade: '#111',
-    shoes: '#222', eye: '#111', eyeHi: '#fff', accent: '#ffaa00',
-  },
-  researcher: {
-    skin: '#fdd', skinShade: '#dbb', skinHi: '#fee',
-    hair: '#654', hairShade: '#432', hairHi: '#987',
-    shirt: '#28d', shirtShade: '#06a', shirtHi: '#4af',
-    pants: '#446', pantsShade: '#224',
-    shoes: '#333', eye: '#111', eyeHi: '#fff', accent: '#44ddff',
-  },
-  reviewer: {
-    skin: '#edb', skinShade: '#cb9', skinHi: '#fed',
-    hair: '#543', hairShade: '#321', hairHi: '#876',
-    shirt: '#2a6', shirtShade: '#084', shirtHi: '#4c8',
-    pants: '#345', pantsShade: '#123',
-    shoes: '#222', eye: '#111', eyeHi: '#fff', accent: '#44ff88',
-  },
+import bodyUrl from './assets/body.png'
+import outfit1Url from './assets/outfit1.png'
+import outfit2Url from './assets/outfit2.png'
+import outfit3Url from './assets/outfit3.png'
+import outfit4Url from './assets/outfit4.png'
+import outfit5Url from './assets/outfit5.png'
+import outfit6Url from './assets/outfit6.png'
+import hair1Url from './assets/hair1.png'
+import hair2Url from './assets/hair2.png'
+import hair3Url from './assets/hair3.png'
+import hair4Url from './assets/hair4.png'
+import hair5Url from './assets/hair5.png'
+import hair6Url from './assets/hair6.png'
+import hair7Url from './assets/hair7.png'
+import shadowUrl from './assets/shadow.png'
+
+// ── Spritesheet constants ────────────────────────────────────────────────────
+const FRAME_SIZE = 32    // each frame is 32×32 px in the spritesheet
+const SHEET_COLS = 24    // 24 frames per row
+const FRAMES_PER_DIR = 6 // 6 walk frames per direction
+
+// Direction offsets (column index = dir * FRAMES_PER_DIR)
+const DIR = { down: 0, left: 1, right: 2, up: 3 }
+
+// body.png has 6 rows = 6 body/skin types
+const BODY_ROWS = 6
+
+// ── Character type → spritesheet combination ─────────────────────────────────
+// Maps each character type to a body row, outfit file, and hair file
+const CHARACTER_CONFIGS = {
+  coder:      { bodyRow: 0, outfit: 'outfit1', hair: 'hair1' },
+  hacker:     { bodyRow: 1, outfit: 'outfit2', hair: 'hair2' },
+  designer:   { bodyRow: 2, outfit: 'outfit3', hair: 'hair3' },
+  analyst:    { bodyRow: 3, outfit: 'outfit4', hair: 'hair4' },
+  architect:  { bodyRow: 4, outfit: 'outfit5', hair: 'hair5' },
+  devops:     { bodyRow: 5, outfit: 'outfit6', hair: 'hair6' },
+  researcher: { bodyRow: 0, outfit: 'outfit1', hair: 'hair7' },
+  reviewer:   { bodyRow: 2, outfit: 'outfit3', hair: 'hair5' },
 }
 
-// ── Color Map: char → palette key ───────────────────────────────────────────
-// Uppercase = shade, lowercase non-digit = highlight
-const COLOR_MAP = {
-  '1': 'hair',     'H': 'hairShade',   'h': 'hairHi',
-  '2': 'skin',     'S': 'skinShade',   's': 'skinHi',
-  '3': 'shirt',    'T': 'shirtShade',  't': 'shirtHi',
-  '4': 'pants',    'P': 'pantsShade',
-  '5': 'shoes',
-  '6': 'eye',      'e': 'eyeHi',
-  '7': 'outline',  // resolved to #111 in renderSpriteToCanvas
-  'A': 'accent',
+const CHARACTER_NAMES = Object.keys(CHARACTER_CONFIGS)
+
+// ── Animation state → frame indices (from down-facing direction) ─────────────
+// MetroCity walk cycle: 6 frames per direction, we pick subsets for each state
+const ANIM_FRAME_MAP = {
+  idle:     [0, 1],        // standing still, slight sway
+  working:  [0, 2, 4],     // active typing/working
+  waiting:  [0, 3],        // slow pace
+  error:    [0],            // frozen
+  finished: [0, 1, 2],     // celebratory
 }
 
-// ── Base Character Frames (generic humanoid, used as fallback) ──────────────
-// JRPG style: 7=outline wrapping all body parts, shade/highlight baked in
-const CHARACTER_FRAMES = {
-  idle: [
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    [
-      '0000000000000000',
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-  ],
-  working: [
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000273t337000000',
-      '0027t33T37000000',
-      '0072t33T37000000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337200000',
-      '000073t33T720000',
-      '000073t33T270000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000273t337200000',
-      '00273t33T3720000',
-      '0007333337000000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-  ],
-  waiting: [
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000075557000000',
-    ],
-  ],
-  error: [
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0270073370072000',
-      '0270733337072000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-  ],
-  finished: [
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370072000',
-      '000073t337072000',
-      '000073t33T270000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    [
-      '0027077770027000',
-      '0027h11H77027000',
-      '00271111HH270000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    [
-      '0000000000000000',
-      '0027077770027000',
-      '0027h11H77027000',
-      '00271111HH270000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000000000000000',
-      '0000750057000000',
-    ],
-  ],
-  walkDown: [
-    // Frame 0 — left leg forward
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ],
-    // Frame 1 — neutral
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    // Frame 2 — right leg forward
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000070470000000',
-      '0000070570000000',
-      '0000000057000000',
-    ],
-  ],
-  walkUp: [
-    // Frame 0 — left leg forward (back view)
-    [
-      '0000077770000000',
-      '00007H11H7000000',
-      '0007H111H7000000',
-      '0007H111H7000000',
-      '00071S11S7000000',
-      '0000711117000000',
-      '0000073370000000',
-      '000073T337000000',
-      '00073T3TT3700000',
-      '00073T3TT3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ],
-    // Frame 1 — neutral (back view)
-    [
-      '0000077770000000',
-      '00007H11H7000000',
-      '0007H111H7000000',
-      '0007H111H7000000',
-      '00071S11S7000000',
-      '0000711117000000',
-      '0000073370000000',
-      '000073T337000000',
-      '00073T3TT3700000',
-      '00073T3TT3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    // Frame 2 — right leg forward (back view)
-    [
-      '0000077770000000',
-      '00007H11H7000000',
-      '0007H111H7000000',
-      '0007H111H7000000',
-      '00071S11S7000000',
-      '0000711117000000',
-      '0000073370000000',
-      '000073T337000000',
-      '00073T3TT3700000',
-      '00073T3TT3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000070470000000',
-      '0000070570000000',
-      '0000000057000000',
-    ],
-  ],
-  walkLeft: [
-    // Frame 0 — left leg + left arm forward
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762007700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000273t337000000',
-      '0027t33T37000000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ],
-    // Frame 1 — neutral (facing left)
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762007700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    // Frame 2 — right leg + right arm back
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762007700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337200000',
-      '000073t33T720000',
-      '000073t33T270000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000070470000000',
-      '0000070570000000',
-      '0000000057000000',
-    ],
-  ],
-  walkRight: [
-    // Frame 0 — right leg + right arm forward
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007700267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337200000',
-      '000073t33T720000',
-      '000073t33T270000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000070470000000',
-      '0000070570000000',
-      '0000000057000000',
-    ],
-    // Frame 1 — neutral (facing right)
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007700267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ],
-    // Frame 2 — left leg + left arm back
-    [
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007700267700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000273t337000000',
-      '0027t33T37000000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ],
-  ],
+// ── Image loading ────────────────────────────────────────────────────────────
+const imageCache = {}
+let imagesLoaded = false
+let loadPromise = null
+
+const IMAGE_URLS = {
+  body: bodyUrl,
+  outfit1: outfit1Url, outfit2: outfit2Url, outfit3: outfit3Url,
+  outfit4: outfit4Url, outfit5: outfit5Url, outfit6: outfit6Url,
+  hair1: hair1Url, hair2: hair2Url, hair3: hair3Url, hair4: hair4Url,
+  hair5: hair5Url, hair6: hair6Url, hair7: hair7Url,
+  shadow: shadowUrl,
 }
 
-// ── Class-Specific Frame Overrides ──────────────────────────────────────────
-// Each class overrides idle[0] with a unique silhouette; other frames derive
-// from the base CHARACTER_FRAMES above.
-const CLASS_FRAME_OVERRIDES = {
-  coder: {
-    // Hoodie + headphones (A=accent headphone color)
-    idle: [[
-      '000A077770A00000',
-      '000A7h11H7A00000',
-      '0007h111HH700000',
-      '0007762e67700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '0007t3tt3T700000',
-      '0007t3tt3T700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ]],
-    walkDown: [[
-      '000A077770A00000',
-      '000A7h11H7A00000',
-      '0007h111HH700000',
-      '0007762e67700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '0007t3tt3T700000',
-      '0007t3tt3T700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ]],
-  },
-  hacker: {
-    // Hood + face mask, matrix-green eyes
-    idle: [[
-      '0000777777000000',
-      '0007H1111H700000',
-      '0071H1111H170000',
-      '0077762e67770000',
-      '0007722227700000',
-      '0000777777000000',
-      '0000073370000000',
-      '000073t337000000',
-      '0007t3tt3T700000',
-      '000A73337A000000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ]],
-    walkDown: [[
-      '0000777777000000',
-      '0007H1111H700000',
-      '0071H1111H170000',
-      '0077762e67770000',
-      '0007722227700000',
-      '0000777777000000',
-      '0000073370000000',
-      '000073t337000000',
-      '0007t3tt3T700000',
-      '000A73337A000000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ]],
-  },
-  designer: {
-    // Beret + relaxed wide stance
-    idle: [[
-      '00000A7700000000',
-      '0000A77770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762e67700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000755570000000',
-      '0007500057000000',
-    ]],
-    walkDown: [[
-      '00000A7700000000',
-      '0000A77770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762e67700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ]],
-  },
-  analyst: {
-    // Glasses + tie
-    idle: [[
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '000A76e6e7A00000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '000007A370000000',
-      '000073A337000000',
-      '00073tA3T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ]],
-    walkDown: [[
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '000A76e6e7A00000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '000007A370000000',
-      '000073A337000000',
-      '00073tA3T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ]],
-  },
-  architect: {
-    // Long coat / cape
-    idle: [[
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762e67700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '00A073t337A00000',
-      '0A073t33T370A000',
-      '0A073t33T370A000',
-      '0A007333370A0000',
-      '0A00074470A00000',
-      '00A074P4470A0000',
-      '000A074470A00000',
-      '0000075570000000',
-      '0000750057000000',
-    ]],
-    walkDown: [[
-      '0000077770000000',
-      '00007h11H7000000',
-      '0007h111HH700000',
-      '0007762e67700000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '00A073t337A00000',
-      '0A073t33T370A000',
-      '0A073t33T370A000',
-      '0A007333370A0000',
-      '0A00074470A00000',
-      '00A074P4470A0000',
-      '000A074070A00000',
-      '0000075070000000',
-      '0000750000000000',
-    ]],
-  },
-  devops: {
-    // Hard hat + goggles
-    idle: [[
-      '000AAAAAAA000000',
-      '000A7A7A7A000000',
-      '00007h11H7000000',
-      '000A76e6e7A00000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074470000000',
-      '0000075570000000',
-      '0000750057000000',
-    ]],
-    walkDown: [[
-      '000AAAAAAA000000',
-      '000A7A7A7A000000',
-      '00007h11H7000000',
-      '000A76e6e7A00000',
-      '00072s22S2700000',
-      '0000722227000000',
-      '0000073370000000',
-      '000073t337000000',
-      '00073t33T3700000',
-      '00073t33T3700000',
-      '0000733337000000',
-      '0000074470000000',
-      '000074P447000000',
-      '0000074070000000',
-      '0000075070000000',
-      '0000750000000000',
-    ]],
-  },
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      // Use decode() to ensure image is fully decoded before resolving
+      // This is critical for Wails WebView where onload fires before decode completes
+      if (img.decode) {
+        img.decode().then(() => resolve(img)).catch(() => resolve(img))
+      } else {
+        resolve(img)
+      }
+    }
+    img.onerror = () => reject(new Error(`Failed to load: ${url}`))
+    img.src = url
+  })
 }
 
-// ── Hacker-Base Furniture Sprites ───────────────────────────────────────────
+export function loadAllSprites() {
+  if (loadPromise) return loadPromise
+  loadPromise = Promise.all(
+    Object.entries(IMAGE_URLS).map(async ([name, url]) => {
+      imageCache[name] = await loadImage(url)
+    })
+  ).then(() => { imagesLoaded = true })
+  return loadPromise
+}
+
+export function spritesReady() { return imagesLoaded }
+
+// ── Character prerendering (composites body + outfit + hair) ─────────────────
+
+function extractFrame(img, col, row) {
+  // Extract a single 32×32 frame from a spritesheet
+  const c = document.createElement('canvas')
+  c.width = FRAME_SIZE
+  c.height = FRAME_SIZE
+  const ctx = c.getContext('2d')
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(img,
+    col * FRAME_SIZE, row * FRAME_SIZE, FRAME_SIZE, FRAME_SIZE,
+    0, 0, FRAME_SIZE, FRAME_SIZE
+  )
+  return c
+}
+
+function compositeFrame(bodyImg, bodyRow, outfitImg, hairImg, col) {
+  const c = document.createElement('canvas')
+  c.width = FRAME_SIZE
+  c.height = FRAME_SIZE
+  const ctx = c.getContext('2d')
+  ctx.imageSmoothingEnabled = false
+
+  // Layer 1: body
+  ctx.drawImage(bodyImg,
+    col * FRAME_SIZE, bodyRow * FRAME_SIZE, FRAME_SIZE, FRAME_SIZE,
+    0, 0, FRAME_SIZE, FRAME_SIZE
+  )
+
+  // Layer 2: outfit (single row, same column)
+  if (outfitImg) {
+    ctx.drawImage(outfitImg,
+      col * FRAME_SIZE, 0, FRAME_SIZE, FRAME_SIZE,
+      0, 0, FRAME_SIZE, FRAME_SIZE
+    )
+  }
+
+  // Layer 3: hair (32×32 single image, always overlaid at same position)
+  if (hairImg) {
+    ctx.drawImage(hairImg, 0, 0, FRAME_SIZE, FRAME_SIZE)
+  }
+
+  return c
+}
+
+export function prerenderCharacter(charType) {
+  if (!imagesLoaded) return null
+  const config = CHARACTER_CONFIGS[charType]
+  if (!config) return null
+
+  const bodyImg = imageCache.body
+  const outfitImg = imageCache[config.outfit]
+  const hairImg = imageCache[config.hair]
+  if (!bodyImg) return null
+
+  const cache = {}
+
+  // For each animation state, prerender the frames (all use down-facing direction)
+  for (const [state, frameIndices] of Object.entries(ANIM_FRAME_MAP)) {
+    cache[state] = frameIndices.map(fi => {
+      const col = DIR.down * FRAMES_PER_DIR + fi
+      return compositeFrame(bodyImg, config.bodyRow, outfitImg, hairImg, col)
+    })
+  }
+
+  // Four-direction walk frames (3 frames per direction, matching animation.js walkDown/Up/Left/Right)
+  const WALK_FRAMES = [0, 1, 2]
+  for (const [dirName, dirIdx] of Object.entries(DIR)) {
+    const animName = 'walk' + dirName[0].toUpperCase() + dirName.slice(1)
+    cache[animName] = WALK_FRAMES.map(fi => {
+      const col = dirIdx * FRAMES_PER_DIR + fi
+      return compositeFrame(bodyImg, config.bodyRow, outfitImg, hairImg, col)
+    })
+  }
+
+  return cache
+}
+
+// ── Character type resolution ────────────────────────────────────────────────
+const AVATAR_TO_CHAR = {
+  'coder': 'coder',
+  'hacker': 'hacker',
+  'designer': 'designer',
+  'analyst': 'analyst',
+  'architect': 'architect',
+  'devops': 'devops',
+  'researcher': 'researcher',
+  'reviewer': 'reviewer',
+}
+
+export function getCharacterType(worker) {
+  if (worker.avatar && AVATAR_TO_CHAR[worker.avatar]) return AVATAR_TO_CHAR[worker.avatar]
+  if (worker.skillProfile && AVATAR_TO_CHAR[worker.skillProfile]) return AVATAR_TO_CHAR[worker.skillProfile]
+  let hash = 0
+  const id = worker.id || worker.name || ''
+  for (let i = 0; i < id.length; i++) {
+    hash = ((hash << 5) - hash) + id.charCodeAt(i)
+    hash |= 0
+  }
+  return CHARACTER_NAMES[Math.abs(hash) % CHARACTER_NAMES.length]
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FURNITURE & ENV SPRITES — Unchanged pixel-string rendering
+// ══════════════════════════════════════════════════════════════════════════════
+
+const FURNITURE_PALETTE = {
+  '7': '#2a2a3a',  // metal frame
+  '8': '#1a1a2e',  // dark surface
+  '9': '#00ff41',  // LED green
+  'b': '#00ddff',  // cyan glow
+  '1': '#44eeff',  // screen
+  '3': '#ff4444',  // LED red
+  'c': '#00ff41',  // neon green
+  'd': '#ff00ff',  // neon pink
+  'e': '#e8e8f0',  // whiteboard face (off-white)
+}
+
 const FURNITURE_SPRITES = {
-  desk: [  // hackerStation — triple monitor workstation
+  desk: [
     '0000000000000000',
     '0000000000000000',
     '0771107711077110',
@@ -783,7 +234,7 @@ const FURNITURE_SPRITES = {
     '00070c00c0070000',
     '0000000000000000',
   ],
-  computer: [  // holoDisplay — floating holographic screen
+  computer: [
     '0000000000000000',
     '000077777700b000',
     '00007b11b700b000',
@@ -801,7 +252,7 @@ const FURNITURE_SPRITES = {
     '0000000000000000',
     '0000000000000000',
   ],
-  plant: [  // serverRack — server rack with blinking LEDs
+  plant: [
     '0777777777777700',
     '07888888888c8700',
     '0789999938888700',
@@ -819,7 +270,7 @@ const FURNITURE_SPRITES = {
     '0007000000070000',
     '0077700000777000',
   ],
-  watercooler: [  // vendingMachine — energy drink vending machine
+  watercooler: [
     '0077777777770000',
     '0078888888870000',
     '007c3c3c3c870000',
@@ -837,7 +288,7 @@ const FURNITURE_SPRITES = {
     '0077777777770000',
     '0000000000000000',
   ],
-  bookshelf: [  // wallOfScreens — multi-screen display wall
+  bookshelf: [
     '7777777777777777',
     '7b1b71b171b1b177',
     '71b171b1b1b17177',
@@ -855,7 +306,7 @@ const FURNITURE_SPRITES = {
     '7000000000000077',
     '7777777777777777',
   ],
-  meetingTable: [  // conference table segment — tiles horizontally to form a long table
+  meetingTable: [
     '0777777777777770',
     '0788888888888870',
     '07b8888888888b70',
@@ -873,7 +324,7 @@ const FURNITURE_SPRITES = {
     '0788888888888870',
     '0777777777777770',
   ],
-  whiteboard: [  // wall-mounted whiteboard with writing lines
+  whiteboard: [
     '7777777777777777',
     '7eeeeeeeeeeeeee7',
     '7eeeeeeeeeeeeee7',
@@ -893,9 +344,8 @@ const FURNITURE_SPRITES = {
   ],
 }
 
-// Extra environment sprites for tile rendering
 const ENV_SPRITES = {
-  glowStrip: [  // neon glow strip along walls
+  glowStrip: [
     '0000000000000000',
     '0000000000000000',
     '0000000000000000',
@@ -913,7 +363,7 @@ const ENV_SPRITES = {
     '0000000000000000',
     '0000000000000000',
   ],
-  cableFloor: [  // floor cables
+  cableFloor: [
     '0000000000000000',
     '0000000000000000',
     '0000000070000000',
@@ -933,68 +383,15 @@ const ENV_SPRITES = {
   ],
 }
 
-// ── Furniture Palette (dark metal hacker-base) ──────────────────────────────
-const FURNITURE_PALETTE = {
-  '7': '#2a2a3a',  // metal frame
-  '8': '#1a1a2e',  // dark surface
-  '9': '#00ff41',  // LED green
-  'b': '#00ddff',  // cyan glow
-  '1': '#44eeff',  // screen
-  '3': '#ff4444',  // LED red
-  'c': '#00ff41',  // neon green
-  'd': '#ff00ff',  // neon pink
-  'e': '#e8e8f0',  // whiteboard face (off-white)
-}
-
-const AVATAR_TO_CHAR = {
-  'coder': 'coder',
-  'hacker': 'hacker',
-  'designer': 'designer',
-  'analyst': 'analyst',
-  'architect': 'architect',
-  'devops': 'devops',
-}
-const CHARACTER_NAMES = Object.keys(PALETTES)
-
-export function getCharacterType(worker) {
-  if (worker.avatar && AVATAR_TO_CHAR[worker.avatar]) return AVATAR_TO_CHAR[worker.avatar]
-  let hash = 0
-  const id = worker.id || worker.name || ''
-  for (let i = 0; i < id.length; i++) {
-    hash = ((hash << 5) - hash) + id.charCodeAt(i)
-    hash |= 0
-  }
-  return CHARACTER_NAMES[Math.abs(hash) % CHARACTER_NAMES.length]
-}
-
-// Build merged frames: base + class overrides
-function getFramesForClass(charType) {
-  const overrides = CLASS_FRAME_OVERRIDES[charType]
-  if (!overrides) return CHARACTER_FRAMES
-  const merged = {}
-  for (const [state, frames] of Object.entries(CHARACTER_FRAMES)) {
-    if (overrides[state]) {
-      // Replace first N frames from override, keep remaining from base
-      const oFrames = overrides[state]
-      merged[state] = oFrames.concat(frames.slice(oFrames.length))
-    } else {
-      merged[state] = frames
-    }
-  }
-  return merged
-}
-
-export function renderSpriteToCanvas(ctx, rows, palette, x, y, scale) {
+function renderSpriteToCanvas(ctx, rows, palette, x, y, scale) {
   for (let row = 0; row < rows.length; row++) {
     const line = rows[row]
     for (let col = 0; col < line.length; col++) {
       const ch = line[col]
       if (ch === '0') continue
       let color
-      if (ch === '7') {
-        color = '#111'
-      } else if (palette && COLOR_MAP[ch]) {
-        color = palette[COLOR_MAP[ch]]
+      if (palette && ch === '7') {
+        color = '#3a3a4e'
       } else if (FURNITURE_PALETTE[ch]) {
         color = FURNITURE_PALETTE[ch]
       } else {
@@ -1006,30 +403,10 @@ export function renderSpriteToCanvas(ctx, rows, palette, x, y, scale) {
   }
 }
 
-export function prerenderCharacter(charType) {
-  const palette = PALETTES[charType]
-  if (!palette) return null
-  const frames = getFramesForClass(charType)
-  const cache = {}
-  const scale = 1
-  const size = 16 * scale
-  for (const [state, stateFrames] of Object.entries(frames)) {
-    cache[state] = stateFrames.map(rows => {
-      const offscreen = document.createElement('canvas')
-      offscreen.width = size
-      offscreen.height = size
-      const ctx = offscreen.getContext('2d')
-      renderSpriteToCanvas(ctx, rows, palette, 0, 0, scale)
-      return offscreen
-    })
-  }
-  return cache
-}
-
 export function prerenderFurniture(name) {
   const rows = FURNITURE_SPRITES[name]
   if (!rows) return null
-  const scale = 1
+  const scale = 3
   const size = 16 * scale
   const offscreen = document.createElement('canvas')
   offscreen.width = size
@@ -1042,15 +419,16 @@ export function prerenderFurniture(name) {
 export function prerenderEnvSprite(name) {
   const rows = ENV_SPRITES[name]
   if (!rows) return null
+  const scale = 3
   const offscreen = document.createElement('canvas')
-  offscreen.width = 16
-  offscreen.height = 16
+  offscreen.width = 16 * scale
+  offscreen.height = 16 * scale
   const ctx = offscreen.getContext('2d')
-  renderSpriteToCanvas(ctx, rows, null, 0, 0, 1)
+  renderSpriteToCanvas(ctx, rows, null, 0, 0, scale)
   return offscreen
 }
 
-// Skill profile → accent color and icon for office rendering
+// ── Skill profile rendering data ─────────────────────────────────────────────
 export const SKILL_PROFILE_COLORS = {
   coder:      '#ff4444',
   hacker:     '#00ff41',
@@ -1073,4 +451,4 @@ export const SKILL_PROFILE_ICONS = {
   reviewer:   '\u2705',
 }
 
-export { PALETTES, CHARACTER_FRAMES, FURNITURE_SPRITES, ENV_SPRITES, CHARACTER_NAMES, CLASS_FRAME_OVERRIDES }
+export { FURNITURE_SPRITES, ENV_SPRITES, CHARACTER_NAMES, CHARACTER_CONFIGS }

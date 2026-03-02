@@ -1,9 +1,11 @@
 // Canvas 2D rendering engine for Pixel Office — Hacker Base Edition
 
 import { TILE_SIZE, SCALE, COLS, ROWS, CANVAS_W, CANVAS_H, getFloorMap, getDesks, buildWorkerDeskMap } from './layout.js'
-import { prerenderCharacter, prerenderFurniture, prerenderEnvSprite, getCharacterType, SKILL_PROFILE_COLORS, SKILL_PROFILE_ICONS } from './sprites.js'
+import { prerenderCharacter, prerenderFurniture, prerenderEnvSprite, getCharacterType, loadAllSprites, spritesReady } from './sprites.js'
 import { AnimationState, statusToAnim, ENV_ANIM } from './animation.js'
 import { startAmbient, stopAmbient, playKeyClatter } from './sounds.js'
+import { MovementController } from './movement.js'
+import { BubbleManager } from './bubbles.js'
 
 const TILE_PX = TILE_SIZE * SCALE  // 48
 
@@ -43,12 +45,6 @@ const BUBBLE_MAP = {
   working: { text: '...', bg: '#48f', fg: '#fff' },
   error:   { text: '!', bg: '#ff3860', fg: '#fff' },
   finished:{ text: '\u2605', bg: '#00ff41', fg: '#000' },
-}
-
-const TIER_COLORS = {
-  consultant: '#f0c040',
-  manager: '#60a0ff',
-  engineer: '#a0a0a0',
 }
 
 // ── Floating binary particle ────────────────────────────────────────────────
@@ -97,6 +93,11 @@ export class OfficeRenderer {
 
     // Character caches: charType → { state: [canvases] }
     this.charCache = {}
+
+    // Movement and bubble subsystems
+    this.movement = new MovementController()
+    this.bubbles = new BubbleManager()
+    this.simulation = null  // set via setSimulation()
 
     // Runtime state
     this.workers = []
@@ -194,6 +195,23 @@ export class OfficeRenderer {
     ctx.fillText('REC', 12 * TILE_PX, 13 * TILE_PX)
   }
 
+  // ── SimulationEngine integration ──────────────────────────────────────────
+  setSimulation(sim) { this.simulation = sim }
+
+  // Movement facade (called by SimulationEngine)
+  isWorkerMoving(id)              { return this.movement.isMoving(id) }
+  moveWorkerTo(id, col, row)      { this.movement.startMovement(id, col, row) }
+  moveWorkerToWorker(id, tid)     { this.movement.startMovementToWorker(id, tid) }
+  returnWorkerToDesk(id)          { this.movement.returnToDesk(id) }
+
+  // Bubble facade (called by SimulationEngine)
+  showSpeech(id, text, dur)             { return this.bubbles.showSpeech(id, text, dur) }
+  showThought(id, text, dur)            { return this.bubbles.showThought(id, text, dur) }
+  showDiscussion(id, tid, topic, dur)   { return this.bubbles.showDiscussion(id, tid, topic, dur) }
+  showMeeting(ids, topic, dur)          { return this.bubbles.showMeeting(ids, topic, dur) }
+  clearBubble(bubbleId)                 { this.bubbles.clear(bubbleId) }
+  clearWorkerBubbles(id)                { this.bubbles.clearWorker(id) }
+
   setWorkers(workers, assignments) {
     this.workers = workers || []
     this.workerDeskMap = buildWorkerDeskMap(assignments)
@@ -206,8 +224,10 @@ export class OfficeRenderer {
       this.animStates[w.id].setState(anim)
 
       const charType = getCharacterType(w)
+      // Retry prerender if previous attempt returned null (sprites weren't ready)
       if (!this.charCache[charType]) {
-        this.charCache[charType] = prerenderCharacter(charType)
+        const result = prerenderCharacter(charType)
+        if (result) this.charCache[charType] = result
       }
     }
 
@@ -215,6 +235,21 @@ export class OfficeRenderer {
     for (const id of Object.keys(this.animStates)) {
       if (!ids.has(id)) delete this.animStates[id]
     }
+
+    // Register workers with MovementController (starting position = desk charTile)
+    for (const w of this.workers) {
+      const desk = this.workerDeskMap[w.id]
+      if (desk && !this.movement.getPosition(w.id)) {
+        this.movement.registerWorker(w.id, desk.charTile[0], desk.charTile[1])
+      }
+    }
+    // Remove departed workers from movement
+    for (const id of [...this.movement._positions.keys()]) {
+      if (!ids.has(id)) this.movement.removeWorker(id)
+    }
+
+    // Notify simulation of updated workers
+    this.simulation?.setWorkers(this.workers)
   }
 
   start() {
@@ -264,6 +299,19 @@ export class OfficeRenderer {
       if (this.particles[i].dead) this.particles.splice(i, 1)
     }
 
+    // Update movement, bubbles, and simulation
+    this.movement.update(delta)
+    this.bubbles.update(delta)
+    this.simulation?.update(delta)
+
+    // Override animation state with walk direction when moving
+    for (const w of this.workers) {
+      const walkAnim = this.movement.getWalkAnimation(w.id)
+      if (walkAnim) {
+        this.animStates[w.id]?.setState(walkAnim)
+      }
+    }
+
     // Trigger key clatter for working workers occasionally
     for (const w of this.workers) {
       const anim = this.animStates[w.id]
@@ -284,65 +332,100 @@ export class OfficeRenderer {
     // 2. Screen glow halos (pulsing)
     this._drawScreenGlow(ctx)
 
-    // 3. Data stream hierarchy lines
-    this._drawHierarchyLines(ctx)
-
-    // 4. Characters (shadow + sprite)
+    // 3. Characters (shadow + sprite + name + bubble)
+    let dbgTotal = this.workers.length
+    let dbgNoDesk = 0, dbgNoAnim = 0, dbgNoCache = 0, dbgNoFrames = 0, dbgRendered = 0, dbgErrors = []
+    const positionMap = {}
     for (const w of this.workers) {
-      const desk = this.workerDeskMap[w.id]
-      if (!desk) continue
-      const anim = this.animStates[w.id]
-      if (!anim) continue
+      try {
+        const desk = this.workerDeskMap[w.id]
+        if (!desk) { dbgNoDesk++; continue }
+        const anim = this.animStates[w.id]
+        if (!anim) { dbgNoAnim++; continue }
 
-      const charType = getCharacterType(w)
-      const cache = this.charCache[charType]
-      if (!cache) continue
+        const charType = getCharacterType(w)
+        const cache = this.charCache[charType]
+        if (!cache) { dbgNoCache++; continue }
 
-      const frames = cache[anim.state]
-      if (!frames) continue
-      const frame = frames[anim.getFrame()]
-      if (!frame) continue
+        const frames = cache[anim.state]
+        if (!frames) { dbgNoFrames++; continue }
+        const frame = frames[anim.getFrame()]
+        if (!frame) { dbgNoFrames++; continue }
 
-      const px = desk.charTile[0] * TILE_PX
-      const py = desk.charTile[1] * TILE_PX
+        // Dynamic position from MovementController (falls back to desk tile)
+        const pos = this.movement.getPosition(w.id)
+        let px, py
+        if (pos) {
+          px = pos.pixelX - TILE_PX / 2
+          py = pos.pixelY - TILE_PX / 2
+        } else {
+          px = desk.charTile[0] * TILE_PX
+          py = desk.charTile[1] * TILE_PX
+        }
 
-      // Shadow ellipse under character
-      ctx.save()
-      ctx.globalAlpha = 0.3
-      ctx.fillStyle = '#000'
-      ctx.beginPath()
-      ctx.ellipse(px + TILE_PX / 2, py + TILE_PX + 2, TILE_PX * 0.35, 4, 0, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.restore()
+        // Track position for bubble rendering
+        positionMap[w.id] = { pixelX: px, pixelY: py }
 
-      // Character sprite
-      ctx.drawImage(frame, px, py, TILE_PX, TILE_PX)
-
-      // Hover highlight
-      if (this.hoveredWorkerId === w.id) {
-        ctx.strokeStyle = '#00ff41'
-        ctx.lineWidth = 2
-        ctx.strokeRect(px - 2, py - 2, TILE_PX + 4, TILE_PX + 4)
-
-        ctx.font = '8px "Press Start 2P", monospace'
+        // Shadow ellipse under character
+        ctx.save()
+        ctx.globalAlpha = 0.3
         ctx.fillStyle = '#000'
+        ctx.beginPath()
+        ctx.ellipse(px + TILE_PX / 2, py + TILE_PX + 2, TILE_PX * 0.35, 4, 0, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+
+        // Character sprite
+        ctx.drawImage(frame, px, py, TILE_PX, TILE_PX)
+
+        // Name label
+        ctx.save()
+        ctx.font = '7px "Press Start 2P", monospace'
+        ctx.textAlign = 'center'
+        const nameX = px + TILE_PX / 2
+        ctx.fillStyle = 'rgba(0,0,0,0.7)'
         const nameW = ctx.measureText(w.name).width
-        ctx.fillRect(px - 2, py - 16, nameW + 6, 14)
-        ctx.fillStyle = '#00ff41'
-        ctx.fillText(w.name, px + 1, py - 5)
-      }
+        ctx.fillRect(nameX - nameW / 2 - 2, py + TILE_PX + 2, nameW + 4, 10)
+        ctx.fillStyle = '#ddd'
+        ctx.fillText(w.name, nameX, py + TILE_PX + 10)
+        ctx.restore()
 
-      // 5. Pixel-style status bubble
-      const bubble = BUBBLE_MAP[anim.state]
-      if (bubble) {
-        this._drawPixelBubble(ctx, px + TILE_PX - 4, py - 10, bubble)
-      }
+        // Hover highlight
+        if (this.hoveredWorkerId === w.id) {
+          ctx.strokeStyle = '#00ff41'
+          ctx.lineWidth = 2
+          ctx.strokeRect(px - 2, py - 2, TILE_PX + 4, TILE_PX + 4)
+        }
 
-      // 6. Skill profile icon (glow halo + emoji above character)
-      if (w.skillProfile && SKILL_PROFILE_ICONS[w.skillProfile]) {
-        this._drawSkillIcon(ctx, px, py, w.skillProfile)
+        // Status bubble (only show when not moving and no BubbleManager bubbles active)
+        const bubble = BUBBLE_MAP[anim.state]
+        if (bubble && !this.movement.isMoving(w.id)) {
+          this._drawPixelBubble(ctx, px + TILE_PX - 4, py - 10, bubble)
+        }
+        dbgRendered++
+      } catch (e) {
+        dbgErrors.push(`${w.name}: ${e.message}`)
       }
     }
+
+    // 4. BubbleManager overlay (speech/thought/discussion/meeting bubbles)
+    this.bubbles.draw(ctx, positionMap)
+
+    // Debug overlay (temporary)
+    ctx.save()
+    ctx.font = '9px monospace'
+    ctx.fillStyle = 'rgba(0,0,0,0.8)'
+    ctx.fillRect(0, 0, 520, 14 + dbgErrors.length * 12)
+    const dbgDeskKeys = Object.keys(this.workerDeskMap).length
+    const dbgCacheKeys = Object.keys(this.charCache).length
+    const dbgSprites = spritesReady() ? 'Y' : 'N'
+    ctx.fillStyle = dbgRendered === dbgTotal ? '#0f0' : '#f00'
+    ctx.fillText(`W:${dbgTotal} R:${dbgRendered} noDesk:${dbgNoDesk} noAnim:${dbgNoAnim} noCache:${dbgNoCache} noFrame:${dbgNoFrames} err:${dbgErrors.length} dMap:${dbgDeskKeys} cCache:${dbgCacheKeys} spr:${dbgSprites}`, 4, 11)
+    ctx.fillStyle = '#ff0'
+    for (let i = 0; i < dbgErrors.length; i++) {
+      ctx.fillText(dbgErrors[i].slice(0, 50), 4, 23 + i * 12)
+    }
+    ctx.restore()
 
     // 6. Floating binary particles
     this._drawParticles(ctx)
@@ -365,54 +448,6 @@ export class OfficeRenderer {
       ctx.fillStyle = gradient
       ctx.fillRect(tile.x - TILE_PX, tile.y - TILE_PX, TILE_PX * 3, TILE_PX * 3)
     }
-    ctx.restore()
-  }
-
-  _drawHierarchyLines(ctx) {
-    const workerMap = {}
-    for (const w of this.workers) workerMap[w.id] = w
-
-    ctx.save()
-    for (const w of this.workers) {
-      if (!w.parentID) continue
-      const parent = workerMap[w.parentID]
-      if (!parent) continue
-
-      const childDesk = this.workerDeskMap[w.id]
-      const parentDesk = this.workerDeskMap[parent.id]
-      if (!childDesk || !parentDesk) continue
-
-      const cx = childDesk.charTile[0] * TILE_PX + TILE_PX / 2
-      const cy = childDesk.charTile[1] * TILE_PX + TILE_PX / 2
-      const px = parentDesk.charTile[0] * TILE_PX + TILE_PX / 2
-      const py = parentDesk.charTile[1] * TILE_PX + TILE_PX / 2
-
-      const tier = (parent.tier || 'engineer').toLowerCase()
-      const color = TIER_COLORS[tier] || '#666'
-
-      // Glowing line
-      ctx.shadowColor = color
-      ctx.shadowBlur = 6
-      ctx.strokeStyle = color
-      ctx.globalAlpha = 0.5
-      ctx.lineWidth = 2
-      ctx.setLineDash([])
-      ctx.beginPath()
-      ctx.moveTo(px, py)
-      ctx.lineTo(cx, cy)
-      ctx.stroke()
-
-      // Animated data packet along the line
-      const t = this.dataStreamPhase
-      const packetX = px + (cx - px) * t
-      const packetY = py + (cy - py) * t
-      ctx.globalAlpha = 0.9
-      ctx.fillStyle = color
-      ctx.shadowBlur = 10
-      ctx.fillRect(packetX - 3, packetY - 3, 6, 6)
-    }
-    ctx.shadowBlur = 0
-    ctx.globalAlpha = 1
     ctx.restore()
   }
 
@@ -442,36 +477,6 @@ export class OfficeRenderer {
     // Text
     ctx.fillStyle = bubble.fg
     ctx.fillText(bubble.text, x + 4, y + 10)
-    ctx.restore()
-  }
-
-  _drawSkillIcon(ctx, px, py, skillProfile) {
-    const color = SKILL_PROFILE_COLORS[skillProfile] || '#fff'
-    const icon = SKILL_PROFILE_ICONS[skillProfile]
-    if (!icon) return
-
-    const cx = px + TILE_PX / 2
-    const cy = py - 6
-
-    // Subtle glow halo
-    ctx.save()
-    const pulse = Math.sin(this.globalTime / 1500 * Math.PI * 2) * 0.3 + 0.7
-    const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, 10)
-    gradient.addColorStop(0, color.replace(')', `,${0.15 * pulse})`).replace('rgb', 'rgba').replace('#', ''))
-    gradient.addColorStop(1, 'rgba(0,0,0,0)')
-    // Use hex to rgba conversion for the glow
-    ctx.globalAlpha = 0.4 * pulse
-    ctx.fillStyle = color
-    ctx.beginPath()
-    ctx.arc(cx, cy, 6, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.restore()
-
-    // Draw skill icon text
-    ctx.save()
-    ctx.font = '7px serif'
-    ctx.textAlign = 'center'
-    ctx.fillText(icon, cx, cy + 3)
     ctx.restore()
   }
 
@@ -516,5 +521,6 @@ export class OfficeRenderer {
 
   destroy() {
     this.stop()
+    this.bubbles.clearAll()
   }
 }

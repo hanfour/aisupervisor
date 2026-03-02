@@ -19,6 +19,8 @@ const FLOOR_COLORS = {
   7: '#222233',  // door
   8: '#1a1a2e',  // glowStrip (drawn as env sprite)
   9: '#1a1a2e',  // cableFloor (drawn as env sprite)
+  10: '#141430', // meetingFloor — deep indigo-purple, distinct from regular floor
+  11: '#e8e8f0', // whiteboard — off-white face color
 }
 
 const TILE_TO_FURNITURE = {
@@ -27,6 +29,8 @@ const TILE_TO_FURNITURE = {
   4: 'computer',
   5: 'watercooler',
   6: 'bookshelf',
+  10: 'meetingTable',
+  11: 'whiteboard',
 }
 
 const TILE_TO_ENV = {
@@ -81,7 +85,7 @@ export class OfficeRenderer {
 
     // Prerender furniture
     this.furnitureCache = {}
-    for (const name of ['desk', 'computer', 'plant', 'watercooler', 'bookshelf']) {
+    for (const name of ['desk', 'computer', 'plant', 'watercooler', 'bookshelf', 'meetingTable', 'whiteboard']) {
       this.furnitureCache[name] = prerenderFurniture(name)
     }
 
@@ -142,7 +146,7 @@ export class OfficeRenderer {
 
         // Subtle cyan grid lines for floor tiles
         if (tile === 0 || tile === 7 || tile === 8 || tile === 9 ||
-            (tile >= 2 && tile <= 6)) {
+            (tile >= 2 && tile <= 6) || tile === 10 || tile === 11) {
           ctx.strokeStyle = 'rgba(0,221,255,0.04)'
           ctx.strokeRect(col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX)
         }
@@ -183,10 +187,11 @@ export class OfficeRenderer {
     // Zone labels
     ctx.font = '10px "Press Start 2P", monospace'
     ctx.fillStyle = 'rgba(0,255,65,0.12)'
-    ctx.fillText('OPEN OFFICE', 2 * TILE_PX, 6.5 * TILE_PX)
-    ctx.fillText('MGR', 2 * TILE_PX, 12.5 * TILE_PX)
-    ctx.fillText('CON', 2 * TILE_PX, 11 * TILE_PX)
-    ctx.fillText('REC', 12 * TILE_PX, 12.5 * TILE_PX)
+    ctx.fillText('OPEN OFFICE', 2 * TILE_PX, 5.5 * TILE_PX)
+    ctx.fillText('MGR', 1 * TILE_PX, 11.5 * TILE_PX)
+    ctx.fillText('MEETING', 11 * TILE_PX, 10.5 * TILE_PX)
+    ctx.fillText('BREAK', 17 * TILE_PX, 11.5 * TILE_PX)
+    ctx.fillText('REC', 12 * TILE_PX, 13 * TILE_PX)
   }
 
   setWorkers(workers, assignments) {

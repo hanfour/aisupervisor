@@ -164,6 +164,15 @@ func main() {
 	}
 
 	companyApp := gui.NewCompanyApp(companyMgr, tmuxClient)
+	if cfg.Training.Enabled {
+		trainingDir := cfg.Training.DataDir
+		if trainingDir == "" {
+			trainingDir = filepath.Join(home, ".local", "share", "aisupervisor", "training")
+		} else if strings.HasPrefix(trainingDir, "~/") {
+			trainingDir = filepath.Join(home, trainingDir[2:])
+		}
+		companyApp.SetTrainingDir(trainingDir)
+	}
 
 	// Start messaging integrations if configured
 	startMessaging(cfg, companyMgr)

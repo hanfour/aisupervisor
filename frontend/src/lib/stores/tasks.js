@@ -30,3 +30,9 @@ export async function completeTask(taskID, projectID) {
     await loadTasks(projectID)
   }
 }
+
+export async function updateTaskStatus(taskID, status, projectID) {
+  if (!window.go?.gui?.CompanyApp) return
+  await window.go.gui.CompanyApp.UpdateTaskStatus(taskID, status)
+  if (projectID) await loadTasks(projectID)
+}

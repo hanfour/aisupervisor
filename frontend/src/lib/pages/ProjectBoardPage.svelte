@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { tasks, loadTasks, assignTask, completeTask } from '../stores/tasks.js'
+  import { tasks, loadTasks, assignTask, completeTask, updateTaskStatus } from '../stores/tasks.js'
   import { workers, loadWorkers } from '../stores/workers.js'
   import TaskCard from '../components/TaskCard.svelte'
   import TaskForm from '../components/TaskForm.svelte'
@@ -12,15 +12,17 @@
   let project = null
   let progress = null
   let showTaskForm = false
-  let assignDialog = null // task being assigned
+  let assignDialog = null
   let selectedWorker = ''
+  let dragTaskId = null
+  let dragOverCol = null
 
   const columns = [
-    { key: 'backlog', label: 'Backlog', statuses: ['backlog'] },
-    { key: 'ready', label: 'Ready', statuses: ['ready'] },
-    { key: 'progress', label: 'In Progress', statuses: ['assigned', 'in_progress'] },
-    { key: 'review', label: 'Review', statuses: ['review'] },
-    { key: 'done', label: 'Done', statuses: ['done', 'failed'] },
+    { key: 'backlog', label: 'Backlog', statuses: ['backlog'], dropStatus: 'backlog' },
+    { key: 'ready', label: 'Ready', statuses: ['ready'], dropStatus: 'ready' },
+    { key: 'progress', label: 'In Progress', statuses: ['assigned', 'in_progress'], dropStatus: 'in_progress' },
+    { key: 'review', label: 'Review', statuses: ['review'], dropStatus: 'review' },
+    { key: 'done', label: 'Done', statuses: ['done', 'failed'], dropStatus: 'done' },
   ]
 
   $: tasksByColumn = columns.map(col => ({
@@ -43,7 +45,6 @@
       addError('Failed to load board: ' + e.message)
     }
 
-    // Refresh on company events
     if (window.runtime) {
       window.runtime.EventsOn('company:event', async () => {
         if (projectId) {
@@ -80,6 +81,43 @@
       addError('Failed to complete task: ' + e.message)
     }
   }
+
+  // --- Drag and Drop ---
+  function handleDragStart(e, taskId) {
+    dragTaskId = taskId
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', taskId)
+  }
+
+  function handleDragEnd() {
+    dragTaskId = null
+    dragOverCol = null
+  }
+
+  function handleDragOver(e, colKey) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    dragOverCol = colKey
+  }
+
+  function handleDragLeave(colKey) {
+    if (dragOverCol === colKey) dragOverCol = null
+  }
+
+  async function handleDrop(e, col) {
+    e.preventDefault()
+    dragOverCol = null
+    const taskId = e.dataTransfer.getData('text/plain')
+    if (!taskId) return
+
+    try {
+      await updateTaskStatus(taskId, col.dropStatus, projectId)
+      progress = await window.go.gui.CompanyApp.GetProjectProgress(projectId)
+    } catch (err) {
+      addError('Failed to move task: ' + err.message)
+    }
+    dragTaskId = null
+  }
 </script>
 
 <div class="board-page">
@@ -99,19 +137,35 @@
 
   <div class="kanban">
     {#each tasksByColumn as col}
-      <div class="kanban-col">
+      <div
+        class="kanban-col"
+        class:drag-over={dragOverCol === col.key}
+        on:dragover={(e) => handleDragOver(e, col.key)}
+        on:dragleave={() => handleDragLeave(col.key)}
+        on:drop={(e) => handleDrop(e, col)}
+        role="list"
+      >
         <div class="col-header">
           <span class="col-title">{col.label}</span>
           <span class="col-count">{col.tasks.length}</span>
         </div>
         <div class="col-body">
-          {#each col.tasks as task}
-            <TaskCard
-              {task}
-              workers={$workers}
-              onAssign={handleAssign}
-              onComplete={handleComplete}
-            />
+          {#each col.tasks as task (task.id)}
+            <div
+              class="task-drag-wrap"
+              class:dragging={dragTaskId === task.id}
+              draggable="true"
+              on:dragstart={(e) => handleDragStart(e, task.id)}
+              on:dragend={handleDragEnd}
+              role="listitem"
+            >
+              <TaskCard
+                {task}
+                workers={$workers}
+                onAssign={handleAssign}
+                onComplete={handleComplete}
+              />
+            </div>
           {/each}
         </div>
       </div>
@@ -215,6 +269,12 @@
     flex-direction: column;
     border: 2px solid var(--border-color);
     overflow: hidden;
+    transition: border-color 0.15s;
+  }
+
+  .kanban-col.drag-over {
+    border: 2px dashed var(--accent-blue);
+    background: rgba(0, 212, 255, 0.05);
   }
 
   .col-header {
@@ -240,6 +300,19 @@
     flex: 1;
     overflow-y: auto;
     padding: 6px;
+  }
+
+  .task-drag-wrap {
+    cursor: grab;
+    transition: opacity 0.15s;
+  }
+
+  .task-drag-wrap:active {
+    cursor: grabbing;
+  }
+
+  .task-drag-wrap.dragging {
+    opacity: 0.4;
   }
 
   .dialog-overlay {

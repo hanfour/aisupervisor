@@ -1,5 +1,12 @@
 <script>
   export let currentPage = 'dashboard'
+  export let darkMode = true
+
+  function toggleTheme() {
+    darkMode = !darkMode
+    document.body.classList.toggle('light', !darkMode)
+    localStorage.setItem('theme', darkMode ? 'dark' : 'light')
+  }
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
@@ -32,6 +39,11 @@
       </li>
     {/each}
   </ul>
+  <div class="theme-toggle">
+    <button class="nes-btn theme-btn" on:click={toggleTheme}>
+      {darkMode ? '☀ Light' : '☾ Dark'}
+    </button>
+  </div>
 </nav>
 
 <style>
@@ -92,5 +104,16 @@
 
   .nav-label {
     font-size: 10px;
+  }
+
+  .theme-toggle {
+    margin-top: auto;
+    padding-top: 16px;
+  }
+
+  .theme-btn {
+    font-size: 8px !important;
+    padding: 6px 8px !important;
+    width: 100%;
   }
 </style>

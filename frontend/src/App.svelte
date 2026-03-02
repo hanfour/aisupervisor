@@ -16,6 +16,7 @@
   let currentPage = 'dashboard'
   let selectedSessionId = ''
   let selectedProjectId = ''
+  let darkMode = true
 
   // Lazy-loaded page components for Phase 5
   let RolesPage = null
@@ -26,6 +27,13 @@
   let HierarchyPage = null
 
   onMount(async () => {
+    // Theme initialization
+    const savedTheme = localStorage.getItem('theme')
+    if (savedTheme === 'light') {
+      darkMode = false
+      document.body.classList.add('light')
+    }
+
     initEventStore()
     initDiscussionStore()
     initCompanyStore()
@@ -82,7 +90,7 @@
 
 <Toast />
 <div class="app-layout">
-  <Sidebar bind:currentPage />
+  <Sidebar bind:currentPage bind:darkMode />
 
   <main class="main-content p-2">
     {#if currentPage === 'dashboard'}

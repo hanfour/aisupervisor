@@ -555,6 +555,30 @@ func (m *Manager) tryAutoAssign(workerID string) {
 	})
 }
 
+// UpdateTaskStatusDirect updates a task's status directly (used by board drag-and-drop).
+func (m *Manager) UpdateTaskStatusDirect(taskID string, status string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	t, ok := m.projectStore.GetTask(taskID)
+	if !ok {
+		return fmt.Errorf("task %q not found", taskID)
+	}
+
+	if err := m.projectStore.UpdateTaskStatus(taskID, project.TaskStatus(status)); err != nil {
+		return err
+	}
+
+	m.emit(Event{
+		Type:      EventTaskCompleted,
+		ProjectID: t.ProjectID,
+		TaskID:    taskID,
+		Message:   fmt.Sprintf("Task %q status changed to %s", t.Title, status),
+	})
+
+	return nil
+}
+
 // CompleteTask manually marks a task as done (used by supervisor/UI for review → done).
 func (m *Manager) CompleteTask(taskID string) error {
 	m.mu.Lock()

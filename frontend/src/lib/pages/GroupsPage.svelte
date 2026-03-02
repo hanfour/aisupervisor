@@ -1,14 +1,22 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { activeDiscussions } from '../stores/discussions.js'
+  import { liveDiscussions, loadActiveDiscussions } from '../stores/discussions.js'
   import GroupDiscussion from '../components/GroupDiscussion.svelte'
 
   let groups = []
+  let refreshTimer = null
 
   onMount(async () => {
     if (window.go?.gui?.App) {
       groups = (await window.go.gui.App.GetGroups()) || []
     }
+    await loadActiveDiscussions()
+    refreshTimer = setInterval(loadActiveDiscussions, 5000)
+  })
+
+  onDestroy(() => {
+    if (refreshTimer) clearInterval(refreshTimer)
   })
 </script>
 
@@ -43,6 +51,29 @@
     {/if}
   </section>
 
+  <!-- Live Discussions from backend -->
+  <section class="nes-container with-title is-dark discussions-section">
+    <p class="title">Live Discussions</p>
+    {#if $liveDiscussions.length > 0}
+      {#each $liveDiscussions as disc}
+        <div class="nes-container is-rounded discussion-container">
+          <div class="disc-header">
+            <span class="disc-id">{disc.id}</span>
+            <span class="nes-badge">
+              <span class="is-success">{disc.phase}</span>
+            </span>
+            {#if disc.groupId}
+              <span class="disc-group">Group: {disc.groupId}</span>
+            {/if}
+          </div>
+        </div>
+      {/each}
+    {:else}
+      <p class="empty">No live discussions</p>
+    {/if}
+  </section>
+
+  <!-- Event-driven discussions -->
   <section class="nes-container with-title is-dark discussions-section">
     <p class="title">Active Discussions</p>
     {#if $activeDiscussions.length > 0}
@@ -100,6 +131,11 @@
   .disc-id {
     color: var(--accent-blue);
     font-size: 9px;
+  }
+
+  .disc-group {
+    color: var(--text-secondary);
+    font-size: 8px;
   }
 
   .empty {

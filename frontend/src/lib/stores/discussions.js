@@ -25,3 +25,16 @@ export const activeDiscussions = derived(discussionEvents, ($events) => {
     latestPhase: evts[evts.length - 1]?.phase || 'opinion',
   }))
 })
+
+// Live discussions from backend (GetActiveDiscussions binding)
+export const liveDiscussions = writable([])
+
+export async function loadActiveDiscussions() {
+  if (!window.go?.gui?.App) return
+  try {
+    const result = await window.go.gui.App.GetActiveDiscussions()
+    liveDiscussions.set(result || [])
+  } catch {
+    // ignore
+  }
+}

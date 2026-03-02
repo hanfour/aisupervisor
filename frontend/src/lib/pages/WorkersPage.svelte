@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { workers, loadWorkers, createWorkerWithTier, promoteWorker, hierarchy, loadHierarchy } from '../stores/workers.js'
   import WorkerCard from '../components/WorkerCard.svelte'
-  import WorkerLogPanel from '../components/WorkerLogPanel.svelte'
+  import WorkerDetailDrawer from '../components/WorkerDetailDrawer.svelte'
   import { addError } from '../stores/errors.js'
 
   let showHire = false
@@ -12,7 +12,7 @@
   let newParentID = ''
   let newBackendID = ''
   let newCliTool = 'claude'
-  let logWorker = null
+  let selectedWorkerId = null
 
   const avatarOptions = [
     { id: 'robot', label: 'Robot' },
@@ -99,7 +99,7 @@
           <div class="tier-workers">
             {#each tierWorkers as w}
               <div class="worker-wrap">
-                <WorkerCard worker={w} onClick={(worker) => logWorker = worker} />
+                <WorkerCard worker={w} onClick={(worker) => selectedWorkerId = worker.id} />
                 {#if w.parentName}
                   <div class="parent-link">
                     <span class="parent-arrow">&uarr;</span> Manager: {w.parentName}
@@ -121,11 +121,11 @@
     </div>
   </section>
 
-  {#if logWorker}
-    <WorkerLogPanel
-      workerId={logWorker.id}
-      workerName={logWorker.name}
-      onClose={() => logWorker = null}
+  {#if selectedWorkerId}
+    <WorkerDetailDrawer
+      workerId={selectedWorkerId}
+      onClose={() => selectedWorkerId = null}
+      onSelectWorker={(id) => selectedWorkerId = id}
     />
   {/if}
 

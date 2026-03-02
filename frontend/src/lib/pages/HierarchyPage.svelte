@@ -1,13 +1,14 @@
 <script>
   import { onMount } from 'svelte'
-  import { hierarchy, loadHierarchy } from '../stores/workers.js'
+  import { hierarchy, loadHierarchy, getSubordinates } from '../stores/workers.js'
   import { addError } from '../stores/errors.js'
   import WorkerCard from '../components/WorkerCard.svelte'
-  import WorkerLogPanel from '../components/WorkerLogPanel.svelte'
+  import WorkerDetailDrawer from '../components/WorkerDetailDrawer.svelte'
   import ReviewQueuePanel from '../components/ReviewQueuePanel.svelte'
   import TrainingStatsPanel from '../components/TrainingStatsPanel.svelte'
 
-  let logWorker = null
+  let selectedWorkerId = null
+  let expandedWorkers = {}
 
   const tierOrder = ['consultant', 'manager', 'engineer']
   const tierColors = {
@@ -18,6 +19,19 @@
 
   function tierLabel(tier) {
     return tier.charAt(0).toUpperCase() + tier.slice(1) + 's'
+  }
+
+  async function toggleExpand(workerId) {
+    if (expandedWorkers[workerId]) {
+      expandedWorkers = { ...expandedWorkers, [workerId]: null }
+    } else {
+      try {
+        const subs = await getSubordinates(workerId)
+        expandedWorkers = { ...expandedWorkers, [workerId]: subs }
+      } catch (e) {
+        addError('Failed to load subordinates: ' + e.message)
+      }
+    }
   }
 
   onMount(async () => {
@@ -48,7 +62,18 @@
           <div class="tier-list">
             {#each tierWorkers as w}
               <div class="hierarchy-card">
-                <WorkerCard worker={w} onClick={(worker) => logWorker = worker} />
+                <div class="card-row">
+                  <WorkerCard worker={w} onClick={(worker) => selectedWorkerId = worker.id} />
+                  {#if tier !== 'engineer'}
+                    <button
+                      class="nes-btn expand-btn"
+                      on:click|stopPropagation={() => toggleExpand(w.id)}
+                      title={expandedWorkers[w.id] ? 'Collapse' : 'Expand subordinates'}
+                    >
+                      {expandedWorkers[w.id] ? '−' : '+'}
+                    </button>
+                  {/if}
+                </div>
                 <div class="card-meta">
                   {#if w.tier}
                     <span class="meta-tier" style="color: {tierColors[w.tier]}">[{w.tier}]</span>
@@ -57,6 +82,23 @@
                     <span class="meta-parent">&uarr; {w.parentName}</span>
                   {/if}
                 </div>
+                {#if expandedWorkers[w.id]}
+                  <div class="sub-tree">
+                    {#each expandedWorkers[w.id] as sub}
+                      <div class="sub-row">
+                        <span class="tree-connector">&boxur;&HorizontalLine;</span>
+                        <button class="nes-btn link-btn" on:click={() => selectedWorkerId = sub.id}>
+                          {sub.name}
+                          <span class="sub-tier" style="color: {tierColors[sub.tier]}">[{sub.tier}]</span>
+                          <span class="sub-status">{sub.status}</span>
+                        </button>
+                      </div>
+                    {/each}
+                    {#if expandedWorkers[w.id].length === 0}
+                      <span class="empty-sub">No subordinates</span>
+                    {/if}
+                  </div>
+                {/if}
               </div>
             {/each}
             {#if tierWorkers.length === 0}
@@ -83,11 +125,11 @@
     </section>
   </div>
 
-  {#if logWorker}
-    <WorkerLogPanel
-      workerId={logWorker.id}
-      workerName={logWorker.name}
-      onClose={() => logWorker = null}
+  {#if selectedWorkerId}
+    <WorkerDetailDrawer
+      workerId={selectedWorkerId}
+      onClose={() => selectedWorkerId = null}
+      onSelectWorker={(id) => selectedWorkerId = id}
     />
   {/if}
 </div>
@@ -156,6 +198,20 @@
     gap: 4px;
   }
 
+  .card-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .expand-btn {
+    font-size: 10px !important;
+    padding: 2px 6px !important;
+    min-width: 24px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
   .card-meta {
     display: flex;
     gap: 8px;
@@ -169,6 +225,48 @@
 
   .meta-parent {
     color: var(--text-secondary);
+  }
+
+  .sub-tree {
+    margin-left: 16px;
+    padding-left: 8px;
+    border-left: 2px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .sub-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .tree-connector {
+    color: var(--text-secondary);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  .link-btn {
+    font-size: 8px !important;
+    padding: 2px 6px !important;
+    text-align: left;
+  }
+
+  .sub-tier {
+    font-weight: bold;
+  }
+
+  .sub-status {
+    color: var(--text-secondary);
+    font-size: 8px;
+  }
+
+  .empty-sub {
+    font-size: 8px;
+    color: var(--text-secondary);
+    padding: 4px 0;
   }
 
   .bottom-panels {

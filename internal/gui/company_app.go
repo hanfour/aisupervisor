@@ -92,6 +92,11 @@ func (c *CompanyApp) CompleteTask(taskID string) error {
 	return c.company.CompleteTask(taskID)
 }
 
+// UpdateTaskStatus changes a task's status directly (used by board drag-and-drop).
+func (c *CompanyApp) UpdateTaskStatus(taskID, status string) error {
+	return c.company.UpdateTaskStatusDirect(taskID, status)
+}
+
 // --- Worker operations ---
 
 func (c *CompanyApp) CreateWorker(name, avatar string) (*WorkerDTO, error) {

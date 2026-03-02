@@ -128,3 +128,62 @@ html, body {
 .p-2 { padding: 16px; }
 .overflow-auto { overflow: auto; }
 .overflow-hidden { overflow: hidden; }
+
+/* ---- Light theme ---- */
+body.light {
+  --bg-primary: #f0f0f0;
+  --bg-secondary: #ffffff;
+  --bg-card: #e8edf2;
+  --text-primary: #1a1a2e;
+  --text-secondary: #555555;
+  --accent-green: #00994d;
+  --accent-blue: #0077b6;
+  --accent-red: #cc2244;
+  --accent-yellow: #cc9900;
+  --border-color: #cccccc;
+}
+
+body.light {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+body.light .nes-container {
+  background-color: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+}
+
+body.light .nes-container.is-dark {
+  background-color: var(--bg-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+body.light .nes-container.with-title > .title {
+  background-color: var(--bg-primary) !important;
+  color: var(--accent-blue) !important;
+}
+
+body.light .nes-table {
+  color: var(--text-primary) !important;
+}
+
+body.light .nes-table.is-dark {
+  background-color: var(--bg-secondary) !important;
+}
+
+body.light .nes-table.is-dark th {
+  background-color: var(--bg-card) !important;
+  color: var(--accent-blue) !important;
+}
+
+body.light .nes-table.is-dark td {
+  border-color: var(--border-color) !important;
+}
+
+body.light ::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+body.light ::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+}

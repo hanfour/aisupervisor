@@ -42,3 +42,18 @@ export async function promoteWorker(workerID, newTier) {
   await loadWorkers()
   await loadHierarchy()
 }
+
+export async function getWorker(workerID) {
+  if (!window.go?.gui?.CompanyApp) return null
+  return await window.go.gui.CompanyApp.GetWorker(workerID)
+}
+
+export async function getManager(workerID) {
+  if (!window.go?.gui?.CompanyApp) return null
+  return await window.go.gui.CompanyApp.GetManager(workerID)
+}
+
+export async function getSubordinates(workerID) {
+  if (!window.go?.gui?.CompanyApp) return []
+  return (await window.go.gui.CompanyApp.GetSubordinates(workerID)) || []
+}

@@ -7,23 +7,38 @@ export const ROWS = 14
 export const CANVAS_W = COLS * TILE_SIZE * SCALE  // 960
 export const CANVAS_H = ROWS * TILE_SIZE * SCALE  // 672
 
-// Tile types: 0=floor, 1=wall, 2=desk, 3=plant, 4=computer, 5=watercooler, 6=bookshelf, 7=door
+// Tile types: 0=floor, 1=wall, 2=desk, 3=plant, 4=computer, 5=watercooler,
+//             6=bookshelf, 7=door, 8=glowStrip, 9=cableFloor,
+//             10=meetingFloor, 11=whiteboard
 const FLOOR_MAP = [
-  // row 0-13, col 0-19
-  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-  [1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
-  [1,0,2,4,0,2,4,0,2,4,1,0,2,4,0,2,4,0,0,1],
-  [1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
-  [1,0,2,4,0,2,4,0,2,4,1,0,2,4,0,2,4,0,0,1],
-  [1,0,0,0,0,0,0,0,0,0,7,0,0,0,0,0,0,0,0,1],
-  [1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
-  [1,1,1,1,1,7,1,1,1,1,1,1,1,1,1,7,1,1,1,1],
-  [1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1],
-  [1,0,6,0,2,4,0,0,0,1,0,0,0,2,4,0,6,0,0,1],
-  [1,0,0,0,0,0,0,3,0,1,0,3,0,0,0,0,0,0,0,1],
-  [1,0,0,0,0,0,0,0,0,7,0,0,0,0,0,5,0,0,0,1],
-  [1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1],
-  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  // row 0: top glowStrip wall
+  [1,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,1],
+  // row 1: cable floor (char positions for row-2 desks)
+  [8,0,9,0,0,9,0,0,9,0,0,9,0,0,9,0,0,9,0,8],
+  // row 2: 6 engineer desks (row A)
+  [8,0,2,4,0,2,4,0,2,4,0,2,4,0,2,4,0,2,4,8],
+  // row 3: cable spacing (char positions for row-4 desks)
+  [8,0,0,9,0,0,9,0,0,9,0,0,9,0,0,9,0,0,9,8],
+  // row 4: 6 engineer desks (row B)
+  [8,0,2,4,0,2,4,0,2,4,0,2,4,0,2,4,0,2,4,8],
+  // row 5: central open walkway
+  [8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8],
+  // row 6: horizontal wall — 2-tile-wide doors at cols 3-4 and 13-14
+  [1,1,1,7,7,1,1,1,1,1,1,1,1,7,7,1,1,1,1,1],
+  // row 7: main bottom walkway
+  [8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8],
+  // row 8: mgr char row | meeting room left wall | meeting floor | meeting right wall | watercooler
+  [8,0,0,9,0,0,9,0,0,0,1,10,10,10,10,10,1,0,5,8],
+  // row 9: mgr desks | meeting floor | whiteboard at col 12
+  [8,0,2,4,0,2,4,0,0,0,1,10,11,10,10,10,1,0,0,8],
+  // row 10: mgr char row | meeting floor | plant
+  [8,0,0,9,0,0,9,0,0,0,1,10,10,10,10,10,1,0,3,8],
+  // row 11: mgr desks | open break area
+  [8,0,2,4,0,2,4,0,0,0,1,0,0,0,0,0,1,0,0,8],
+  // row 12: walkway + consultant desk + reception desks
+  [8,0,0,0,0,0,0,0,0,2,4,0,2,4,0,2,4,0,0,8],
+  // row 13: bottom wall — 2-tile entrance at cols 4-5
+  [1,8,8,8,7,7,8,8,8,8,8,8,8,8,8,8,8,8,8,1],
 ]
 
 // Desk positions with zone labels

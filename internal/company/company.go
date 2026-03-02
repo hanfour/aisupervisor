@@ -32,6 +32,7 @@ type Manager struct {
 	autoSchedule bool
 	workers      map[string]*worker.Worker
 	cancels      map[string]context.CancelFunc
+	wg           sync.WaitGroup
 	workersPath  string
 	review         *ReviewPipeline
 	collector      *training.Collector
@@ -389,12 +390,14 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 	m.cancels[workerID] = cancel
 	m.mu.Unlock()
 
+	m.wg.Add(1)
 	go m.watchCompletion(workerCtx, w, t, p)
 
 	return nil
 }
 
 func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *project.Task, p *project.Project) {
+	defer m.wg.Done()
 	defer func() {
 		// Clean up cancel func from map to prevent leaks
 		m.mu.Lock()
@@ -705,14 +708,15 @@ func (m *Manager) ProjectStore() *project.Store {
 	return m.projectStore
 }
 
-// Shutdown cleans up all active workers.
+// Shutdown cancels all active workers and waits for goroutines to exit.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	for _, cancel := range m.cancels {
 		cancel()
 	}
+	m.mu.Unlock()
+
+	m.wg.Wait()
 }
 
 func (m *Manager) emit(e Event) {

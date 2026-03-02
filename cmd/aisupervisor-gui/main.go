@@ -158,6 +158,8 @@ func main() {
 		if tLogger, logErr := training.NewLogger(trainingDir); logErr == nil {
 			collector := training.NewCollector(tLogger, git, tmuxClient, cfg.Training.CaptureDiffs)
 			companyMgr.SetCollector(collector)
+		} else {
+			log.Printf("WARNING: training collector init failed: %v", logErr)
 		}
 	}
 

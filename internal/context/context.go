@@ -101,12 +101,21 @@ func (sc *SessionContext) SetRules(rules []ProjectRule) {
 	sc.Rules = rules
 }
 
+// SessionSnapshot is a read-only deep copy of a SessionContext without the mutex.
+type SessionSnapshot struct {
+	SessionID  string            `yaml:"session_id"`
+	Project    ProjectInfo       `yaml:"project"`
+	Decisions  []DecisionRecord  `yaml:"decisions,omitempty"`
+	Activities []ActivitySummary `yaml:"activities,omitempty"`
+	Rules      []ProjectRule     `yaml:"rules,omitempty"`
+}
+
 // Snapshot returns a read-only deep copy (thread-safe).
-func (sc *SessionContext) Snapshot() SessionContext {
+func (sc *SessionContext) Snapshot() SessionSnapshot {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 
-	snap := SessionContext{
+	snap := SessionSnapshot{
 		SessionID: sc.SessionID,
 		Project:   sc.Project,
 	}

@@ -198,6 +198,8 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 						companyMgr.SetFinetuneRunner(runner, ftCfg)
 					}
 				}
+			} else {
+				fmt.Fprintf(os.Stderr, "WARNING: training collector init failed: %v\n", err)
 			}
 		}
 
@@ -268,6 +270,8 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 							companyMgr.SetFinetuneRunner(runner, ftCfg)
 						}
 					}
+				} else {
+					fmt.Fprintf(os.Stderr, "WARNING: training collector init failed: %v\n", err)
 				}
 			}
 			startMessagingCLI(cfg, companyMgr)

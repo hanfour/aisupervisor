@@ -150,6 +150,41 @@ func (c *CompanyApp) PromoteWorker(workerID, newTier string) error {
 	return c.company.PromoteWorker(workerID, worker.WorkerTier(newTier))
 }
 
+// GetWorker returns a single worker by ID.
+func (c *CompanyApp) GetWorker(workerID string) (*WorkerDTO, error) {
+	w, ok := c.company.GetWorker(workerID)
+	if !ok {
+		return nil, nil
+	}
+	dto := WorkerToDTO(w)
+	return &dto, nil
+}
+
+// GetManager returns the parent (manager) of a worker.
+func (c *CompanyApp) GetManager(workerID string) (*WorkerDTO, error) {
+	w, ok := c.company.GetManager(workerID)
+	if !ok {
+		return nil, nil
+	}
+	dto := WorkerToDTO(w)
+	return &dto, nil
+}
+
+// GetHierarchy returns workers organized by tier.
+func (c *CompanyApp) GetHierarchy() map[string][]WorkerDTO {
+	workers := c.company.ListWorkers()
+	result := map[string][]WorkerDTO{
+		"consultant": {},
+		"manager":    {},
+		"engineer":   {},
+	}
+	for _, w := range workers {
+		tier := string(w.EffectiveTier())
+		result[tier] = append(result[tier], WorkerToDTO(w))
+	}
+	return result
+}
+
 // --- Assignment ---
 
 func (c *CompanyApp) AssignTask(workerID, taskID string) error {

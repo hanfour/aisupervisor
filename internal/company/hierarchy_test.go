@@ -352,6 +352,55 @@ func TestPendingReviews(t *testing.T) {
 	drainCh(ch)
 }
 
+func TestCompleteTaskWithEvents(t *testing.T) {
+	m, ch := testManager(t)
+
+	p, err := m.CreateProject("TestProj", "desc", "/tmp", "main", nil)
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	drainCh(ch)
+
+	task, err := m.AddTask(p.ID, "Task1", "desc", "prompt", nil, 1, "")
+	if err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+	drainCh(ch)
+
+	if err := m.CompleteTask(task.ID); err != nil {
+		t.Fatalf("CompleteTask: %v", err)
+	}
+
+	// Check event
+	select {
+	case e := <-ch:
+		if e.Type != EventTaskCompleted {
+			t.Fatalf("expected task_completed, got %s", e.Type)
+		}
+	default:
+		t.Fatal("expected completion event")
+	}
+
+	// Verify status
+	got, ok := m.projectStore.GetTask(task.ID)
+	if !ok {
+		t.Fatal("task not found")
+	}
+	if got.Status != project.TaskDone {
+		t.Fatalf("expected done, got %s", got.Status)
+	}
+}
+
+func TestCompleteTaskNotFound(t *testing.T) {
+	m, ch := testManager(t)
+	drainCh(ch)
+
+	err := m.CompleteTask("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent task")
+	}
+}
+
 func testStoreWithDir(dir string) (*project.Store, error) {
 	return project.NewStore(dir)
 }

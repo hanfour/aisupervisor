@@ -18,6 +18,7 @@ type ReviewRequest struct {
 	ProjectID  string
 	EngineerID string
 	ManagerID  string
+	CreatedAt  time.Time
 }
 
 // reviewMeta tracks per-review metadata for training data capture.
@@ -76,6 +77,7 @@ func (rp *ReviewPipeline) StartReview(ctx context.Context, engineerWorker *worke
 		ProjectID:  p.ID,
 		EngineerID: engineerWorker.ID,
 		ManagerID:  managerWorker.ID,
+		CreatedAt:  time.Now(),
 	}
 
 	rp.mu.Lock()
@@ -147,7 +149,9 @@ func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, 
 	// Update original task status
 	t.ReviewCount++
 	t.ReviewerID = managerWorker.ID
-	rp.mgr.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
+	if err := rp.mgr.projectStore.UpdateTaskStatus(t.ID, project.TaskReview); err != nil {
+		return fmt.Errorf("updating task status to review: %w", err)
+	}
 
 	rp.mgr.emit(Event{
 		Type:      EventReviewStarted,
@@ -184,7 +188,7 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 	rp.captureTrainingData(originalTask, managerWorker, p, output, approved)
 
 	if approved {
-		rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskDone)
+		_ = rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskDone)
 		rp.mgr.emit(Event{
 			Type:      EventReviewApproved,
 			ProjectID: p.ID,
@@ -204,7 +208,7 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			})
 		}
 	} else {
-		rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskRevision)
+		_ = rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskRevision)
 		rp.mgr.emit(Event{
 			Type:      EventReviewRejected,
 			ProjectID: p.ID,

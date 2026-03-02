@@ -147,6 +147,7 @@ type ReviewRequestDTO struct {
 	ProjectID  string `json:"projectId"`
 	EngineerID string `json:"engineerId"`
 	ManagerID  string `json:"managerId"`
+	CreatedAt  string `json:"createdAt"`
 }
 
 func ReviewRequestToDTO(r company.ReviewRequest) ReviewRequestDTO {
@@ -155,6 +156,7 @@ func ReviewRequestToDTO(r company.ReviewRequest) ReviewRequestDTO {
 		ProjectID:  r.ProjectID,
 		EngineerID: r.EngineerID,
 		ManagerID:  r.ManagerID,
+		CreatedAt:  r.CreatedAt.Format(time.RFC3339),
 	}
 }
 

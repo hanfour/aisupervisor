@@ -424,6 +424,8 @@ func buildCompanyManagerWithTmux() (*company.Manager, error) {
 		if logger, logErr := training.NewLogger(trainingDir); logErr == nil {
 			collector := training.NewCollector(logger, git, tmuxClient, cfg.Training.CaptureDiffs)
 			companyMgr.SetCollector(collector)
+		} else {
+			fmt.Fprintf(os.Stderr, "WARNING: training collector init failed: %v\n", logErr)
 		}
 	}
 

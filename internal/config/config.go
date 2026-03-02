@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -209,12 +210,21 @@ func Load(path string) (*Config, error) {
 // Validate checks the config for common errors.
 func (c *Config) Validate() error {
 	validTiers := map[string]bool{"consultant": true, "manager": true, "engineer": true}
+	validCLITools := map[string]bool{"claude": true, "aider": true, "": true}
 	for _, wt := range c.WorkerTiers {
 		if !validTiers[wt.Tier] {
 			return fmt.Errorf("invalid worker tier %q (must be consultant, manager, or engineer)", wt.Tier)
 		}
+		if !validCLITools[wt.CLITool] {
+			return fmt.Errorf("invalid cli_tool %q for tier %q (must be claude or aider)", wt.CLITool, wt.Tier)
+		}
 		if wt.MaxWorkers < 0 {
 			return fmt.Errorf("max_workers for tier %q must be >= 0", wt.Tier)
+		}
+		if wt.ReadyCheck != "" {
+			if _, err := regexp.Compile(wt.ReadyCheck); err != nil {
+				return fmt.Errorf("invalid ready_check regex for tier %q: %w", wt.Tier, err)
+			}
 		}
 	}
 

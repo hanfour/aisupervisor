@@ -99,3 +99,41 @@ func TestValidateValidTiers(t *testing.T) {
 		t.Fatalf("valid tiers should pass: %v", err)
 	}
 }
+
+func TestValidateInvalidCLITool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.WorkerTiers = []WorkerTierConfig{
+		{Tier: "engineer", CLITool: "vim"},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid cli_tool")
+	}
+	if !strings.Contains(err.Error(), "invalid cli_tool") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateInvalidReadyCheckRegex(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.WorkerTiers = []WorkerTierConfig{
+		{Tier: "engineer", CLITool: "aider", ReadyCheck: "[invalid"},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid ready_check regex")
+	}
+	if !strings.Contains(err.Error(), "invalid ready_check regex") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateValidReadyCheck(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.WorkerTiers = []WorkerTierConfig{
+		{Tier: "engineer", CLITool: "aider", ReadyCheck: `^>\s*$`},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid ready_check should pass: %v", err)
+	}
+}

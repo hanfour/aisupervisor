@@ -52,7 +52,7 @@ func BuildUserPrompt(req ai.AnalysisRequest) (string, error) {
 // renderContext builds a text block from the session context snapshot,
 // prioritized: project > decisions > activities > rules.
 // It truncates to stay within the budget (in characters).
-func renderContext(snap sessionctx.SessionContext, budget int) string {
+func renderContext(snap sessionctx.SessionSnapshot, budget int) string {
 	if budget <= 0 {
 		budget = 2000
 	}

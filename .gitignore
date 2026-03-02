@@ -1,6 +1,7 @@
 # Build output
 /build/
 /cmd/aisupervisor-gui/frontend/dist/
+/aisupervisor
 /aisupervisor-gui
 /oauth-check
 

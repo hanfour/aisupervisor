@@ -17,6 +17,7 @@
     { id: 'terminal', label: 'Terminal', icon: '⊟' },
     { id: 'roles', label: 'Roles', icon: '★' },
     { id: 'groups', label: 'Groups', icon: '♦' },
+    { id: 'office', label: 'Office', icon: '▣' },
     { id: 'settings', label: 'Settings', icon: '⚙' },
   ]
 </script>

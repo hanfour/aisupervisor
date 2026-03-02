@@ -25,6 +25,7 @@
   // Lazy-loaded company pages
   let ProjectBoardPage = null
   let HierarchyPage = null
+  let OfficePage = null
 
   onMount(async () => {
     // Theme initialization
@@ -79,6 +80,11 @@
       const hierarchyModule = await import('./lib/pages/HierarchyPage.svelte')
       HierarchyPage = hierarchyModule.default
     } catch {}
+    // Office page
+    try {
+      const officeModule = await import('./lib/pages/OfficePage.svelte')
+      OfficePage = officeModule.default
+    } catch {}
   })
 
   function navigate(page, id) {
@@ -112,6 +118,8 @@
       <svelte:component this={RolesPage} />
     {:else if currentPage === 'groups' && GroupsPage}
       <svelte:component this={GroupsPage} />
+    {:else if currentPage === 'office' && OfficePage}
+      <svelte:component this={OfficePage} />
     {:else if currentPage === 'settings' && SettingsPage}
       <svelte:component this={SettingsPage} />
     {:else}

@@ -6,6 +6,10 @@ const ANIM_CONFIG = {
   waiting:  { frameCount: 2, interval: 700, loop: true },
   error:    { frameCount: 1, interval: 400, loop: false, playCount: 2, fallback: 'idle' },
   finished: { frameCount: 3, interval: 300, loop: false, playCount: 2, fallback: 'idle' },
+  walkDown:  { frameCount: 3, interval: 180, loop: true },
+  walkUp:    { frameCount: 3, interval: 180, loop: true },
+  walkLeft:  { frameCount: 3, interval: 180, loop: true },
+  walkRight: { frameCount: 3, interval: 180, loop: true },
 }
 
 // Map worker.status to animation state
@@ -75,6 +79,14 @@ export class AnimationState {
     if (!config) return 0
     return Math.min(this.frame, config.frameCount - 1)
   }
+}
+
+export const ENV_ANIM = {
+  neonPulseSpeed: 500,
+  particleSpawnRate: 0.02,
+  particleMaxCount: 30,
+  dataStreamSpeed: 2000,
+  screenGlowPulse: 3000,
 }
 
 export { ANIM_CONFIG }

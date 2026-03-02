@@ -27,12 +27,12 @@ func NewCompletionMonitor(tmuxClient tmux.TmuxClient) *CompletionMonitor {
 // - No output change for N consecutive polls
 // - Shell prompt appearing (CLI exited)
 func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (CompletionResult, error) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	var lastContent string
 	noChangeCount := 0
-	const noChangeThreshold = 15 // 30 seconds of no change after initial activity
+	const noChangeThreshold = 30 // 30 seconds of no change after initial activity
 	hadActivity := false
 	useAider := w.CLITool == "aider"
 

@@ -207,6 +207,11 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 				Message:   fmt.Sprintf("Task %q is now ready (dependencies resolved)", pt.Title),
 			})
 		}
+
+		// Engage idle managers after review approval
+		if len(promoted) > 0 {
+			go rp.mgr.engageIdleManagers(context.Background(), p.ID)
+		}
 	} else {
 		_ = rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskRevision)
 		rp.mgr.emit(Event{
@@ -339,17 +344,19 @@ func (rp *ReviewPipeline) captureManagerOutput(w *worker.Worker) string {
 
 func buildReviewPrompt(t *project.Task, p *project.Project) string {
 	var sb strings.Builder
+	sb.WriteString("IMPORTANT: Start reviewing IMMEDIATELY. No planning or preparation needed.\n\n")
 	sb.WriteString(fmt.Sprintf("Review code on branch %s.\n\n", t.BranchName))
-	sb.WriteString(fmt.Sprintf("The original task was: %s\n", t.Title))
+	sb.WriteString(fmt.Sprintf("Task: %s\n", t.Title))
 	if t.Description != "" {
 		sb.WriteString(fmt.Sprintf("Description: %s\n", t.Description))
 	}
-	sb.WriteString("\nPlease:\n")
-	sb.WriteString("1. Run `git diff` to review the changes\n")
-	sb.WriteString("2. Check code quality, correctness, and test coverage\n")
-	sb.WriteString("3. End your response with either:\n")
-	sb.WriteString("   - APPROVED: if the code is ready to merge\n")
-	sb.WriteString("   - REJECTED: <reason> if changes are needed\n")
+	sb.WriteString("\nSteps:\n")
+	sb.WriteString(fmt.Sprintf("1. Run `git log main..%s --oneline` to see commits\n", t.BranchName))
+	sb.WriteString(fmt.Sprintf("2. Run `git diff main...%s` to review all changes\n", t.BranchName))
+	sb.WriteString("3. Check code quality, correctness, and test coverage\n")
+	sb.WriteString("4. End your response with EXACTLY one of:\n")
+	sb.WriteString("   APPROVED\n")
+	sb.WriteString("   REJECTED: <specific reason and required changes>\n")
 	return sb.String()
 }
 

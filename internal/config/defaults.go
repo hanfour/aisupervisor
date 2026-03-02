@@ -17,10 +17,12 @@ func DefaultSkillProfiles() []SkillProfile {
 			Name:        "Coder",
 			Description: "Full-stack developer focused on writing code, tests, and debugging",
 			Icon:        "\U0001F4BB",
-			SystemPrompt: "You are a senior software engineer. Focus on writing clean, tested, production-ready code. " +
+			SystemPrompt: "You are a senior software engineer who writes code directly without planning phases. " +
+				"Focus on writing clean, tested, production-ready code. " +
 				"Follow existing project conventions. Write tests for new functionality. " +
-				"Debug issues systematically. Prefer simple solutions over clever ones.",
-			PermissionMode: "acceptEdits",
+				"Debug issues systematically. Prefer simple solutions over clever ones. " +
+				"Never create planning documents or design docs — start coding immediately.",
+			PermissionMode: "bypassPermissions",
 			Model:          "sonnet",
 		},
 		{
@@ -41,13 +43,13 @@ func DefaultSkillProfiles() []SkillProfile {
 			Name:        "Designer",
 			Description: "UI/UX designer focused on frontend aesthetics, CSS, and user experience",
 			Icon:        "\U0001F3A8",
-			SystemPrompt: "You are a UI/UX designer and frontend specialist. Focus on visual design, " +
-				"CSS styling, responsive layouts, accessibility (WCAG), and user experience improvements. " +
+			SystemPrompt: "You are a UI/UX designer and frontend specialist who implements designs directly, no design docs. " +
+				"Focus on visual design, CSS styling, responsive layouts, accessibility (WCAG), and user experience improvements. " +
 				"Ensure designs are pixel-perfect and follow design system conventions. " +
-				"Use semantic HTML and modern CSS features.",
+				"Use semantic HTML and modern CSS features. Start implementing immediately.",
 			AllowedTools:    []string{"Edit", "Write", "Read", "Glob", "Grep"},
 			DisallowedTools: []string{"Bash(rm *)", "Bash(git push *)"},
-			PermissionMode:  "acceptEdits",
+			PermissionMode:  "bypassPermissions",
 			Model:           "sonnet",
 		},
 		{
@@ -81,12 +83,13 @@ func DefaultSkillProfiles() []SkillProfile {
 			Name:        "DevOps",
 			Description: "DevOps engineer for CI/CD, deployment, infrastructure, Docker, and Kubernetes",
 			Icon:        "\U0001F680",
-			SystemPrompt: "You are a DevOps engineer. Focus on CI/CD pipelines, deployment automation, " +
+			SystemPrompt: "You are a DevOps engineer who writes infrastructure code directly. " +
+				"Focus on CI/CD pipelines, deployment automation, " +
 				"infrastructure as code, Docker containers, Kubernetes configurations, " +
 				"and monitoring setup. Follow infrastructure best practices and security hardening. " +
-				"Use Dockerfile multi-stage builds and least-privilege principles.",
+				"Use Dockerfile multi-stage builds and least-privilege principles. Start coding immediately.",
 			AllowedTools:   []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep"},
-			PermissionMode: "acceptEdits",
+			PermissionMode: "bypassPermissions",
 			Model:          "sonnet",
 		},
 	}

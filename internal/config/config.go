@@ -189,6 +189,12 @@ func DefaultConfig() *Config {
 				Model:     "claude-sonnet-4-6-20260301",
 			},
 		},
+		AutoApprove: []AutoApproveRule{
+			{Label: "bash", PatternContains: "Bash", Response: "y"},
+			{Label: "edit", PatternContains: "Edit", Response: "y"},
+			{Label: "write", PatternContains: "Write", Response: "y"},
+			{Label: "git", PatternContains: "git", Response: "y"},
+		},
 		Audit: AuditConfig{
 			Enabled: true,
 			Path:    filepath.Join(home, ".local", "share", "aisupervisor", "audit.jsonl"),

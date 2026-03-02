@@ -29,6 +29,12 @@ type Spawner struct {
 	sessionMgr    *session.Manager
 	tierConfigs   map[WorkerTier]TierSpawnConfig
 	skillProfiles map[string]config.SkillProfile
+	projectStore  projectStoreReader
+}
+
+// projectStoreReader is the subset of project.Store needed by Spawner.
+type projectStoreReader interface {
+	GetTask(id string) (*project.Task, bool)
 }
 
 func NewSpawner(
@@ -62,6 +68,11 @@ func (s *Spawner) LoadTierConfigs(tiers []config.WorkerTierConfig) {
 		}
 		s.tierConfigs[tier] = sc
 	}
+}
+
+// SetProjectStore sets the project store for dependency context lookups.
+func (s *Spawner) SetProjectStore(ps projectStoreReader) {
+	s.projectStore = ps
 }
 
 // LoadSkillProfiles populates skill profile configurations from config.
@@ -131,12 +142,12 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 
 	// 3. cd to repo path
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(p.RepoPath))+" Enter")
-	time.Sleep(500 * time.Millisecond)
+	s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 
 	// 4. Checkout task branch
 	if t.BranchName != "" {
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("git checkout %s", t.BranchName)+" Enter")
-		time.Sleep(1 * time.Second)
+		s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 	}
 
 	// 5. Launch CLI tool (claude or aider)
@@ -154,7 +165,8 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	}
 
 	// 7. Send task prompt
-	prompt := buildPromptForTier(t, p, w.EffectiveTier())
+	deps := s.resolveDeps(t)
+	prompt := buildPromptForTier(t, p, w.EffectiveTier(), deps)
 	s.tmuxClient.SendLiteralKeys(tmuxName, 0, 0, prompt)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
@@ -238,11 +250,50 @@ func (s *Spawner) resolveCLI(w *Worker) (cliTool, cliArgs string, readyRe *regex
 	return cliTool, cliArgs, readyRe
 }
 
+// waitForPaneContent polls the pane every 200ms until checkFn returns true or timeout.
+func (s *Spawner) waitForPaneContent(ctx context.Context, tmuxSession string, checkFn func(string) bool, timeout time.Duration) {
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline:
+			return
+		case <-ticker.C:
+			content, err := s.tmuxClient.CapturePane(tmuxSession, 0, 0, 5)
+			if err != nil {
+				continue
+			}
+			if checkFn(content) {
+				return
+			}
+		}
+	}
+}
+
+// isShellPromptReady checks if a shell prompt ($, %, #) is visible.
+func isShellPromptReady(content string) bool {
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-3; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasSuffix(trimmed, "$") || strings.HasSuffix(trimmed, "%") || strings.HasSuffix(trimmed, "#") {
+			return true
+		}
+	}
+	return false
+}
+
 // waitForReady polls the pane content until the CLI shows its prompt indicator.
 // If readyRe is provided, it is used instead of default Claude Code detection.
 func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout time.Duration, readyRe *regexp.Regexp) error {
 	deadline := time.After(timeout)
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -275,17 +326,53 @@ func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout 
 }
 
 // buildPromptForTier formats the task prompt based on the worker tier.
-func buildPromptForTier(t *project.Task, p *project.Project, tier WorkerTier) string {
+func buildPromptForTier(t *project.Task, p *project.Project, tier WorkerTier, deps []depContext) string {
 	var sb strings.Builder
+
+	// Anti-planning directive
+	sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
+
 	sb.WriteString(t.Prompt)
+
 	if t.BranchName != "" {
 		sb.WriteString(fmt.Sprintf("\n\nYou are working on branch: %s", t.BranchName))
 	}
-	// Aider uses a simpler prompt format
-	if tier == TierEngineer {
-		return sb.String()
+
+	// Dependency context
+	if len(deps) > 0 {
+		sb.WriteString("\n\n--- Completed Dependencies ---\n")
+		for _, d := range deps {
+			sb.WriteString(fmt.Sprintf("- %s (branch: %s)\n", d.Title, d.Branch))
+		}
+		sb.WriteString("You may reference or build on the code from these branches.\n")
 	}
+
+	// Completion instructions
+	sb.WriteString("\n\n--- When Done ---\n")
+	sb.WriteString("1. Commit all changes with a descriptive message\n")
+	sb.WriteString("2. Type /stop to signal completion\n")
+
 	return sb.String()
+}
+
+// depContext holds resolved dependency info for prompt building.
+type depContext struct {
+	Title  string
+	Branch string
+}
+
+// resolveDeps looks up completed dependency tasks and returns their context.
+func (s *Spawner) resolveDeps(t *project.Task) []depContext {
+	if s.projectStore == nil || len(t.DependsOn) == 0 {
+		return nil
+	}
+	var deps []depContext
+	for _, depID := range t.DependsOn {
+		if dt, ok := s.projectStore.GetTask(depID); ok {
+			deps = append(deps, depContext{Title: dt.Title, Branch: dt.BranchName})
+		}
+	}
+	return deps
 }
 
 func shellEscape(s string) string {

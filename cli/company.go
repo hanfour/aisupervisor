@@ -236,6 +236,80 @@ var companyAssignTaskCmd = &cobra.Command{
 	},
 }
 
+// --- Batch operations ---
+
+var companyCompleteTaskCmd = &cobra.Command{
+	Use:   "complete-task",
+	Short: "Mark a task as done and promote dependents",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		taskID, _ := cmd.Flags().GetString("task")
+		if taskID == "" {
+			return fmt.Errorf("--task is required")
+		}
+
+		mgr, err := buildCompanyManager()
+		if err != nil {
+			return err
+		}
+		if err := mgr.CompleteTask(taskID); err != nil {
+			return err
+		}
+		fmt.Printf("Task %s marked as done (dependents promoted)\n", taskID)
+		return nil
+	},
+}
+
+var companyAssignReadyCmd = &cobra.Command{
+	Use:   "assign-ready",
+	Short: "Assign all ready tasks to idle workers",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		projectID, _ := cmd.Flags().GetString("project")
+		if projectID == "" {
+			return fmt.Errorf("--project is required")
+		}
+
+		mgr, err := buildCompanyManagerWithTmux()
+		if err != nil {
+			return err
+		}
+		defer mgr.Shutdown()
+
+		ctx := context.Background()
+		assigned, err := mgr.AssignAllReady(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Assigned %d tasks to idle workers\n", assigned)
+		return nil
+	},
+}
+
+var companyLaunchWaveCmd = &cobra.Command{
+	Use:   "launch-wave",
+	Short: "Launch a specific milestone wave",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		projectID, _ := cmd.Flags().GetString("project")
+		milestone, _ := cmd.Flags().GetString("milestone")
+		if projectID == "" || milestone == "" {
+			return fmt.Errorf("--project and --milestone are required")
+		}
+
+		mgr, err := buildCompanyManagerWithTmux()
+		if err != nil {
+			return err
+		}
+		defer mgr.Shutdown()
+
+		ctx := context.Background()
+		assigned, err := mgr.LaunchWave(ctx, projectID, milestone)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Wave %q: assigned %d tasks to idle workers\n", milestone, assigned)
+		return nil
+	},
+}
+
 // --- Promote ---
 
 var companyPromoteWorkerCmd = &cobra.Command{
@@ -473,7 +547,16 @@ func init() {
 	// Progress
 	companyProgressCmd.Flags().String("project", "", "Project ID")
 
+	// Batch operations
+	companyCompleteTaskCmd.Flags().String("task", "", "Task ID to complete")
+	companyAssignReadyCmd.Flags().String("project", "", "Project ID")
+	companyLaunchWaveCmd.Flags().String("project", "", "Project ID")
+	companyLaunchWaveCmd.Flags().String("milestone", "", "Milestone tag")
+
 	// Build command tree
+	companyCmd.AddCommand(companyCompleteTaskCmd)
+	companyCmd.AddCommand(companyAssignReadyCmd)
+	companyCmd.AddCommand(companyLaunchWaveCmd)
 	companyCmd.AddCommand(companyCreateProjectCmd)
 	companyCmd.AddCommand(companyListProjectsCmd)
 	companyCmd.AddCommand(companyCreateWorkerCmd)

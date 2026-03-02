@@ -496,8 +496,8 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 				Message:  fmt.Sprintf("Manager %s is idle", w.Name),
 			})
 
-			// Try to drain review queue
-			go m.review.DrainQueue(context.Background())
+			// Try to drain review queue and engage idle managers
+			go m.engageIdleManagers(context.Background(), p.ID)
 			return
 		}
 
@@ -580,11 +580,17 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 
 	shouldAutoSchedule := m.autoSchedule
 	workerID := w.ID
+	projectID := p.ID
 
 	m.mu.Unlock()
 
 	if shouldAutoSchedule {
 		go m.tryAutoAssign(workerID)
+	}
+
+	// Engage idle managers after task completion
+	if len(promoted) > 0 {
+		go m.engageIdleManagers(context.Background(), projectID)
 	}
 }
 
@@ -672,6 +678,98 @@ func (m *Manager) CompleteTask(taskID string) error {
 	}
 
 	return nil
+}
+
+// AssignAllReady matches all ready tasks for a project to idle engineers.
+func (m *Manager) AssignAllReady(ctx context.Context, projectID string) (int, error) {
+	readyTasks := m.projectStore.ReadyTasksByPriority()
+	idleWorkers := m.idleEngineers()
+
+	assigned := 0
+	for _, t := range readyTasks {
+		if t.ProjectID != projectID {
+			continue
+		}
+		if assigned >= len(idleWorkers) {
+			break
+		}
+		if err := m.AssignTask(ctx, idleWorkers[assigned].ID, t.ID); err != nil {
+			continue
+		}
+		assigned++
+	}
+	return assigned, nil
+}
+
+// LaunchWave assigns ready tasks for a specific milestone to idle engineers.
+func (m *Manager) LaunchWave(ctx context.Context, projectID, milestone string) (int, error) {
+	readyTasks := m.projectStore.ReadyTasksByPriority()
+	idleWorkers := m.idleEngineers()
+
+	assigned := 0
+	for _, t := range readyTasks {
+		if t.ProjectID != projectID || t.Milestone != milestone {
+			continue
+		}
+		if assigned >= len(idleWorkers) {
+			break
+		}
+		if err := m.AssignTask(ctx, idleWorkers[assigned].ID, t.ID); err != nil {
+			continue
+		}
+		assigned++
+	}
+	return assigned, nil
+}
+
+// engageIdleManagers tries to utilize idle managers by draining review queue
+// and assigning ready tasks that managers can handle.
+func (m *Manager) engageIdleManagers(ctx context.Context, projectID string) {
+	// 1. Drain review queue first
+	m.review.DrainQueue(ctx)
+
+	// 2. Check if idle managers can pick up ready tasks
+	m.mu.RLock()
+	var idleManagers []*worker.Worker
+	for _, w := range m.workers {
+		if w.Status == worker.WorkerIdle && w.EffectiveTier() == worker.TierManager {
+			idleManagers = append(idleManagers, w)
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(idleManagers) == 0 {
+		return
+	}
+
+	readyTasks := m.projectStore.ReadyTasksByPriority()
+	assigned := 0
+	for _, t := range readyTasks {
+		if t.ProjectID != projectID {
+			continue
+		}
+		if assigned >= len(idleManagers) {
+			break
+		}
+		if err := m.AssignTask(ctx, idleManagers[assigned].ID, t.ID); err != nil {
+			continue
+		}
+		assigned++
+	}
+}
+
+// idleEngineers returns all idle engineer workers.
+func (m *Manager) idleEngineers() []*worker.Worker {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*worker.Worker
+	for _, w := range m.workers {
+		if w.Status == worker.WorkerIdle && w.EffectiveTier() == worker.TierEngineer {
+			result = append(result, w)
+		}
+	}
+	return result
 }
 
 // ProjectProgress returns completion statistics for a project.

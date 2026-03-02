@@ -45,6 +45,20 @@ const PALETTES = {
     pants: '#333', pantsShade: '#111',
     shoes: '#222', eye: '#111', eyeHi: '#fff', accent: '#ffaa00',
   },
+  researcher: {
+    skin: '#fdd', skinShade: '#dbb', skinHi: '#fee',
+    hair: '#654', hairShade: '#432', hairHi: '#987',
+    shirt: '#28d', shirtShade: '#06a', shirtHi: '#4af',
+    pants: '#446', pantsShade: '#224',
+    shoes: '#333', eye: '#111', eyeHi: '#fff', accent: '#44ddff',
+  },
+  reviewer: {
+    skin: '#edb', skinShade: '#cb9', skinHi: '#fed',
+    hair: '#543', hairShade: '#321', hairHi: '#876',
+    shirt: '#2a6', shirtShade: '#084', shirtHi: '#4c8',
+    pants: '#345', pantsShade: '#123',
+    shoes: '#222', eye: '#111', eyeHi: '#fff', accent: '#44ff88',
+  },
 }
 
 // ── Color Map: char → palette key ───────────────────────────────────────────
@@ -269,6 +283,65 @@ const CHARACTER_FRAMES = {
       '000074P447000000',
       '0000000000000000',
       '0000750057000000',
+    ],
+  ],
+  walkDown: [
+    // Frame 0 — left leg forward
+    [
+      '0000077770000000',
+      '00007h11H7000000',
+      '0007h111HH700000',
+      '0007762267700000',
+      '00072s22S2700000',
+      '0000722227000000',
+      '0000073370000000',
+      '000073t337000000',
+      '00073t33T3700000',
+      '00073t33T3700000',
+      '0000733337000000',
+      '0000074470000000',
+      '000074P447000000',
+      '0000074070000000',
+      '0000075070000000',
+      '0000750000000000',
+    ],
+    // Frame 1 — neutral
+    [
+      '0000077770000000',
+      '00007h11H7000000',
+      '0007h111HH700000',
+      '0007762267700000',
+      '00072s22S2700000',
+      '0000722227000000',
+      '0000073370000000',
+      '000073t337000000',
+      '00073t33T3700000',
+      '00073t33T3700000',
+      '0000733337000000',
+      '0000074470000000',
+      '000074P447000000',
+      '0000074470000000',
+      '0000075570000000',
+      '0000750057000000',
+    ],
+    // Frame 2 — right leg forward
+    [
+      '0000077770000000',
+      '00007h11H7000000',
+      '0007h111HH700000',
+      '0007762267700000',
+      '00072s22S2700000',
+      '0000722227000000',
+      '0000073370000000',
+      '000073t337000000',
+      '00073t33T3700000',
+      '00073t33T3700000',
+      '0000733337000000',
+      '0000074470000000',
+      '000074P447000000',
+      '0000070470000000',
+      '0000070570000000',
+      '0000000057000000',
     ],
   ],
 }
@@ -657,21 +730,25 @@ export function prerenderEnvSprite(name) {
 
 // Skill profile → accent color and icon for office rendering
 export const SKILL_PROFILE_COLORS = {
-  coder:     '#ff4444',
-  hacker:    '#00ff41',
-  designer:  '#ff44ff',
-  analyst:   '#88ccff',
-  architect: '#cc88ff',
-  devops:    '#ffaa00',
+  coder:      '#ff4444',
+  hacker:     '#00ff41',
+  designer:   '#ff44ff',
+  analyst:    '#88ccff',
+  architect:  '#cc88ff',
+  devops:     '#ffaa00',
+  researcher: '#44ddff',
+  reviewer:   '#44ff88',
 }
 
 export const SKILL_PROFILE_ICONS = {
-  coder:     '\u{1F4BB}',
-  hacker:    '\u{1F575}',
-  designer:  '\u{1F3A8}',
-  analyst:   '\u{1F50D}',
-  architect: '\u{1F3DB}',
-  devops:    '\u{1F680}',
+  coder:      '\u{1F4BB}',
+  hacker:     '\u{1F575}',
+  designer:   '\u{1F3A8}',
+  analyst:    '\u{1F50D}',
+  architect:  '\u{1F3DB}',
+  devops:     '\u{1F680}',
+  researcher: '\u{1F4DA}',
+  reviewer:   '\u2705',
 }
 
 export { PALETTES, CHARACTER_FRAMES, FURNITURE_SPRITES, ENV_SPRITES, CHARACTER_NAMES, CLASS_FRAME_OVERRIDES }

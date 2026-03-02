@@ -855,6 +855,42 @@ const FURNITURE_SPRITES = {
     '7000000000000077',
     '7777777777777777',
   ],
+  meetingTable: [  // conference table segment — tiles horizontally to form a long table
+    '0777777777777770',
+    '0788888888888870',
+    '07b8888888888b70',
+    '0788888888888870',
+    '0777777777777770',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0777777777777770',
+    '0788888888888870',
+    '07b8888888888b70',
+    '0788888888888870',
+    '0777777777777770',
+  ],
+  whiteboard: [  // wall-mounted whiteboard with writing lines
+    '7777777777777777',
+    '7eeeeeeeeeeeeee7',
+    '7eeeeeeeeeeeeee7',
+    '7ebbbbbbbbbbbbe7',
+    '7eeeeeeeeeeeeee7',
+    '7ebbbbbbbbbbbee7',
+    '7eeeeeeeeeeeeee7',
+    '7ebbbbbbbbbeeee7',
+    '7eeeeeeeeeeeeee7',
+    '7ebbbbbbbeeeeee7',
+    '7eeeeeeeeeeeeee7',
+    '7eeeeeeeeeeeeee7',
+    '7777777777777777',
+    '7000000000000007',
+    '7700000000000077',
+    '7777777777777777',
+  ],
 }
 
 // Extra environment sprites for tile rendering
@@ -907,6 +943,7 @@ const FURNITURE_PALETTE = {
   '3': '#ff4444',  // LED red
   'c': '#00ff41',  // neon green
   'd': '#ff00ff',  // neon pink
+  'e': '#e8e8f0',  // whiteboard face (off-white)
 }
 
 const AVATAR_TO_CHAR = {

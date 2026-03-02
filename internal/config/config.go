@@ -165,7 +165,6 @@ type AuditConfig struct {
 func DefaultConfig() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
-		DefaultBackend: "claude-api",
 		Polling: PollingConfig{
 			IntervalMs:   500,
 			ContextLines: 100,
@@ -181,7 +180,13 @@ func DefaultConfig() *Config {
 			TokenBudget:        2000,
 			ActivityIntervalSec: 60,
 		},
+		DefaultBackend: "claude-oauth",
 		Backends: []BackendConfig{
+			{
+				Name:  "claude-oauth",
+				Type:  "anthropic_oauth",
+				Model: "claude-sonnet-4-6-20260301",
+			},
 			{
 				Name:      "claude-api",
 				Type:      "anthropic_api",

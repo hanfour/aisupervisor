@@ -77,6 +77,23 @@ const MEETING_TOPICS = [
   'Hiring Discussion',
 ]
 
+const TIRED_MESSAGES = [
+    '好累...', '需要咖啡☕', '休息一下...',
+    '快下班了嗎...', '打個哈欠~'
+]
+const COMFORTING_MESSAGES = [
+    '沒關係的', '要不要去喝杯咖啡？',
+    '下次會更好', '一起加油！'
+]
+const CELEBRATION_MESSAGES = [
+    '太棒了！🎉', '完成了！', '慶祝！',
+    '辛苦了！', 'GG！'
+]
+const PAIR_PROG_MESSAGES = [
+    '這邊看看...', '一起 debug', '你覺得呢？',
+    '試試這個方法', '我來寫你來看'
+]
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function pick(arr) {
@@ -125,6 +142,10 @@ export class SimulationEngine {
     }
 
     this._workers = workers
+  }
+
+  setProfiles(profileMap) {
+    this.profiles = profileMap // Map<workerId, CharacterProfileDTO>
   }
 
   update(deltaMs) {
@@ -350,6 +371,71 @@ export class SimulationEngine {
         if (partner) this._startQuickQuestion(w.id, partner.id)
       }
     }
+
+    // Pair Programming: 8% chance for two idle engineers with high affinity
+    if (this.profiles && idleWorkers.length >= 2) {
+      for (let i = 0; i < idleWorkers.length && Math.random() < 0.08; i++) {
+        const w1 = idleWorkers[i]
+        const p1 = this.profiles.get(w1.id)
+        if (!p1) continue
+        for (let j = i + 1; j < idleWorkers.length; j++) {
+          const w2 = idleWorkers[j]
+          // Check state is at-desk for both
+          const s1 = this.workerStates.get(w1.id)
+          const s2 = this.workerStates.get(w2.id)
+          if (s1?.state === 'at-desk' && s2?.state === 'at-desk') {
+            this._startPairProgramming(w1, w2)
+            break
+          }
+        }
+      }
+    }
+
+    // Comforting: check for stressed workers
+    if (this.profiles) {
+      for (const w of this._workers || []) {
+        const profile = this.profiles.get(w.id)
+        if (profile?.mood?.current === 'stressed' || profile?.mood?.current === 'frustrated') {
+          const comforter = idleWorkers.find(iw => {
+            if (iw.id === w.id) return false
+            const s = this.workerStates.get(iw.id)
+            return s?.state === 'at-desk'
+          })
+          if (comforter && Math.random() < 0.2) {
+            this._startComforting(comforter, w)
+          }
+        }
+      }
+    }
+  }
+
+  // ── Personality-aware bubble content ─────────────────────────────────────
+
+  _getBubbleContent(worker, activityType) {
+    const profile = this.profiles?.get(worker.id)
+
+    // Use catchphrases occasionally (30% chance)
+    if (profile?.narrative?.catchphrases?.length && Math.random() < 0.3) {
+      const phrases = profile.narrative.catchphrases
+      return phrases[Math.floor(Math.random() * phrases.length)]
+    }
+
+    // Mood-based messages
+    if (profile?.mood?.current === 'tired') {
+      return TIRED_MESSAGES[Math.floor(Math.random() * TIRED_MESSAGES.length)]
+    }
+
+    // Activity-specific messages
+    switch (activityType) {
+      case 'comforting':
+        return COMFORTING_MESSAGES[Math.floor(Math.random() * COMFORTING_MESSAGES.length)]
+      case 'celebration':
+        return CELEBRATION_MESSAGES[Math.floor(Math.random() * CELEBRATION_MESSAGES.length)]
+      case 'pair_programming':
+        return PAIR_PROG_MESSAGES[Math.floor(Math.random() * PAIR_PROG_MESSAGES.length)]
+      default:
+        return null // Falls back to existing message selection
+    }
   }
 
   // ── Activity starters ─────────────────────────────────────────────────────
@@ -440,6 +526,39 @@ export class SimulationEngine {
     ws.data = { activity: 'manager-meeting' }
     this.renderer.moveWorkerTo(managerId, tile.col, tile.row)
     this._log(managerId, 'walking to meeting room')
+  }
+
+  _startPairProgramming(worker1, worker2) {
+    const desk = this.deskMap?.get(worker1.id)
+    if (!desk) return
+
+    this.workerStates.set(worker1.id, { state: 'at-desk', data: { activity: 'pair_programming' }, timer: 8000 })
+    this.workerStates.set(worker2.id, { state: 'walking-to-person', data: { targetId: worker1.id, activity: 'pair_programming' }, timer: 8000 })
+
+    this._addBubble(worker1.id, this._getBubbleContent(worker1, 'pair_programming') || '一起寫 code')
+    this._logActivity(`${worker1.name || worker1.id} 和 ${worker2.name || worker2.id} 開始結對編程`)
+  }
+
+  _startComforting(comforter, target) {
+    this.workerStates.set(comforter.id, { state: 'walking-to-person', data: { targetId: target.id, activity: 'comforting' }, timer: 5000 })
+
+    setTimeout(() => {
+      this._addBubble(comforter.id, this._getBubbleContent(comforter, 'comforting') || '沒關係的')
+    }, 2000)
+    this._logActivity(`${comforter.name || comforter.id} 去關心 ${target.name || target.id}`)
+  }
+
+  _startCelebration(workers) {
+    const zone = 'breakArea'
+    for (const w of workers) {
+      this.workerStates.set(w.id, { state: 'walking-to-zone', data: { zone, activity: 'celebration' }, timer: 6000 })
+    }
+    setTimeout(() => {
+      for (const w of workers) {
+        this._addBubble(w.id, this._getBubbleContent(w, 'celebration') || '🎉')
+      }
+    }, 3000)
+    this._logActivity(`團隊慶祝！`)
   }
 
   // ── Backend event handlers ────────────────────────────────────────────────
@@ -554,6 +673,16 @@ export class SimulationEngine {
     const worker = (this._workers || []).find(w => w.id === workerId)
     const name = worker?.name || workerId
     this.activityLog.push({ ts: Date.now(), name, activity })
+    if (this.activityLog.length > 100) this.activityLog.shift()
+  }
+
+  _addBubble(workerId, text) {
+    if (!text) return
+    this.renderer.showSpeech(workerId, text, 4000)
+  }
+
+  _logActivity(activity) {
+    this.activityLog.push({ ts: Date.now(), name: 'system', activity })
     if (this.activityLog.length > 100) this.activityLog.shift()
   }
 }

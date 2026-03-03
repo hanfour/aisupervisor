@@ -16,3 +16,16 @@ export async function createProject(name, description, repoPath, baseBranch, goa
     return p
   }
 }
+
+export async function deleteProject(projectID) {
+  if (window.go && window.go.gui && window.go.gui.CompanyApp) {
+    await window.go.gui.CompanyApp.DeleteProject(projectID)
+    await loadProjects()
+  }
+}
+
+export async function chatCreateProject(messages) {
+  if (window.go && window.go.gui && window.go.gui.CompanyApp) {
+    return await window.go.gui.CompanyApp.ChatCreateProject(messages)
+  }
+}

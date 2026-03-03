@@ -280,6 +280,42 @@ func TestReadyTasksByPriorityEmpty(t *testing.T) {
 	}
 }
 
+func TestDeleteProject(t *testing.T) {
+	s := tempStore(t)
+
+	p := &Project{Name: "to-delete", RepoPath: "/tmp"}
+	s.SaveProject(p)
+
+	s.SaveTask(&Task{ProjectID: p.ID, Title: "task-a"})
+	s.SaveTask(&Task{ProjectID: p.ID, Title: "task-b"})
+	s.SaveTask(&Task{ProjectID: "other", Title: "task-c"})
+
+	if err := s.DeleteProject(p.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+
+	if _, ok := s.GetProject(p.ID); ok {
+		t.Fatal("expected project to be deleted")
+	}
+
+	if tasks := s.TasksForProject(p.ID); len(tasks) != 0 {
+		t.Fatalf("expected 0 tasks for deleted project, got %d", len(tasks))
+	}
+
+	// Other project's tasks should remain
+	if tasks := s.TasksForProject("other"); len(tasks) != 1 {
+		t.Fatalf("expected 1 task for other project, got %d", len(tasks))
+	}
+}
+
+func TestDeleteProjectNotFound(t *testing.T) {
+	s := tempStore(t)
+	err := s.DeleteProject("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent project")
+	}
+}
+
 func TestNewStoreCreatesDir(t *testing.T) {
 	dir := t.TempDir() + "/sub/dir"
 	_, err := NewStore(dir)

@@ -187,6 +187,23 @@ func CompanyEventToDTO(e company.Event) CompanyEventDTO {
 	}
 }
 
+// ChatMessageDTO represents a chat message for AI project creation.
+type ChatMessageDTO struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ChatProjectResponseDTO is the response from AI project creation.
+type ChatProjectResponseDTO struct {
+	Status      string   `json:"status"`
+	Questions   []string `json:"questions,omitempty"`
+	Name        string   `json:"name,omitempty"`
+	Description string   `json:"description,omitempty"`
+	RepoPath    string   `json:"repoPath,omitempty"`
+	BaseBranch  string   `json:"baseBranch,omitempty"`
+	Goals       []string `json:"goals,omitempty"`
+}
+
 type PersonalityTraitsDTO struct {
 	Sociability int `json:"sociability"`
 	Focus       int `json:"focus"`

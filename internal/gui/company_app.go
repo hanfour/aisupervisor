@@ -90,6 +90,38 @@ func (c *CompanyApp) GetProject(id string) (*ProjectDTO, error) {
 	return &dto, nil
 }
 
+// DeleteProject removes a project and all its tasks.
+func (c *CompanyApp) DeleteProject(projectID string) error {
+	return c.company.DeleteProject(projectID)
+}
+
+// ChatCreateProject uses AI to extract project information from a chat conversation.
+func (c *CompanyApp) ChatCreateProject(messages []ChatMessageDTO) (*ChatProjectResponseDTO, error) {
+	// Convert DTOs to domain types
+	chatMessages := make([]company.ChatMessage, len(messages))
+	for i, m := range messages {
+		chatMessages[i] = company.ChatMessage{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+
+	resp, err := c.company.ChatCreateProject(c.ctx, chatMessages)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ChatProjectResponseDTO{
+		Status:      resp.Status,
+		Questions:   resp.Questions,
+		Name:        resp.Name,
+		Description: resp.Description,
+		RepoPath:    resp.RepoPath,
+		BaseBranch:  resp.BaseBranch,
+		Goals:       resp.Goals,
+	}, nil
+}
+
 // --- Task operations ---
 
 func (c *CompanyApp) CreateTask(projectID, title, description, prompt string, dependsOn []string, priority int, milestone string) (*TaskDTO, error) {

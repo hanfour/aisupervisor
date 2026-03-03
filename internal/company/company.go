@@ -208,6 +208,35 @@ func (m *Manager) CreateProject(name, description, repoPath, baseBranch string, 
 	return p, nil
 }
 
+// DeleteProject removes a project and all its tasks.
+// Refuses if any task is currently in progress or assigned.
+func (m *Manager) DeleteProject(projectID string) error {
+	// Check for active tasks
+	tasks := m.projectStore.TasksForProject(projectID)
+	for _, t := range tasks {
+		if t.Status == project.TaskInProgress || t.Status == project.TaskAssigned {
+			return fmt.Errorf("cannot delete project %q: task %q is %s", projectID, t.ID, t.Status)
+		}
+	}
+
+	p, ok := m.projectStore.GetProject(projectID)
+	if !ok {
+		return fmt.Errorf("project %q not found", projectID)
+	}
+	name := p.Name
+
+	if err := m.projectStore.DeleteProject(projectID); err != nil {
+		return err
+	}
+
+	m.emit(Event{
+		Type:      EventProjectDeleted,
+		ProjectID: projectID,
+		Message:   fmt.Sprintf("Project deleted: %s", name),
+	})
+	return nil
+}
+
 func (m *Manager) ListProjects() []*project.Project {
 	return m.projectStore.ListProjects()
 }

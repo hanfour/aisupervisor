@@ -92,6 +92,30 @@ func (s *Store) ListProjects() []*Project {
 	return result
 }
 
+// DeleteProject removes a project and all its associated tasks.
+func (s *Store) DeleteProject(projectID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.projects[projectID]; !ok {
+		return fmt.Errorf("project %q not found", projectID)
+	}
+
+	delete(s.projects, projectID)
+
+	// Cascade delete all tasks belonging to this project
+	for id, t := range s.tasks {
+		if t.ProjectID == projectID {
+			delete(s.tasks, id)
+		}
+	}
+
+	if err := s.saveProjects(); err != nil {
+		return err
+	}
+	return s.saveTasks()
+}
+
 // SaveTask creates or updates a task.
 func (s *Store) SaveTask(t *Task) error {
 	s.mu.Lock()

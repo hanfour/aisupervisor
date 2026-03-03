@@ -188,14 +188,23 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 	// Capture training data via collector
 	rp.captureTrainingData(originalTask, managerWorker, p, output, approved)
 
-	// Update personality mood based on review outcome
+	// Update personality mood and skill scores based on review outcome
 	if rp.mgr.personalityStore != nil {
 		engineerID := originalTask.AssigneeID
 		rp.mgr.personalityStore.UpdateProfile(engineerID, func(profile *personality.CharacterProfile) {
 			if approved {
 				personality.ApplyEvent(profile, personality.EventReviewApproved)
+				personality.ApplySkillEvent(&profile.SkillScores, personality.SkillEventReviewApproved)
+				profile.TasksCompleted++
+				// Decay skill scores every 10 tasks
+				if profile.TasksCompleted%10 == 0 {
+					personality.DecayTowardBaseline(&profile.SkillScores)
+				}
 			} else {
 				personality.ApplyEvent(profile, personality.EventReviewRejected)
+				// Classify rejection feedback and apply specific skill penalty
+				skillEvent := personality.ClassifyRejectionType(output)
+				personality.ApplySkillEvent(&profile.SkillScores, skillEvent)
 			}
 			personality.UpdateAutoMood(profile)
 		})
@@ -232,16 +241,35 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			go rp.mgr.engageIdleManagers(context.Background(), p.ID)
 		}
 	} else {
+		// Record rejection
+		originalTask.RejectionCount++
+		originalTask.RejectionHistory = append(originalTask.RejectionHistory, project.Rejection{
+			Stage:      originalTask.Status,
+			RejectorID: managerWorker.ID,
+			Reason:     output,
+			Timestamp:  time.Now(),
+		})
+
+		// Check circuit breaker before re-queuing
+		cb := rp.mgr.circuitBreaker
+		if cb.CheckBounceLoop(originalTask, managerWorker.ID, originalTask.AssigneeID) || project.ShouldEscalate(originalTask) {
+			cb.RecordBounce(originalTask, managerWorker.ID, originalTask.AssigneeID, originalTask.Status, "bounce loop detected")
+			cb.Escalate(originalTask, fmt.Sprintf("bounce loop: %d rejections, %d bounces", originalTask.RejectionCount, len(originalTask.BounceHistory)))
+			rp.mgr.projectStore.SaveTask(originalTask)
+			return
+		}
+
+		cb.RecordBounce(originalTask, managerWorker.ID, originalTask.AssigneeID, originalTask.Status, output)
+
 		_ = rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskRevision)
 		rp.mgr.emit(Event{
 			Type:      EventReviewRejected,
 			ProjectID: p.ID,
 			TaskID:    originalTask.ID,
 			WorkerID:  managerWorker.ID,
-			Message:   rp.mgr.msgf("Task %q rejected by %s", "任務 %q 已由 %s 退回", originalTask.Title, managerWorker.Name),
+			Message:   rp.mgr.msgf("Task %q rejected by %s (%d/%d)", "任務 %q 已由 %s 退回（%d/%d）", originalTask.Title, managerWorker.Name, originalTask.RejectionCount, project.MaxRejectionsBeforeEscalation),
 		})
 
-		// Re-assign to original engineer with feedback
 		rp.mgr.emit(Event{
 			Type:      EventTaskRevision,
 			ProjectID: p.ID,

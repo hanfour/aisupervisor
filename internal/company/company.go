@@ -49,6 +49,10 @@ type Manager struct {
 	langMu         sync.RWMutex
 	ollamaEndpoint string
 	ollamaModel    string
+	modelStrategy  *ModelStrategy
+	circuitBreaker *CircuitBreaker
+	humanGate      *HumanGate
+	commMatrix     *CommunicationMatrix
 }
 
 type workersFile struct {
@@ -110,6 +114,10 @@ func New(
 		ollamaModel:      ollamaModel,
 	}
 	m.review = newReviewPipeline(m)
+	m.modelStrategy = NewModelStrategy()
+	m.circuitBreaker = NewCircuitBreaker(m)
+	m.commMatrix = NewCommunicationMatrix(m)
+	m.humanGate = NewHumanGate(m, DefaultHumanGateConfig())
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	m.shutdownCancel = bgCancel
@@ -657,7 +665,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 
 		// Check if engineer with a parent → route to manager review
 		if w.EffectiveTier() == worker.TierEngineer && w.ParentID != "" {
-			m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
+			m.projectStore.UpdateTaskStatus(t.ID, project.TaskCodeReview)
 
 			m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
 				personality.ApplyEvent(prof, personality.EventTaskCompleted)
@@ -702,7 +710,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		}
 
 		// Default: no review needed (consultant or engineer without parent)
-		m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
+		m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
 
 		m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
 			personality.ApplyEvent(prof, personality.EventTaskCompleted)
@@ -972,7 +980,7 @@ func (m *Manager) UpdateTaskStatusDirect(taskID string, status string) error {
 		return fmt.Errorf("task %q not found", taskID)
 	}
 
-	if err := m.projectStore.UpdateTaskStatus(taskID, project.TaskStatus(status)); err != nil {
+	if err := m.projectStore.ForceUpdateTaskStatus(taskID, project.TaskStatus(status)); err != nil {
 		return err
 	}
 
@@ -996,8 +1004,22 @@ func (m *Manager) CompleteTask(taskID string) error {
 		return fmt.Errorf("task %q not found", taskID)
 	}
 
-	if err := m.projectStore.UpdateTaskStatus(taskID, project.TaskDone); err != nil {
+	if err := m.projectStore.ForceUpdateTaskStatus(taskID, project.TaskDone); err != nil {
 		return err
+	}
+
+	// Reset assignee worker to idle
+	if t.AssigneeID != "" {
+		if w, ok := m.workers[t.AssigneeID]; ok && w.Status == worker.WorkerWorking {
+			w.Status = worker.WorkerIdle
+			w.CurrentTaskID = ""
+			m.saveWorkers()
+			m.emit(Event{
+				Type:     EventWorkerIdle,
+				WorkerID: w.ID,
+				Message:  m.msgf("Worker %s is idle", "員工 %s 已閒置", w.Name),
+			})
+		}
 	}
 
 	m.emit(Event{
@@ -1189,6 +1211,16 @@ func (m *Manager) LoadMaxWorkers(tiers []config.WorkerTierConfig) {
 	}
 }
 
+// LoadHumanGateConfig applies human gate settings from config.
+func (m *Manager) LoadHumanGateConfig(cfg config.HumanGateConfig) {
+	m.humanGate = NewHumanGate(m, HumanGateConfig{
+		Enabled:               cfg.Enabled,
+		TokenBudgetThreshold:  cfg.TokenBudgetThreshold,
+		RequireDeployApproval: cfg.RequireDeployApproval,
+		ConfidenceFloor:       cfg.ConfidenceFloor,
+	})
+}
+
 // SetLanguage sets the prompt language for the company system.
 func (m *Manager) SetLanguage(lang string) {
 	m.langMu.Lock()
@@ -1274,6 +1306,26 @@ func (m *Manager) GetPersonalityStore() *personality.Store {
 // GetNarrator returns the narrator instance (may be nil if Ollama is not configured).
 func (m *Manager) GetNarrator() *personality.Narrator {
 	return m.narrator
+}
+
+// GetModelStrategy returns the model strategy.
+func (m *Manager) GetModelStrategy() *ModelStrategy {
+	return m.modelStrategy
+}
+
+// GetCircuitBreaker returns the circuit breaker.
+func (m *Manager) GetCircuitBreaker() *CircuitBreaker {
+	return m.circuitBreaker
+}
+
+// GetHumanGate returns the human gate.
+func (m *Manager) GetHumanGate() *HumanGate {
+	return m.humanGate
+}
+
+// GetCommunicationMatrix returns the communication matrix.
+func (m *Manager) GetCommunicationMatrix() *CommunicationMatrix {
+	return m.commMatrix
 }
 
 // Shutdown cancels all active workers and waits for goroutines to exit.

@@ -26,6 +26,8 @@ type Config struct {
 	SkillProfiles  []SkillProfile       `yaml:"skill_profiles,omitempty"`
 	Training       TrainingConfig       `yaml:"training,omitempty"`
 	Language       string               `yaml:"language,omitempty"` // "en" or "zh-TW", default "zh-TW"
+	Verification   VerificationConfig   `yaml:"verification,omitempty"`
+	HumanGate      HumanGateConfig      `yaml:"human_gate,omitempty"`
 }
 
 type WorkerTierConfig struct {
@@ -161,6 +163,24 @@ type AutoApproveRule struct {
 type AuditConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"`
+}
+
+// VerificationConfig controls automated verification pipeline settings.
+type VerificationConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	DockerImage string `yaml:"docker_image,omitempty"`
+	TimeoutSec  int    `yaml:"timeout_sec,omitempty"`
+	LintCmd     string `yaml:"lint_cmd,omitempty"`
+	BuildCmd    string `yaml:"build_cmd,omitempty"`
+	TestCmd     string `yaml:"test_cmd,omitempty"`
+}
+
+// HumanGateConfig controls when human intervention is required.
+type HumanGateConfig struct {
+	Enabled              bool    `yaml:"enabled"`
+	TokenBudgetThreshold int64   `yaml:"token_budget_threshold,omitempty"`
+	RequireDeployApproval bool   `yaml:"require_deploy_approval,omitempty"`
+	ConfidenceFloor      float64 `yaml:"confidence_floor,omitempty"`
 }
 
 func DefaultConfig() *Config {

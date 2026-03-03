@@ -98,6 +98,7 @@ type WorkerDTO struct {
 	ModelVersion  string `json:"modelVersion,omitempty"`
 	CLITool       string `json:"cliTool,omitempty"`
 	SkillProfile  string `json:"skillProfile,omitempty"`
+	Gender        string `json:"gender,omitempty"`
 	CurrentTaskID string `json:"currentTaskId"`
 	TmuxSession   string `json:"tmuxSession"`
 	SessionID     string `json:"sessionId"`
@@ -123,6 +124,7 @@ func WorkerToDTO(w *worker.Worker) WorkerDTO {
 		ModelVersion:  w.ModelVersion,
 		CLITool:       w.CLITool,
 		SkillProfile:  w.SkillProfile,
+		Gender:        string(w.Gender),
 		CurrentTaskID: w.CurrentTaskID,
 		TmuxSession:   w.TmuxSession,
 		SessionID:     w.SessionID,

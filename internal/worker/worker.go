@@ -12,12 +12,31 @@ const (
 	WorkerError    WorkerStatus = "error"
 )
 
+type WorkerGender string
+
+const (
+	GenderMale   WorkerGender = "male"
+	GenderFemale WorkerGender = "female"
+)
+
 type WorkerTier string
 
 const (
 	TierConsultant WorkerTier = "consultant"
 	TierManager    WorkerTier = "manager"
 	TierEngineer   WorkerTier = "engineer"
+)
+
+// WorkerRole represents the functional role of a worker within the pipeline.
+type WorkerRole string
+
+const (
+	RoleArchitect WorkerRole = "architect"   // spec_review stage
+	RoleCoder     WorkerRole = "coder"       // in_progress stage (default)
+	RoleQA        WorkerRole = "qa"          // testing stage
+	RoleSecurity  WorkerRole = "security"    // security_scan stage
+	RoleDevOps    WorkerRole = "devops"      // staging stage
+	RoleDesigner  WorkerRole = "designer"    // UI/UX related tasks
 )
 
 type Worker struct {
@@ -36,6 +55,8 @@ type Worker struct {
 	ModelVersion  string       `yaml:"model_version,omitempty" json:"modelVersion,omitempty"`
 	CLITool       string       `yaml:"cli_tool,omitempty" json:"cliTool,omitempty"`
 	SkillProfile  string       `yaml:"skill_profile,omitempty" json:"skillProfile,omitempty"`
+	Role          WorkerRole   `yaml:"role,omitempty" json:"role,omitempty"`
+	Gender        WorkerGender `yaml:"gender,omitempty" json:"gender,omitempty"`
 	CreatedAt     time.Time    `yaml:"created_at" json:"createdAt"`
 }
 
@@ -45,4 +66,12 @@ func (w *Worker) EffectiveTier() WorkerTier {
 		return TierEngineer
 	}
 	return w.Tier
+}
+
+// EffectiveRole returns the worker's role, defaulting to RoleCoder if unset.
+func (w *Worker) EffectiveRole() WorkerRole {
+	if w.Role == "" {
+		return RoleCoder
+	}
+	return w.Role
 }

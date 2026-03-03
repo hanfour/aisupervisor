@@ -37,8 +37,30 @@ type Task struct {
 	Milestone    string     `yaml:"milestone,omitempty" json:"milestone,omitempty"`
 	ReviewerID   string     `yaml:"reviewer_id,omitempty" json:"reviewerId,omitempty"`
 	ParentTaskID string     `yaml:"parent_task_id,omitempty" json:"parentTaskId,omitempty"`
-	ReviewCount  int        `yaml:"review_count,omitempty" json:"reviewCount,omitempty"`
-	CreatedAt    time.Time  `yaml:"created_at" json:"createdAt"`
-	StartedAt    *time.Time `yaml:"started_at,omitempty" json:"startedAt,omitempty"`
-	CompletedAt  *time.Time `yaml:"completed_at,omitempty" json:"completedAt,omitempty"`
+	ReviewCount      int            `yaml:"review_count,omitempty" json:"reviewCount,omitempty"`
+	RejectionCount   int            `yaml:"rejection_count,omitempty" json:"rejectionCount,omitempty"`
+	RejectionHistory []Rejection    `yaml:"rejection_history,omitempty" json:"rejectionHistory,omitempty"`
+	BounceHistory    []BounceRecord `yaml:"bounce_history,omitempty" json:"bounceHistory,omitempty"`
+	TokensConsumed   int64          `yaml:"tokens_consumed,omitempty" json:"tokensConsumed,omitempty"`
+	BudgetLimit      int64          `yaml:"budget_limit,omitempty" json:"budgetLimit,omitempty"`
+	CreatedAt        time.Time      `yaml:"created_at" json:"createdAt"`
+	StartedAt        *time.Time     `yaml:"started_at,omitempty" json:"startedAt,omitempty"`
+	CompletedAt      *time.Time     `yaml:"completed_at,omitempty" json:"completedAt,omitempty"`
+}
+
+// Rejection records a single review rejection event.
+type Rejection struct {
+	Stage      TaskStatus `yaml:"stage" json:"stage"`
+	RejectorID string     `yaml:"rejector_id" json:"rejectorId"`
+	Reason     string     `yaml:"reason" json:"reason"`
+	Timestamp  time.Time  `yaml:"timestamp" json:"timestamp"`
+}
+
+// BounceRecord tracks a task being bounced between agents.
+type BounceRecord struct {
+	FromID    string     `yaml:"from_id" json:"fromId"`
+	ToID      string     `yaml:"to_id" json:"toId"`
+	Stage     TaskStatus `yaml:"stage" json:"stage"`
+	Reason    string     `yaml:"reason" json:"reason"`
+	Timestamp time.Time  `yaml:"timestamp" json:"timestamp"`
 }

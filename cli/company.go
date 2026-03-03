@@ -34,8 +34,16 @@ var companyCreateProjectCmd = &cobra.Command{
 		baseBranch, _ := cmd.Flags().GetString("base-branch")
 		goalsStr, _ := cmd.Flags().GetString("goals")
 
-		if name == "" || repoPath == "" {
-			return fmt.Errorf("--name and --repo are required")
+		if name == "" {
+			return fmt.Errorf("--name is required")
+		}
+		if repoPath == "" {
+			resolved, err := resolveRepoPath(name)
+			if err != nil {
+				return err
+			}
+			repoPath = resolved
+			fmt.Printf("Auto-resolved repo path: %s\n", repoPath)
 		}
 
 		var goals []string
@@ -443,6 +451,42 @@ func printWorkerTree(w *worker.Worker, children map[string][]*worker.Worker, pre
 }
 
 // --- Helpers ---
+
+func resolveRepoPath(name string) (string, error) {
+	// 1. Determine workspace directory
+	wsDir := os.Getenv("WORKSPACE_DIR")
+	if wsDir == "" {
+		if info, err := os.Stat("/workspace"); err == nil && info.IsDir() {
+			wsDir = "/workspace" // Docker environment
+		} else {
+			home, _ := os.UserHomeDir()
+			wsDir = filepath.Join(home, "Projects") // Local environment
+		}
+	}
+
+	// 2. Scan workspace for a case-insensitive directory match
+	entries, err := os.ReadDir(wsDir)
+	if err != nil {
+		return "", fmt.Errorf("cannot read workspace %s: %w", wsDir, err)
+	}
+
+	nameLower := strings.ToLower(name)
+	for _, e := range entries {
+		if e.IsDir() && strings.ToLower(e.Name()) == nameLower {
+			return filepath.Join(wsDir, e.Name()), nil
+		}
+	}
+
+	// 3. Not found — list available directories
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	return "", fmt.Errorf("no directory matching %q in %s\navailable: %s",
+		name, wsDir, strings.Join(dirs, ", "))
+}
 
 func buildCompanyManager() (*company.Manager, error) {
 	home, _ := os.UserHomeDir()

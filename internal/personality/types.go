@@ -62,7 +62,9 @@ type CharacterProfile struct {
 	Mood      MoodState         `yaml:"mood" json:"mood"`
 	Habits    PersonalHabits    `yaml:"habits" json:"habits"`
 	Narrative Narrative         `yaml:"narrative" json:"narrative"`
-	GrowthLog []GrowthEntry    `yaml:"growth_log" json:"growthLog"`
+	GrowthLog      []GrowthEntry    `yaml:"growth_log" json:"growthLog"`
+	SkillScores    SkillScores   `yaml:"skill_scores" json:"skillScores"`
+	TasksCompleted int           `yaml:"tasks_completed" json:"tasksCompleted"`
 }
 
 // NewRandomTraits generates personality traits with values in the range [40, 80].
@@ -112,8 +114,9 @@ func (m *MoodState) AdjustEnergy(delta int) {
 // NewCharacterProfile creates a new profile with random traits and default mood.
 func NewCharacterProfile(workerID string) *CharacterProfile {
 	return &CharacterProfile{
-		WorkerID: workerID,
-		Traits:   NewRandomTraits(),
-		Mood:     NewDefaultMood(),
+		WorkerID:    workerID,
+		Traits:      NewRandomTraits(),
+		Mood:        NewDefaultMood(),
+		SkillScores: NewDefaultSkillScores(),
 	}
 }

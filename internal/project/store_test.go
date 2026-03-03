@@ -94,8 +94,8 @@ func TestUpdateTaskStatus(t *testing.T) {
 	task := &Task{ProjectID: "p1", Title: "x"}
 	s.SaveTask(task)
 
-	if err := s.UpdateTaskStatus(task.ID, TaskInProgress); err != nil {
-		t.Fatalf("UpdateTaskStatus: %v", err)
+	if err := s.ForceUpdateTaskStatus(task.ID, TaskInProgress); err != nil {
+		t.Fatalf("ForceUpdateTaskStatus: %v", err)
 	}
 
 	got, _ := s.GetTask(task.ID)
@@ -112,7 +112,7 @@ func TestUpdateTaskStatusDone(t *testing.T) {
 
 	task := &Task{ProjectID: "p1", Title: "x"}
 	s.SaveTask(task)
-	s.UpdateTaskStatus(task.ID, TaskDone)
+	s.ForceUpdateTaskStatus(task.ID, TaskDone)
 
 	got, _ := s.GetTask(task.ID)
 	if got.CompletedAt == nil {
@@ -160,7 +160,7 @@ func TestReadyTasks_WithDeps(t *testing.T) {
 	}
 
 	// Complete t1
-	s.UpdateTaskStatus(t1.ID, TaskDone)
+	s.ForceUpdateTaskStatus(t1.ID, TaskDone)
 
 	// Now t2 should be ready
 	ready = s.ReadyTasks("p1")
@@ -199,7 +199,7 @@ func TestPromoteReady(t *testing.T) {
 	}
 
 	// Complete t1
-	s.UpdateTaskStatus(t1.ID, TaskDone)
+	s.ForceUpdateTaskStatus(t1.ID, TaskDone)
 
 	promoted, err = s.PromoteReady("p1")
 	if err != nil {

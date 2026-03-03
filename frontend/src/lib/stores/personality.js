@@ -29,6 +29,28 @@ export async function loadWorkerRelationships(workerId) {
     }
 }
 
+export async function loadAllRelationships(workerIds) {
+    if (!window.go?.gui?.CompanyApp) return []
+    const allRels = []
+    const seen = new Set()
+    for (const id of workerIds) {
+        try {
+            const rels = await window.go.gui.CompanyApp.GetWorkerRelationships(id)
+            if (rels) {
+                for (const r of rels) {
+                    const key = r.workerA < r.workerB ? `${r.workerA}-${r.workerB}` : `${r.workerB}-${r.workerA}`
+                    if (!seen.has(key)) {
+                        seen.add(key)
+                        allRels.push(r)
+                    }
+                }
+                relationships.update(rv => ({ ...rv, [id]: rels }))
+            }
+        } catch (e) { /* ignore */ }
+    }
+    return allRels
+}
+
 export function initPersonalityEvents() {
     if (!window.runtime) return
 

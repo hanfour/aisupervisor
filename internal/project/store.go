@@ -216,8 +216,35 @@ func (s *Store) ReadyTasksByPriority() []*Task {
 	return result
 }
 
-// UpdateTaskStatus updates a task's status with appropriate timestamp tracking.
+// UpdateTaskStatus updates a task's status with transition validation and timestamp tracking.
 func (s *Store) UpdateTaskStatus(taskID string, status TaskStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return fmt.Errorf("task %q not found", taskID)
+	}
+
+	// Validate state transition
+	if err := ValidateTransition(t.Status, status); err != nil {
+		return err
+	}
+
+	t.Status = status
+	now := time.Now()
+	switch status {
+	case TaskInProgress:
+		t.StartedAt = &now
+	case TaskDone, TaskFailed, TaskDeployed:
+		t.CompletedAt = &now
+	}
+
+	return s.saveTasks()
+}
+
+// ForceUpdateTaskStatus updates status without transition validation (for backward compat / admin).
+func (s *Store) ForceUpdateTaskStatus(taskID string, status TaskStatus) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -231,7 +258,7 @@ func (s *Store) UpdateTaskStatus(taskID string, status TaskStatus) error {
 	switch status {
 	case TaskInProgress:
 		t.StartedAt = &now
-	case TaskDone, TaskFailed:
+	case TaskDone, TaskFailed, TaskDeployed:
 		t.CompletedAt = &now
 	}
 
@@ -242,7 +269,7 @@ func (s *Store) UpdateTaskStatus(taskID string, status TaskStatus) error {
 func (s *Store) depsResolved(t *Task) bool {
 	for _, depID := range t.DependsOn {
 		dep, ok := s.tasks[depID]
-		if !ok || dep.Status != TaskDone {
+		if !ok || (dep.Status != TaskDone && dep.Status != TaskDeployed) {
 			return false
 		}
 	}

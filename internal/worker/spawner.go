@@ -13,6 +13,8 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/session"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
+
+	"github.com/hanfourmini/aisupervisor/internal/personality"
 )
 
 // TierSpawnConfig holds resolved spawn parameters for a worker tier.
@@ -29,8 +31,9 @@ type Spawner struct {
 	sessionMgr    *session.Manager
 	tierConfigs   map[WorkerTier]TierSpawnConfig
 	skillProfiles map[string]config.SkillProfile
-	projectStore  projectStoreReader
-	language      string // "en" or "zh-TW"
+	projectStore     projectStoreReader
+	language         string // "en" or "zh-TW"
+	personalityStore *personality.Store
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -79,6 +82,11 @@ func (s *Spawner) SetLanguage(lang string) {
 // SetProjectStore sets the project store for dependency context lookups.
 func (s *Spawner) SetProjectStore(ps projectStoreReader) {
 	s.projectStore = ps
+}
+
+// SetPersonalityStore sets the personality store for skill score lookups.
+func (s *Spawner) SetPersonalityStore(ps *personality.Store) {
+	s.personalityStore = ps
 }
 
 // LoadSkillProfiles populates skill profile configurations from config.
@@ -175,6 +183,17 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	// 7. Send task prompt
 	deps := s.resolveDeps(t)
 	prompt := s.buildPromptForTier(t, p, w.EffectiveTier(), deps)
+
+	// Append skill score guidance from personality profile
+	if s.personalityStore != nil {
+		if profile := s.personalityStore.GetProfile(w.ID); profile != nil {
+			skillPrompt := personality.GenerateSkillPrompt(profile.SkillScores)
+			if skillPrompt != "" {
+				prompt += skillPrompt
+			}
+		}
+	}
+
 	s.tmuxClient.SendLiteralKeys(tmuxName, 0, 0, prompt)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 

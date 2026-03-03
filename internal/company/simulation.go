@@ -18,8 +18,15 @@ const (
 	ActivityWatercooler SimulationActivityType = "watercooler"
 	ActivityCodeReview  SimulationActivityType = "code_review"
 	ActivityTaskAssign  SimulationActivityType = "task_assign"
-	ActivityThinking    SimulationActivityType = "thinking"
-	ActivityWalking     SimulationActivityType = "walking"
+	ActivityThinking        SimulationActivityType = "thinking"
+	ActivityWalking         SimulationActivityType = "walking"
+	ActivityPairProgramming SimulationActivityType = "pair_programming"
+	ActivityWhiteboard      SimulationActivityType = "whiteboard"
+	ActivityMentoring       SimulationActivityType = "mentoring"
+	ActivityLunchGroup      SimulationActivityType = "lunch_group"
+	ActivityCelebration     SimulationActivityType = "celebration"
+	ActivityComforting      SimulationActivityType = "comforting"
+	ActivityPersonalHabit   SimulationActivityType = "personal_habit"
 )
 
 type SimulationActivity struct {
@@ -81,6 +88,21 @@ var codeReviewMessages = []string{
 	"Leaving inline comments",
 	"Verifying test coverage",
 	"Checking for security issues",
+}
+
+var pairProgrammingMessages = []string{
+	"結對編程中...", "一起 debug", "看看這段 code",
+	"我來寫你來看", "這邊用哪個 pattern 好？",
+}
+
+var comfortingMessages = []string{
+	"沒關係，下次會更好", "要不要去喝杯咖啡？",
+	"這個 bug 本來就很難", "一起想辦法解決",
+}
+
+var celebrationMessages = []string{
+	"太棒了！", "任務完成！", "慶祝一下！",
+	"辛苦了！", "終於搞定了！",
 }
 
 var taskAssignMessages = []string{
@@ -213,6 +235,107 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 		})
 	}
 
+	// --- Pair Programming: 2+ idle engineers with affinity > 60, 8% chance ---
+	if len(idleWorkers) >= 2 && m.personalityStore != nil && rng.Intn(100) < 8 {
+		for i := 0; i < len(idleWorkers)-1; i++ {
+			for j := i + 1; j < len(idleWorkers); j++ {
+				w1, w2 := idleWorkers[i], idleWorkers[j]
+				rel := m.personalityStore.GetOrCreateRelationship(w1.ID, w2.ID)
+				if rel.Affinity > 60 {
+					activities = append(activities, SimulationActivity{
+						ID:         newActivityID(rng),
+						Type:       ActivityPairProgramming,
+						WorkerIDs:  []string{w1.ID, w2.ID},
+						Message:    pick(rng, pairProgrammingMessages),
+						Duration:   30 + rng.Intn(60),
+						ZoneTarget: "desk",
+						Priority:   2,
+						CreatedAt:  time.Now(),
+					})
+					goto doneWithPairProgramming
+				}
+			}
+		}
+	}
+doneWithPairProgramming:
+
+	// --- Comforting: stressed/frustrated worker + idle worker with affinity > 70, 20% chance ---
+	if m.personalityStore != nil {
+		for _, w := range workers {
+			profile := m.personalityStore.GetProfile(w.ID)
+			if profile == nil {
+				continue
+			}
+			if profile.Mood.Current != personality.MoodStressed && profile.Mood.Current != personality.MoodFrustrated {
+				continue
+			}
+			for _, other := range idleWorkers {
+				if other.ID == w.ID {
+					continue
+				}
+				rel := m.personalityStore.GetOrCreateRelationship(w.ID, other.ID)
+				if rel.Affinity > 70 && rng.Intn(100) < 20 {
+					activities = append(activities, SimulationActivity{
+						ID:         newActivityID(rng),
+						Type:       ActivityComforting,
+						WorkerIDs:  []string{other.ID, w.ID},
+						Message:    pick(rng, comfortingMessages),
+						Duration:   15 + rng.Intn(30),
+						ZoneTarget: "desk",
+						Priority:   2,
+						CreatedAt:  time.Now(),
+					})
+					goto doneWithComforting
+				}
+			}
+		}
+	}
+doneWithComforting:
+
+	// --- Celebration: recently completed task gathers nearby workers ---
+	for _, t := range allTasks {
+		if t.Status != project.TaskDone || t.CompletedAt == nil {
+			continue
+		}
+		if time.Since(*t.CompletedAt) > 2*time.Minute {
+			continue
+		}
+		// Gather up to 4 idle workers for celebration
+		var celebrants []string
+		for _, w := range idleWorkers {
+			celebrants = append(celebrants, w.ID)
+			if len(celebrants) >= 4 {
+				break
+			}
+		}
+		if t.AssigneeID != "" {
+			// Ensure assignee is included
+			found := false
+			for _, id := range celebrants {
+				if id == t.AssigneeID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				celebrants = append(celebrants, t.AssigneeID)
+			}
+		}
+		if len(celebrants) >= 2 {
+			activities = append(activities, SimulationActivity{
+				ID:         newActivityID(rng),
+				Type:       ActivityCelebration,
+				WorkerIDs:  celebrants,
+				Message:    pick(rng, celebrationMessages),
+				Duration:   10 + rng.Intn(20),
+				ZoneTarget: "watercooler",
+				Priority:   2,
+				CreatedAt:  time.Now(),
+			})
+		}
+		break // one celebration per tick
+	}
+
 	// --- Tasks in review → code_review activity ---
 	for _, t := range allTasks {
 		if t.Status != project.TaskReview {
@@ -287,6 +410,49 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 			CreatedAt:  time.Now(),
 		})
 		break // one per tick
+	}
+
+	// --- Relationship updates for social activities ---
+	if m.personalityStore != nil {
+		for _, activity := range activities {
+			var affinityDelta, trustDelta int
+			switch activity.Type {
+			case ActivityDiscussion:
+				affinityDelta, trustDelta = 3, 2
+			case ActivityWatercooler:
+				affinityDelta, trustDelta = 2, 1
+			case ActivityMeeting:
+				affinityDelta, trustDelta = 1, 1
+			case ActivityPairProgramming:
+				affinityDelta, trustDelta = 4, 3
+			case ActivityComforting:
+				affinityDelta, trustDelta = 5, 2
+			case ActivityCelebration:
+				affinityDelta, trustDelta = 2, 1
+			default:
+				continue
+			}
+			for _, wID := range activity.WorkerIDs {
+				for _, otherID := range activity.WorkerIDs {
+					if wID != otherID {
+						rel := m.personalityStore.GetOrCreateRelationship(wID, otherID)
+						rel.AdjustAffinity(affinityDelta)
+						rel.AdjustTrust(trustDelta)
+						rel.RecordInteraction()
+						// Check manager relationship for auto-tagging
+						isManager := false
+						m.mu.RLock()
+						w1 := m.workers[wID]
+						w2 := m.workers[otherID]
+						m.mu.RUnlock()
+						if w1 != nil && w2 != nil {
+							isManager = w1.Tier == worker.TierManager || w2.Tier == worker.TierManager
+						}
+						rel.UpdateTags(isManager)
+					}
+				}
+			}
+		}
 	}
 
 	return activities, nil

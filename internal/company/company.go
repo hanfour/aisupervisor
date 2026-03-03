@@ -42,6 +42,7 @@ type Manager struct {
 	finetuneRunner *training.FinetuneRunner
 	finetuneCfg    training.FinetuneConfig
 	maxWorkers     map[worker.WorkerTier]int // per-tier worker limits (0 = unlimited)
+	shutdownCancel context.CancelFunc
 }
 
 type workersFile struct {
@@ -102,6 +103,9 @@ func New(
 	}
 	m.review = newReviewPipeline(m)
 
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	m.shutdownCancel = bgCancel
+
 	if err := m.loadWorkers(); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -113,8 +117,13 @@ func New(
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			m.personalityStore.Save()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				m.personalityStore.Save()
+			}
 		}
 	}()
 
@@ -123,20 +132,25 @@ func New(
 		// For simulation purposes, decay runs every hour (not every 24h)
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			if m.personalityStore == nil {
-				continue
-			}
-			for _, rel := range m.personalityStore.ListRelationships() {
-				daysSince := time.Since(rel.LastInteraction).Hours() / 24
-				if daysSince > 1 {
-					delta := -1 * int(daysSince)
-					m.personalityStore.UpdateRelationship(rel.WorkerA, rel.WorkerB, func(r *personality.Relationship) {
-						r.AdjustAffinity(delta)
-					})
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				if m.personalityStore == nil {
+					continue
 				}
+				for _, rel := range m.personalityStore.ListRelationships() {
+					daysSince := time.Since(rel.LastInteraction).Hours() / 24
+					if daysSince > 1 {
+						delta := -1 * int(daysSince)
+						m.personalityStore.UpdateRelationship(rel.WorkerA, rel.WorkerB, func(r *personality.Relationship) {
+							r.AdjustAffinity(delta)
+						})
+					}
+				}
+				m.personalityStore.Save()
 			}
-			m.personalityStore.Save()
 		}
 	}()
 
@@ -560,6 +574,11 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			m.personalityStore.UpdateProfile(w.ID, func(p *personality.CharacterProfile) {
 				personality.ApplyEvent(p, personality.EventTaskCompleted)
 				personality.UpdateAutoMood(p)
+			})
+			m.emit(Event{
+				Type:     EventMoodChanged,
+				WorkerID: w.ID,
+				Message:  fmt.Sprintf("Mood changed for %s", w.Name),
 			})
 
 			m.mu.Unlock()
@@ -997,6 +1016,10 @@ func (m *Manager) GetNarrator() *personality.Narrator {
 
 // Shutdown cancels all active workers and waits for goroutines to exit.
 func (m *Manager) Shutdown() {
+	if m.shutdownCancel != nil {
+		m.shutdownCancel()
+	}
+
 	m.mu.Lock()
 	for _, cancel := range m.cancels {
 		cancel()
@@ -1004,6 +1027,10 @@ func (m *Manager) Shutdown() {
 	m.mu.Unlock()
 
 	m.wg.Wait()
+
+	if m.personalityStore != nil {
+		m.personalityStore.Save()
+	}
 }
 
 func (m *Manager) emit(e Event) {

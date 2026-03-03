@@ -2,6 +2,7 @@
   import { sessions } from '../stores/sessions.js'
   import { events } from '../stores/events.js'
   import { roles } from '../stores/roles.js'
+  import { t } from '../stores/i18n.js'
 
   export let sessionId = ''
   export let onBack = () => {}
@@ -52,7 +53,7 @@
 
 <div class="terminal-page">
   <div class="header">
-    <button class="nes-btn is-primary" on:click={onBack}>&lt; Back</button>
+    <button class="nes-btn is-primary" on:click={onBack}>&lt; {$t('terminal.back')}</button>
     <h2>{session.name || sessionId}</h2>
     <span class="nes-badge">
       <span class={session.status === 'active' ? 'is-success' : 'is-warning'}>
@@ -63,7 +64,7 @@
 
   <div class="content">
     <section class="nes-container with-title is-dark info-panel">
-      <p class="title">Info</p>
+      <p class="title">{$t('terminal.info')}</p>
       <div class="info-grid">
         <div><span class="label">tmux:</span> {session.tmuxSession}:{session.window}.{session.pane}</div>
         <div><span class="label">tool:</span> {session.toolType || 'auto'}</div>
@@ -77,7 +78,7 @@
 
       {#if sessionRoleIds.length > 0}
         <div class="roles-section">
-          <span class="label">Assigned roles:</span>
+          <span class="label">{$t('terminal.assignedRoles')}</span>
           {#each sessionRoleIds as rid}
             <span class="nes-badge"><span class="is-primary">{rid}</span></span>
           {/each}
@@ -86,7 +87,7 @@
     </section>
 
     <section class="nes-container with-title is-dark events-panel">
-      <p class="title">Session Events</p>
+      <p class="title">{$t('terminal.sessionEvents')}</p>
       <div class="event-list">
         {#each sessionEvents as event}
           <div class="event-row event-new">
@@ -98,7 +99,7 @@
           </div>
         {/each}
         {#if sessionEvents.length === 0}
-          <p class="empty-msg">No events for this session</p>
+          <p class="empty-msg">{$t('terminal.noEvents')}</p>
         {/if}
       </div>
     </section>

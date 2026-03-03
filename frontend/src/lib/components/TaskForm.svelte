@@ -1,6 +1,7 @@
 <script>
   import { createTask } from '../stores/tasks.js'
   import { addError } from '../stores/errors.js'
+  import { t } from '../stores/i18n.js'
 
   export let visible = false
   export let projectId = ''
@@ -12,17 +13,19 @@
   let prompt = ''
   let priority = 2
   let milestone = ''
+  let taskType = 'code'
   let selectedDeps = []
 
   async function handleSubmit() {
     if (!title || !prompt) return
     try {
-      await createTask(projectId, title, description, prompt, selectedDeps, priority, milestone)
+      await createTask(projectId, title, description, prompt, selectedDeps, priority, milestone, taskType)
       title = ''
       description = ''
       prompt = ''
       priority = 2
       milestone = ''
+      taskType = 'code'
       selectedDeps = []
       onClose()
     } catch (e) {
@@ -42,33 +45,46 @@
 {#if visible}
   <div class="dialog-overlay" on:click={onClose} on:keydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
     <div class="nes-dialog is-dark is-rounded" on:click|stopPropagation role="presentation">
-      <p class="title">New Task</p>
+      <p class="title">{$t('taskForm.title')}</p>
       <form on:submit|preventDefault={handleSubmit}>
         <div class="nes-field">
-          <label for="task-title">Title</label>
+          <label for="task-title">{$t('taskForm.titleLabel')}</label>
           <input type="text" id="task-title" class="nes-input is-dark" bind:value={title} />
         </div>
         <div class="nes-field">
-          <label for="task-desc">Description</label>
+          <label for="task-desc">{$t('taskForm.description')}</label>
           <textarea id="task-desc" class="nes-textarea is-dark" bind:value={description} rows="2"></textarea>
         </div>
         <div class="nes-field">
-          <label for="task-prompt">Prompt (for Claude Code)</label>
+          <label for="task-prompt">{$t('taskForm.prompt')}</label>
           <textarea id="task-prompt" class="nes-textarea is-dark" bind:value={prompt} rows="4"></textarea>
         </div>
         <div class="field-row">
           <div class="nes-field">
-            <label for="task-priority">Priority</label>
+            <label for="task-type">{$t('taskForm.type')}</label>
+            <div class="type-selector">
+              <label class="type-option" class:selected={taskType === 'code'}>
+                <input type="radio" class="nes-radio is-dark" name="taskType" value="code" bind:group={taskType} />
+                <span>{$t('taskForm.typeCode')}</span>
+              </label>
+              <label class="type-option" class:selected={taskType === 'research'}>
+                <input type="radio" class="nes-radio is-dark" name="taskType" value="research" bind:group={taskType} />
+                <span>{$t('taskForm.typeResearch')}</span>
+              </label>
+            </div>
+          </div>
+          <div class="nes-field">
+            <label for="task-priority">{$t('taskForm.priority')}</label>
             <input type="number" id="task-priority" class="nes-input is-dark" bind:value={priority} min="1" max="9" />
           </div>
           <div class="nes-field">
-            <label for="task-milestone">Milestone</label>
+            <label for="task-milestone">{$t('taskForm.milestone')}</label>
             <input type="text" id="task-milestone" class="nes-input is-dark" bind:value={milestone} />
           </div>
         </div>
         {#if existingTasks.length > 0}
           <div class="nes-field">
-            <label>Dependencies</label>
+            <label>{$t('taskForm.dependencies')}</label>
             <div class="deps-list">
               {#each existingTasks as t}
                 <label class="dep-item">
@@ -85,8 +101,8 @@
           </div>
         {/if}
         <div class="dialog-actions">
-          <button type="submit" class="nes-btn is-primary">Create</button>
-          <button type="button" class="nes-btn" on:click={onClose}>Cancel</button>
+          <button type="submit" class="nes-btn is-primary">{$t('taskForm.create')}</button>
+          <button type="button" class="nes-btn" on:click={onClose}>{$t('common.cancel')}</button>
         </div>
       </form>
     </div>
@@ -136,6 +152,23 @@
 
   .field-row .nes-field {
     flex: 1;
+  }
+
+  .type-selector {
+    display: flex;
+    gap: 12px;
+  }
+
+  .type-option {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    cursor: pointer;
+  }
+
+  .type-option.selected {
+    color: var(--accent-green);
   }
 
   .deps-list {

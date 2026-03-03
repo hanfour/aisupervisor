@@ -40,81 +40,189 @@ type SimulationActivity struct {
 	CreatedAt  time.Time              `json:"createdAt"`
 }
 
-var thinkingMessages = []string{
-	"Architecting the solution...",
-	"Reading through the codebase...",
-	"Debugging the issue...",
-	"Writing tests first...",
-	"Refactoring for clarity...",
-	"Checking edge cases...",
-	"Optimising the hot path...",
-	"Deep in flow state...",
-	"Untangling the dependency graph...",
-	"Making the CI green...",
+// bilingualMessages holds English and Chinese message lists for each activity type.
+type bilingualMessages struct {
+	en []string
+	zh []string
 }
 
-var watercoolerMessages = []string{
-	"Coffee break ☕",
-	"Taking a breather...",
-	"Hydration station",
-	"Grabbing a snack",
-	"Quick mental reset",
-	"Stretching legs",
+func (b bilingualMessages) pick(rng *rand.Rand, lang string) string {
+	msgs := b.zh
+	if lang == "en" {
+		msgs = b.en
+	}
+	return msgs[rng.Intn(len(msgs))]
 }
 
-var discussionMessages = []string{
-	"Discussing API design",
-	"Pair-programming session",
-	"Quick sync on blockers",
-	"Rubber-duck debugging",
-	"Comparing notes on the task",
-	"Talking through the architecture",
-	"Brainstorming edge cases",
+var thinkingMsgs = bilingualMessages{
+	en: []string{
+		"Architecting the solution...",
+		"Reading through the codebase...",
+		"Debugging the issue...",
+		"Writing tests first...",
+		"Refactoring for clarity...",
+		"Checking edge cases...",
+		"Optimising the hot path...",
+		"Deep in flow state...",
+		"Untangling the dependency graph...",
+		"Making the CI green...",
+	},
+	zh: []string{
+		"正在設計解決方案...",
+		"正在閱讀程式碼...",
+		"正在除錯...",
+		"先寫測試...",
+		"正在重構提升可讀性...",
+		"正在檢查邊界情況...",
+		"正在最佳化熱路徑...",
+		"進入心流狀態...",
+		"正在理清依賴關係...",
+		"讓 CI 通過中...",
+	},
 }
 
-var meetingMessages = []string{
-	"Sprint planning session",
-	"Team stand-up",
-	"Architecture review meeting",
-	"Retrospective session",
-	"All-hands sync",
-	"Roadmap alignment meeting",
+var watercoolerMsgs = bilingualMessages{
+	en: []string{
+		"Coffee break ☕",
+		"Taking a breather...",
+		"Hydration station",
+		"Grabbing a snack",
+		"Quick mental reset",
+		"Stretching legs",
+	},
+	zh: []string{
+		"喝杯咖啡 ☕",
+		"休息一下...",
+		"補充水分",
+		"吃個點心",
+		"重新整理思緒",
+		"伸伸腿",
+	},
 }
 
-var codeReviewMessages = []string{
-	"Reviewing PR — checking logic...",
-	"Code review in progress",
-	"Walking through the diff",
-	"Leaving inline comments",
-	"Verifying test coverage",
-	"Checking for security issues",
+var discussionMsgs = bilingualMessages{
+	en: []string{
+		"Discussing API design",
+		"Pair-programming session",
+		"Quick sync on blockers",
+		"Rubber-duck debugging",
+		"Comparing notes on the task",
+		"Talking through the architecture",
+		"Brainstorming edge cases",
+	},
+	zh: []string{
+		"討論 API 設計",
+		"結對編程中",
+		"快速同步進度",
+		"橡皮鴨除錯法",
+		"交換任務筆記",
+		"討論架構",
+		"腦力激盪邊界情況",
+	},
 }
 
-var pairProgrammingMessages = []string{
-	"結對編程中...", "一起 debug", "看看這段 code",
-	"我來寫你來看", "這邊用哪個 pattern 好？",
+var meetingMsgs = bilingualMessages{
+	en: []string{
+		"Sprint planning session",
+		"Team stand-up",
+		"Architecture review meeting",
+		"Retrospective session",
+		"All-hands sync",
+		"Roadmap alignment meeting",
+	},
+	zh: []string{
+		"Sprint 規劃會議",
+		"團隊站立會議",
+		"架構審查會議",
+		"回顧會議",
+		"全員同步會議",
+		"路線圖對齊會議",
+	},
 }
 
-var comfortingMessages = []string{
-	"沒關係，下次會更好", "要不要去喝杯咖啡？",
-	"這個 bug 本來就很難", "一起想辦法解決",
+var codeReviewMsgs = bilingualMessages{
+	en: []string{
+		"Reviewing PR — checking logic...",
+		"Code review in progress",
+		"Walking through the diff",
+		"Leaving inline comments",
+		"Verifying test coverage",
+		"Checking for security issues",
+	},
+	zh: []string{
+		"審查 PR — 檢查邏輯中...",
+		"程式碼審查進行中",
+		"逐行檢視 diff",
+		"留下行內註解",
+		"驗證測試覆蓋率",
+		"檢查安全問題",
+	},
 }
 
-var celebrationMessages = []string{
-	"太棒了！", "任務完成！", "慶祝一下！",
-	"辛苦了！", "終於搞定了！",
+var pairProgrammingMsgs = bilingualMessages{
+	en: []string{
+		"Pair programming...",
+		"Debugging together",
+		"Let's look at this code",
+		"I'll write, you review",
+		"Which pattern should we use here?",
+	},
+	zh: []string{
+		"結對編程中...",
+		"一起 debug",
+		"看看這段 code",
+		"我來寫你來看",
+		"這邊用哪個 pattern 好？",
+	},
 }
 
-var taskAssignMessages = []string{
-	"Handing off the task brief",
-	"Walking engineer through the spec",
-	"Clarifying acceptance criteria",
-	"Task kick-off chat",
-	"Explaining the context",
+var comfortingMsgs = bilingualMessages{
+	en: []string{
+		"It's okay, next time will be better",
+		"Want to grab some coffee?",
+		"This bug was inherently tough",
+		"Let's figure it out together",
+	},
+	zh: []string{
+		"沒關係，下次會更好",
+		"要不要去喝杯咖啡？",
+		"這個 bug 本來就很難",
+		"一起想辦法解決",
+	},
 }
 
-func pick(rng *rand.Rand, items []string) string {
-	return items[rng.Intn(len(items))]
+var celebrationMsgs = bilingualMessages{
+	en: []string{
+		"Awesome!",
+		"Task complete!",
+		"Let's celebrate!",
+		"Well done!",
+		"Finally nailed it!",
+	},
+	zh: []string{
+		"太棒了！",
+		"任務完成！",
+		"慶祝一下！",
+		"辛苦了！",
+		"終於搞定了！",
+	},
+}
+
+var taskAssignMsgs = bilingualMessages{
+	en: []string{
+		"Handing off the task brief",
+		"Walking engineer through the spec",
+		"Clarifying acceptance criteria",
+		"Task kick-off chat",
+		"Explaining the context",
+	},
+	zh: []string{
+		"移交任務簡報",
+		"帶工程師了解規格",
+		"釐清驗收標準",
+		"任務啟動對談",
+		"說明背景脈絡",
+	},
 }
 
 // GenerateActivities inspects the current worker/task state and returns a
@@ -137,6 +245,7 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 	// Seed from current second so each tick is stable within a second but
 	// changes every second — gives deterministic-ish variety.
 	rng := rand.New(rand.NewSource(time.Now().Unix()))
+	lang := m.GetLanguage()
 
 	var activities []SimulationActivity
 
@@ -159,7 +268,7 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 				ID:         newActivityID(rng),
 				Type:       ActivityThinking,
 				WorkerIDs:  []string{w.ID},
-				Message:    pick(rng, thinkingMessages),
+				Message:    thinkingMsgs.pick(rng, lang),
 				Duration:   10 + rng.Intn(20),
 				ZoneTarget: "desk",
 				Priority:   1,
@@ -189,7 +298,7 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 				ID:         newActivityID(rng),
 				Type:       ActivityWatercooler,
 				WorkerIDs:  []string{w.ID},
-				Message:    pick(rng, watercoolerMessages),
+				Message:    watercoolerMsgs.pick(rng, lang),
 				Duration:   15 + rng.Intn(30),
 				ZoneTarget: "watercooler",
 				Priority:   0,
@@ -218,7 +327,7 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 					ID:         newActivityID(rng),
 					Type:       ActivityDiscussion,
 					WorkerIDs:  []string{w.ID, partner.ID},
-					Message:    pick(rng, discussionMessages),
+					Message:    discussionMsgs.pick(rng, lang),
 					Duration:   20 + rng.Intn(40),
 					ZoneTarget: "discussion",
 					Priority:   1,
@@ -238,7 +347,7 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 			ID:         newActivityID(rng),
 			Type:       ActivityMeeting,
 			WorkerIDs:  ids,
-			Message:    pick(rng, meetingMessages),
+			Message:    meetingMsgs.pick(rng, lang),
 			Duration:   30 + rng.Intn(60),
 			ZoneTarget: "meeting",
 			Priority:   2,
@@ -256,7 +365,7 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 						ID:         newActivityID(rng),
 						Type:       ActivityPairProgramming,
 						WorkerIDs:  []string{w1.ID, w2.ID},
-						Message:    pick(rng, pairProgrammingMessages),
+						Message:    pairProgrammingMsgs.pick(rng, lang),
 						Duration:   30 + rng.Intn(60),
 						ZoneTarget: "desk",
 						Priority:   2,
@@ -288,7 +397,7 @@ doneWithPairProgramming:
 						ID:         newActivityID(rng),
 						Type:       ActivityComforting,
 						WorkerIDs:  []string{other.ID, w.ID},
-						Message:    pick(rng, comfortingMessages),
+						Message:    comfortingMsgs.pick(rng, lang),
 						Duration:   15 + rng.Intn(30),
 						ZoneTarget: "desk",
 						Priority:   2,
@@ -335,7 +444,7 @@ doneWithComforting:
 				ID:         newActivityID(rng),
 				Type:       ActivityCelebration,
 				WorkerIDs:  celebrants,
-				Message:    pick(rng, celebrationMessages),
+				Message:    celebrationMsgs.pick(rng, lang),
 				Duration:   10 + rng.Intn(20),
 				ZoneTarget: "watercooler",
 				Priority:   2,
@@ -372,7 +481,7 @@ doneWithComforting:
 			ID:        newActivityID(rng),
 			Type:      ActivityCodeReview,
 			WorkerIDs: workerIDs,
-			Message:   fmt.Sprintf("%s — %s", pick(rng, codeReviewMessages), t.Title),
+			Message:   fmt.Sprintf("%s — %s", codeReviewMsgs.pick(rng, lang), t.Title),
 			Duration:  20 + rng.Intn(40),
 			ZoneTarget: "meeting",
 			Priority:  3,
@@ -412,7 +521,7 @@ doneWithComforting:
 			ID:         newActivityID(rng),
 			Type:       ActivityTaskAssign,
 			WorkerIDs:  workerIDs,
-			Message:    fmt.Sprintf("%s: %s", pick(rng, taskAssignMessages), t.Title),
+			Message:    fmt.Sprintf("%s: %s", taskAssignMsgs.pick(rng, lang), t.Title),
 			Duration:   10 + rng.Intn(20),
 			ZoneTarget: "desk",
 			Priority:   2,

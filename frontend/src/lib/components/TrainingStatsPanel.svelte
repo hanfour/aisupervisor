@@ -1,6 +1,7 @@
 <script>
   import { trainingStats, loadTrainingStats } from '../stores/company.js'
   import { onMount } from 'svelte'
+  import { t } from '../stores/i18n.js'
 
   onMount(() => {
     loadTrainingStats()
@@ -14,19 +15,19 @@
   <div class="stats-row">
     <div class="stat-item">
       <span class="stat-value">{$trainingStats.totalPairs}</span>
-      <span class="stat-label">Total Pairs</span>
+      <span class="stat-label">{$t('training.total')}</span>
     </div>
     <div class="stat-item accepted">
       <span class="stat-value">{$trainingStats.accepted}</span>
-      <span class="stat-label">Accepted</span>
+      <span class="stat-label">{$t('training.accepted')}</span>
     </div>
     <div class="stat-item rejected">
       <span class="stat-value">{$trainingStats.rejected}</span>
-      <span class="stat-label">Rejected</span>
+      <span class="stat-label">{$t('training.rejected')}</span>
     </div>
   </div>
   <div class="rate-section">
-    <span class="rate-label">Approval Rate: {rate}%</span>
+    <span class="rate-label">{$t('training.approvalRate')}: {rate}%</span>
     <progress class="nes-progress {rateClass}" value={rate} max="100"></progress>
   </div>
 </div>

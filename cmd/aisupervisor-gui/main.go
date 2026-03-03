@@ -164,7 +164,12 @@ func main() {
 		}
 	}
 
+	// Wire language settings
+	companyMgr.SetLanguage(cfg.Language)
+	spawner.SetLanguage(cfg.Language)
+
 	companyApp := gui.NewCompanyApp(companyMgr, tmuxClient)
+	companyApp.SetSpawner(spawner)
 	if cfg.Training.Enabled {
 		trainingDir := cfg.Training.DataDir
 		if trainingDir == "" {

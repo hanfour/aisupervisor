@@ -9,9 +9,9 @@ export async function loadTasks(projectID) {
   }
 }
 
-export async function createTask(projectID, title, description, prompt, dependsOn, priority, milestone) {
+export async function createTask(projectID, title, description, prompt, dependsOn, priority, milestone, taskType = 'code') {
   if (window.go && window.go.gui && window.go.gui.CompanyApp) {
-    const t = await window.go.gui.CompanyApp.CreateTask(projectID, title, description, prompt, dependsOn, priority, milestone)
+    const t = await window.go.gui.CompanyApp.CreateTask(projectID, title, description, prompt, dependsOn, priority, milestone, taskType)
     await loadTasks(projectID)
     return t
   }

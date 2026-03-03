@@ -2,6 +2,7 @@
   import { roles } from '../stores/roles.js'
   import { sessions } from '../stores/sessions.js'
   import RoleAssignment from '../components/RoleAssignment.svelte'
+  import { t } from '../stores/i18n.js'
 
   let selectedSessionId = ''
   let sessionRoleMap = {}
@@ -40,14 +41,14 @@
 
 <div class="roles-page">
   <section class="nes-container with-title is-dark">
-    <p class="title">All Roles</p>
+    <p class="title">{$t('roles.allRoles')}</p>
     <table class="nes-table is-bordered is-dark">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>Name</th>
-          <th>Mode</th>
-          <th>Priority</th>
+          <th>{$t('roles.id')}</th>
+          <th>{$t('roles.name')}</th>
+          <th>{$t('roles.mode')}</th>
+          <th>{$t('roles.priority')}</th>
         </tr>
       </thead>
       <tbody>
@@ -68,11 +69,11 @@
   </section>
 
   <section class="nes-container with-title is-dark assignment-section">
-    <p class="title">Per-Terminal Assignment</p>
+    <p class="title">{$t('roles.perTerminal')}</p>
 
     {#if $sessions.length > 0}
       <div class="session-selector">
-        <label>Session:</label>
+        <label>{$t('roles.session')}</label>
         <div class="nes-select is-dark">
           <select bind:value={selectedSessionId}>
             {#each $sessions as s}
@@ -88,7 +89,7 @@
         onUpdate={handleUpdate}
       />
     {:else}
-      <p class="empty">No sessions available</p>
+      <p class="empty">{$t('roles.noSessions')}</p>
     {/if}
   </section>
 </div>

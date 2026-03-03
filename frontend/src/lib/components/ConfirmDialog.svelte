@@ -1,4 +1,6 @@
 <script>
+  import { t } from '../stores/i18n.js'
+
   export let visible = false
   export let event = null
   export let onApprove = () => {}
@@ -8,21 +10,21 @@
 {#if visible && event}
   <div class="dialog-overlay">
     <div class="nes-dialog is-dark is-rounded" id="confirm-dialog">
-      <p class="title">Low Confidence Decision</p>
+      <p class="title">{$t('confirm.lowConfidence')}</p>
       <div class="dialog-content">
-        <p><strong>Session:</strong> {event.sessionName}</p>
-        <p><strong>Summary:</strong> {event.summary}</p>
-        <p><strong>Suggested:</strong> {event.chosenKey}</p>
-        <p><strong>Reasoning:</strong> {event.reasoning}</p>
-        <p><strong>Confidence:</strong>
+        <p><strong>{$t('confirm.session')}</strong> {event.sessionName}</p>
+        <p><strong>{$t('confirm.summary')}</strong> {event.summary}</p>
+        <p><strong>{$t('confirm.suggested')}</strong> {event.chosenKey}</p>
+        <p><strong>{$t('confirm.reasoning')}</strong> {event.reasoning}</p>
+        <p><strong>{$t('confirm.confidence')}</strong>
           <span class="status-paused">
             {(event.confidence * 100).toFixed(0)}%
           </span>
         </p>
       </div>
       <menu class="dialog-menu">
-        <button class="nes-btn is-success" on:click={onApprove}>Approve</button>
-        <button class="nes-btn is-error" on:click={onDismiss}>Dismiss</button>
+        <button class="nes-btn is-success" on:click={onApprove}>{$t('confirm.approve')}</button>
+        <button class="nes-btn is-error" on:click={onDismiss}>{$t('confirm.dismiss')}</button>
       </menu>
     </div>
   </div>

@@ -157,6 +157,7 @@ var companyCreateTaskCmd = &cobra.Command{
 		priority, _ := cmd.Flags().GetInt("priority")
 		depsStr, _ := cmd.Flags().GetString("depends-on")
 		milestone, _ := cmd.Flags().GetString("milestone")
+		taskType, _ := cmd.Flags().GetString("type")
 
 		if projectID == "" || title == "" {
 			return fmt.Errorf("--project and --title are required")
@@ -174,7 +175,7 @@ var companyCreateTaskCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		t, err := mgr.AddTask(projectID, title, desc, prompt, deps, priority, milestone)
+		t, err := mgr.AddTask(projectID, title, desc, prompt, deps, priority, milestone, taskType)
 		if err != nil {
 			return err
 		}
@@ -533,6 +534,7 @@ func init() {
 	companyCreateTaskCmd.Flags().Int("priority", 5, "Priority (1=highest)")
 	companyCreateTaskCmd.Flags().String("depends-on", "", "Comma-separated dependency task IDs")
 	companyCreateTaskCmd.Flags().String("milestone", "", "Milestone tag")
+	companyCreateTaskCmd.Flags().String("type", "code", "Task type: code or research")
 
 	companyListTasksCmd.Flags().String("project", "", "Project ID")
 

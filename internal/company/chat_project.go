@@ -27,7 +27,9 @@ type ChatProjectResponse struct {
 	Goals       []string `json:"goals,omitempty"`
 }
 
-const chatProjectSystemPrompt = `You are a project creation assistant. Your job is to help the user create a software project by extracting the following information from their natural language description:
+func chatProjectSystemPrompt(lang string) string {
+	if lang == "en" {
+		return `You are a project creation assistant. Your job is to help the user create a software project by extracting the following information from their natural language description:
 
 1. **name** (required): A short project name
 2. **description** (required): A brief description of the project
@@ -51,6 +53,32 @@ const chatProjectSystemPrompt = `You are a project creation assistant. Your job 
   "baseBranch": "main",
   "goals": ["goal1", "goal2"]
 }`
+	}
+	return `你是一個專案建立助手。你的工作是從使用者的自然語言描述中提取以下資訊來建立軟體專案：
+
+1. **name**（必填）：簡短的專案名稱
+2. **description**（必填）：專案的簡要描述
+3. **repoPath**（必填）：儲存庫的檔案系統路徑
+4. **baseBranch**（選填，預設 "main"）：基礎 git 分支
+5. **goals**（選填）：專案目標列表
+
+## 規則：
+- 如果你有足夠的資訊來建立專案，請以 status "ready" 回應並填入所有欄位。
+- 如果缺少關鍵資訊（特別是 name、description 或 repoPath），請以 status "needs_info" 回應並提出具體問題。
+- 保持對話式和友善的風格。一次只問一輪問題。
+- 始終只用有效的 JSON 回應，不要加 markdown 或額外文字。
+
+## 回應格式（僅限 JSON）：
+{
+  "status": "ready" | "needs_info",
+  "questions": ["問題1", "問題2"],
+  "name": "專案名稱",
+  "description": "專案描述",
+  "repoPath": "/path/to/repo",
+  "baseBranch": "main",
+  "goals": ["目標1", "目標2"]
+}`
+}
 
 // ChatCreateProject processes a chat conversation and returns either
 // the extracted project information or follow-up questions.
@@ -72,7 +100,7 @@ func (m *Manager) ChatCreateProject(ctx context.Context, messages []ChatMessage)
 		Model:     anthropic.Model("claude-sonnet-4-6"),
 		MaxTokens: 1024,
 		System: []anthropic.TextBlockParam{
-			{Text: chatProjectSystemPrompt},
+			{Text: chatProjectSystemPrompt(m.GetLanguage())},
 		},
 		Messages: apiMessages,
 	})

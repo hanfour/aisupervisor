@@ -299,7 +299,10 @@ func TestBuildReviewPrompt(t *testing.T) {
 	}
 	p := &project.Project{}
 
-	prompt := buildReviewPrompt(task, p)
+	m, _ := testManager(t)
+	m.SetLanguage("en")
+	rp := newReviewPipeline(m)
+	prompt := rp.buildReviewPrompt(task, p)
 	if prompt == "" {
 		t.Fatal("expected non-empty review prompt")
 	}
@@ -361,7 +364,7 @@ func TestCompleteTaskWithEvents(t *testing.T) {
 	}
 	drainCh(ch)
 
-	task, err := m.AddTask(p.ID, "Task1", "desc", "prompt", nil, 1, "")
+	task, err := m.AddTask(p.ID, "Task1", "desc", "prompt", nil, 1, "", "")
 	if err != nil {
 		t.Fatalf("AddTask: %v", err)
 	}

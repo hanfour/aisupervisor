@@ -4,6 +4,7 @@
   import ProjectForm from '../components/ProjectForm.svelte'
   import AIChatProjectCreator from '../components/AIChatProjectCreator.svelte'
   import { addError } from '../stores/errors.js'
+  import { t } from '../stores/i18n.js'
 
   export let onNavigate = () => {}
 
@@ -50,10 +51,10 @@
 
 <div class="projects-page">
   <section class="nes-container with-title is-dark">
-    <p class="title">Projects</p>
+    <p class="title">{$t('projects.title')}</p>
     <div class="toolbar">
-      <button class="nes-btn is-primary" on:click={() => showForm = true}>+ New Project</button>
-      <button class="nes-btn is-warning" on:click={() => showAIChat = true}>AI Create</button>
+      <button class="nes-btn is-primary" on:click={() => showForm = true}>{$t('projects.newProject')}</button>
+      <button class="nes-btn is-warning" on:click={() => showAIChat = true}>{$t('projects.aiCreate')}</button>
     </div>
 
     <div class="projects-grid">
@@ -82,16 +83,16 @@
               <p class="proj-desc">{proj.description}</p>
             {/if}
             <div class="card-info">
-              <span class="label">repo:</span>
+              <span class="label">{$t('projects.repo')}</span>
               <span class="truncate">{proj.repoPath}</span>
             </div>
             <div class="card-info">
-              <span class="label">branch:</span>
+              <span class="label">{$t('projects.branch')}</span>
               <span>{proj.baseBranch}</span>
             </div>
             {#if proj.goals && proj.goals.length > 0}
               <div class="card-goals">
-                <span class="label">goals:</span>
+                <span class="label">{$t('projects.goals')}</span>
                 {#each proj.goals as goal}
                   <span class="goal-tag">{goal}</span>
                 {/each}
@@ -101,7 +102,7 @@
         </div>
       {/each}
       {#if $projects.length === 0}
-        <p class="empty-msg">No projects yet. Create one to get started!</p>
+        <p class="empty-msg">{$t('projects.empty')}</p>
       {/if}
     </div>
   </section>
@@ -112,11 +113,11 @@
   {#if deleteConfirm}
     <div class="dialog-overlay" on:click={cancelDelete} on:keydown={(e) => e.key === 'Escape' && cancelDelete()} role="presentation">
       <div class="nes-dialog is-dark is-rounded" on:click|stopPropagation role="presentation">
-        <p class="dialog-title">Delete Project</p>
-        <p class="dialog-text">Are you sure you want to delete <strong>{deleteConfirm.name}</strong> and all its tasks?</p>
+        <p class="dialog-title">{$t('projects.deleteTitle')}</p>
+        <p class="dialog-text">{$t('projects.deleteConfirm')} <strong>{deleteConfirm.name}</strong> {$t('projects.deleteConfirmSuffix')}</p>
         <menu class="dialog-menu">
-          <button class="nes-btn is-error" on:click={confirmDelete}>Delete</button>
-          <button class="nes-btn" on:click={cancelDelete}>Cancel</button>
+          <button class="nes-btn is-error" on:click={confirmDelete}>{$t('projects.delete')}</button>
+          <button class="nes-btn" on:click={cancelDelete}>{$t('common.cancel')}</button>
         </menu>
       </div>
     </div>

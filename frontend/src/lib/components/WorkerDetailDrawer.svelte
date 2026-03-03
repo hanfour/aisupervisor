@@ -3,6 +3,7 @@
   import { getWorker, getManager, getSubordinates, skillProfiles, loadSkillProfiles, loadWorkers, loadHierarchy } from '../stores/workers.js'
   import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import WorkerLogPanel from './WorkerLogPanel.svelte'
+  import { t } from '../stores/i18n.js'
 
   export let workerId = ''
   export let onClose = () => {}
@@ -23,13 +24,13 @@
     ash: '⚡', bulbasaur: '🌿', charmander: '🔥', squirtle: '💧', pokeball: '⚪',
   }
 
-  const traitLabels = {
-    sociability: '社交性',
-    focus: '專注力',
-    creativity: '創造力',
-    empathy: '同理心',
-    ambition: '野心',
-    humor: '幽默感'
+  const traitKeys = {
+    sociability: 'trait.sociability',
+    focus: 'trait.focus',
+    creativity: 'trait.creativity',
+    empathy: 'trait.empathy',
+    ambition: 'trait.ambition',
+    humor: 'trait.humor'
   }
 
   const tierColors = {
@@ -82,12 +83,12 @@
 <div class="drawer-overlay" on:click={onClose} on:keydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
   <div class="drawer" on:click|stopPropagation role="presentation">
     <div class="drawer-header">
-      <span class="drawer-title">Worker Detail</span>
+      <span class="drawer-title">{$t('workerDetail.title')}</span>
       <button class="nes-btn btn-close" on:click={onClose}>&times;</button>
     </div>
 
     {#if loading}
-      <div class="loading">Loading...</div>
+      <div class="loading">{$t('common.loading')}</div>
     {:else if worker}
       <div class="drawer-body">
         <!-- Identity -->
@@ -103,37 +104,37 @@
 
         <!-- Status -->
         <div class="detail-row">
-          <span class="label">Status</span>
+          <span class="label">{$t('workerDetail.status')}</span>
           <span class="nes-badge"><span class="is-primary">{worker.status}</span></span>
         </div>
 
         <!-- IDs & Config -->
         <div class="detail-row">
-          <span class="label">ID</span>
+          <span class="label">{$t('workerDetail.id')}</span>
           <span class="value mono">{worker.id}</span>
         </div>
         {#if worker.backendId}
           <div class="detail-row">
-            <span class="label">Backend</span>
+            <span class="label">{$t('workerDetail.backend')}</span>
             <span class="value">{worker.backendId}</span>
           </div>
         {/if}
         {#if worker.cliTool}
           <div class="detail-row">
-            <span class="label">CLI Tool</span>
+            <span class="label">{$t('workerDetail.cliTool')}</span>
             <span class="value">{worker.cliTool}</span>
           </div>
         {/if}
         {#if worker.modelVersion}
           <div class="detail-row">
-            <span class="label">Model</span>
+            <span class="label">{$t('workerDetail.model')}</span>
             <span class="value">{worker.modelVersion}</span>
           </div>
         {/if}
 
         <!-- Skill Profile -->
         <div class="detail-row">
-          <span class="label">Skill Profile</span>
+          <span class="label">{$t('workerDetail.skillProfile')}</span>
           {#if editingSkill}
             <div class="skill-edit">
               <select class="skill-select" bind:value={selectedSkill}>
@@ -155,7 +156,7 @@
                   {worker.skillProfile}
                 {/if}
               {:else}
-                <span class="empty-text">None (click to set)</span>
+                <span class="empty-text">{$t('workerDetail.noneClickToSet')}</span>
               {/if}
             </span>
           {/if}
@@ -169,7 +170,7 @@
 
         {#if worker.createdAt}
           <div class="detail-row">
-            <span class="label">Created</span>
+            <span class="label">{$t('workerDetail.created')}</span>
             <span class="value">{new Date(worker.createdAt).toLocaleString()}</span>
           </div>
         {/if}
@@ -177,23 +178,23 @@
         <!-- Current Task -->
         {#if worker.currentTaskId}
           <div class="detail-row">
-            <span class="label">Task</span>
+            <span class="label">{$t('workerDetail.task')}</span>
             <span class="value mono">{worker.currentTaskId}</span>
           </div>
         {/if}
 
         <!-- Manager -->
-        <div class="section-title">Manager</div>
+        <div class="section-title">{$t('workerDetail.manager')}</div>
         {#if manager}
           <button class="nes-btn is-primary link-btn" on:click={() => onSelectWorker(manager.id)}>
             {avatarMap[manager.avatar] || '🤖'} {manager.name} [{manager.tier}]
           </button>
         {:else}
-          <span class="empty-text">None</span>
+          <span class="empty-text">{$t('workerDetail.noNone')}</span>
         {/if}
 
         <!-- Subordinates -->
-        <div class="section-title">Subordinates ({subordinates.length})</div>
+        <div class="section-title">{$t('workerDetail.subordinates')} ({subordinates.length})</div>
         {#if subordinates.length > 0}
           <div class="sub-list">
             {#each subordinates as sub}
@@ -203,21 +204,21 @@
             {/each}
           </div>
         {:else}
-          <span class="empty-text">No subordinates</span>
+          <span class="empty-text">{$t('workerDetail.noSubs')}</span>
         {/if}
 
         <!-- View Logs -->
         {#if worker.tmuxSession}
           <button class="nes-btn is-warning logs-btn" on:click={() => showLogs = true}>
-            View Logs
+            {$t('workerDetail.viewLogs')}
           </button>
         {/if}
 
         {#if profile}
         <section class="nes-container is-dark" style="margin-top: 12px;">
-          <h3 class="section-title">性格</h3>
+          <h3 class="section-title">{$t('workerDetail.personalitySection')}</h3>
           <p style="font-size: 11px; color: #aaa; margin-bottom: 8px;">
-            {profile.narrative?.description || '尚未生成性格描述'}
+            {profile.narrative?.description || $t('workerDetail.noNarrative')}
           </p>
 
           {#if profile.narrative?.catchphrases?.length}
@@ -228,20 +229,20 @@
           </div>
           {/if}
 
-          <h4 style="font-size: 11px; margin-top: 8px;">情緒</h4>
+          <h4 style="font-size: 11px; margin-top: 8px;">{$t('workerDetail.mood')}</h4>
           <div style="font-size: 10px;">
-            <label>心情: {profile.mood?.current || 'neutral'}</label>
+            <label>{$t('workerDetail.moodCurrent')} {profile.mood?.current || 'neutral'}</label>
             <progress class="nes-progress is-primary" value={profile.mood?.energy || 0} max="100" style="height: 12px;"></progress>
-            <label>能量: {profile.mood?.energy || 0}%</label>
+            <label>{$t('workerDetail.energy')} {profile.mood?.energy || 0}%</label>
             <progress class="nes-progress is-success" value={profile.mood?.morale || 0} max="100" style="height: 12px;"></progress>
-            <label>士氣: {profile.mood?.morale || 0}%</label>
+            <label>{$t('workerDetail.morale')} {profile.mood?.morale || 0}%</label>
           </div>
 
-          <h4 style="font-size: 11px; margin-top: 8px;">特質</h4>
+          <h4 style="font-size: 11px; margin-top: 8px;">{$t('workerDetail.traits')}</h4>
           <div style="font-size: 10px;">
             {#each Object.entries(profile.traits || {}) as [key, value]}
             <div style="display: flex; align-items: center; gap: 4px; margin: 2px 0;">
-              <span style="width: 50px;">{traitLabels[key] || key}</span>
+              <span style="width: 50px;">{$t(traitKeys[key] || key)}</span>
               <progress class="nes-progress" value={value} max="100" style="height: 8px; flex: 1;"></progress>
               <span style="width: 24px; text-align: right;">{value}</span>
             </div>
@@ -251,26 +252,26 @@
 
         {#if !profile.narrative?.description}
         <button class="nes-btn is-primary" style="margin-top: 8px; font-size: 10px;" on:click={handleGenerateNarrative}>
-          生成性格描述 (Ollama)
+          {$t('workerDetail.generateNarrative')}
         </button>
         {/if}
         {/if}
 
         {#if workerRelationships.length > 0}
         <section class="nes-container is-dark" style="margin-top: 12px;">
-          <h3 class="section-title">人際關係</h3>
+          <h3 class="section-title">{$t('workerDetail.relationshipsSection')}</h3>
           {#each workerRelationships as rel}
           <div style="margin-bottom: 8px; font-size: 10px;">
             <span style="color: #00ff41;">
               {rel.workerA === workerId ? rel.workerB : rel.workerA}
             </span>
             <div style="display: flex; gap: 4px; align-items: center;">
-              <span>好感</span>
+              <span>{$t('workerDetail.affinity')}</span>
               <progress class="nes-progress is-warning" value={rel.affinity} max="100" style="height: 8px; flex: 1;"></progress>
               <span>{rel.affinity}</span>
             </div>
             <div style="display: flex; gap: 4px; align-items: center;">
-              <span>信任</span>
+              <span>{$t('workerDetail.trust')}</span>
               <progress class="nes-progress is-success" value={rel.trust} max="100" style="height: 8px; flex: 1;"></progress>
               <span>{rel.trust}</span>
             </div>
@@ -287,7 +288,7 @@
         {/if}
       </div>
     {:else}
-      <div class="loading">Worker not found</div>
+      <div class="loading">{$t('workerDetail.notFound')}</div>
     {/if}
   </div>
 </div>

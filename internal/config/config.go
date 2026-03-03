@@ -25,6 +25,7 @@ type Config struct {
 	WorkerTiers    []WorkerTierConfig   `yaml:"worker_tiers,omitempty"`
 	SkillProfiles  []SkillProfile       `yaml:"skill_profiles,omitempty"`
 	Training       TrainingConfig       `yaml:"training,omitempty"`
+	Language       string               `yaml:"language,omitempty"` // "en" or "zh-TW", default "zh-TW"
 }
 
 type WorkerTierConfig struct {
@@ -204,6 +205,7 @@ func DefaultConfig() *Config {
 			Enabled: true,
 			Path:    filepath.Join(home, ".local", "share", "aisupervisor", "audit.jsonl"),
 		},
+		Language: "zh-TW",
 	}
 }
 
@@ -269,6 +271,11 @@ func (c *Config) Validate() error {
 
 	if c.Decision.ConfidenceThreshold < 0 || c.Decision.ConfidenceThreshold > 1 {
 		return fmt.Errorf("confidence_threshold must be between 0.0 and 1.0")
+	}
+
+	validLangs := map[string]bool{"en": true, "zh-TW": true, "": true}
+	if !validLangs[c.Language] {
+		return fmt.Errorf("invalid language %q (must be \"en\" or \"zh-TW\")", c.Language)
 	}
 
 	return nil

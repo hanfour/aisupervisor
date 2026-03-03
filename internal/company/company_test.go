@@ -75,7 +75,7 @@ func TestAddTask(t *testing.T) {
 	p, _ := m.CreateProject("proj", "", "/tmp", "main", nil)
 	drainCh(ch)
 
-	task, err := m.AddTask(p.ID, "do thing", "desc", "prompt text", nil, 1, "v1")
+	task, err := m.AddTask(p.ID, "do thing", "desc", "prompt text", nil, 1, "v1", "")
 	if err != nil {
 		t.Fatalf("AddTask: %v", err)
 	}
@@ -105,10 +105,10 @@ func TestAddTaskWithDeps(t *testing.T) {
 	p, _ := m.CreateProject("proj", "", "/tmp", "main", nil)
 	drainCh(ch)
 
-	t1, _ := m.AddTask(p.ID, "first", "", "prompt1", nil, 1, "")
+	t1, _ := m.AddTask(p.ID, "first", "", "prompt1", nil, 1, "", "")
 	drainCh(ch)
 
-	t2, err := m.AddTask(p.ID, "second", "", "prompt2", []string{t1.ID}, 2, "")
+	t2, err := m.AddTask(p.ID, "second", "", "prompt2", []string{t1.ID}, 2, "", "")
 	if err != nil {
 		t.Fatalf("AddTask with deps: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestAddTaskWithDeps(t *testing.T) {
 
 func TestAddTaskProjectNotFound(t *testing.T) {
 	m, _ := testManager(t)
-	_, err := m.AddTask("nonexistent", "task", "", "prompt", nil, 1, "")
+	_, err := m.AddTask("nonexistent", "task", "", "prompt", nil, 1, "", "")
 	if err == nil {
 		t.Fatal("expected error for nonexistent project")
 	}
@@ -190,9 +190,9 @@ func TestProjectProgress(t *testing.T) {
 	p, _ := m.CreateProject("prog", "", "/tmp", "main", nil)
 	drainCh(ch)
 
-	m.AddTask(p.ID, "t1", "", "p1", nil, 1, "")
-	m.AddTask(p.ID, "t2", "", "p2", nil, 1, "")
-	m.AddTask(p.ID, "t3", "", "p3", nil, 1, "")
+	m.AddTask(p.ID, "t1", "", "p1", nil, 1, "", "")
+	m.AddTask(p.ID, "t2", "", "p2", nil, 1, "", "")
+	m.AddTask(p.ID, "t3", "", "p3", nil, 1, "", "")
 	drainCh(ch)
 
 	tasks := m.ListTasks(p.ID)
@@ -217,8 +217,8 @@ func TestCompleteTask(t *testing.T) {
 	p, _ := m.CreateProject("p", "", "/tmp", "main", nil)
 	drainCh(ch)
 
-	t1, _ := m.AddTask(p.ID, "first", "", "p1", nil, 1, "")
-	t2, _ := m.AddTask(p.ID, "second", "", "p2", []string{t1.ID}, 2, "")
+	t1, _ := m.AddTask(p.ID, "first", "", "p1", nil, 1, "", "")
+	t2, _ := m.AddTask(p.ID, "second", "", "p2", []string{t1.ID}, 2, "", "")
 	drainCh(ch)
 
 	if err := m.CompleteTask(t1.ID); err != nil {

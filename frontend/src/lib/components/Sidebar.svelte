@@ -1,4 +1,6 @@
 <script>
+  import { t } from '../stores/i18n.js'
+
   export let currentPage = 'dashboard'
   export let darkMode = true
 
@@ -8,17 +10,17 @@
     localStorage.setItem('theme', darkMode ? 'dark' : 'light')
   }
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
-    { id: 'projects', label: 'Projects', icon: '◈' },
-    { id: 'board', label: 'Board', icon: '▦' },
-    { id: 'workers', label: 'Workers', icon: '☺' },
-    { id: 'hierarchy', label: 'Hierarchy', icon: '⊿' },
-    { id: 'terminal', label: 'Terminal', icon: '⊟' },
-    { id: 'roles', label: 'Roles', icon: '★' },
-    { id: 'groups', label: 'Groups', icon: '♦' },
-    { id: 'office', label: 'Office', icon: '▣' },
-    { id: 'settings', label: 'Settings', icon: '⚙' },
+  const navKeys = [
+    { id: 'dashboard', key: 'nav.dashboard', icon: '⊞' },
+    { id: 'projects', key: 'nav.projects', icon: '◈' },
+    { id: 'board', key: 'nav.board', icon: '▦' },
+    { id: 'workers', key: 'nav.workers', icon: '☺' },
+    { id: 'hierarchy', key: 'nav.hierarchy', icon: '⊿' },
+    { id: 'terminal', key: 'nav.terminal', icon: '⊟' },
+    { id: 'roles', key: 'nav.roles', icon: '★' },
+    { id: 'groups', key: 'nav.groups', icon: '♦' },
+    { id: 'office', key: 'nav.office', icon: '▣' },
+    { id: 'settings', key: 'nav.settings', icon: '⚙' },
   ]
 </script>
 
@@ -27,22 +29,22 @@
     <span class="logo-text">AI<br/>SUP</span>
   </div>
   <ul class="nes-list is-disc">
-    {#each navItems as item}
+    {#each navKeys as item}
       <li
         class:active={currentPage === item.id}
-        on:click={() => currentPage = item.id}
-        on:keydown={(e) => e.key === 'Enter' && (currentPage = item.id)}
+        on:click={() => { currentPage = item.id; window.location.hash = item.id }}
+        on:keydown={(e) => { if (e.key === 'Enter') { currentPage = item.id; window.location.hash = item.id } }}
         role="button"
         tabindex="0"
       >
         <span class="nav-icon">{item.icon}</span>
-        <span class="nav-label">{item.label}</span>
+        <span class="nav-label">{$t(item.key)}</span>
       </li>
     {/each}
   </ul>
   <div class="theme-toggle">
     <button class="nes-btn theme-btn" on:click={toggleTheme}>
-      {darkMode ? '☀ Light' : '☾ Dark'}
+      {darkMode ? $t('theme.light') : $t('theme.dark')}
     </button>
   </div>
 </nav>

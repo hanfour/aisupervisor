@@ -18,8 +18,10 @@ type Store struct {
 	mu           sync.RWMutex
 	projects     map[string]*Project
 	tasks        map[string]*Task
+	reports      map[string]*ResearchReport // keyed by TaskID
 	projectsPath string
 	tasksPath    string
+	reportsPath  string
 }
 
 type projectsFile struct {
@@ -30,6 +32,10 @@ type tasksFile struct {
 	Tasks []*Task `yaml:"tasks"`
 }
 
+type reportsFile struct {
+	Reports []*ResearchReport `yaml:"reports"`
+}
+
 func NewStore(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
@@ -38,14 +44,19 @@ func NewStore(dataDir string) (*Store, error) {
 	s := &Store{
 		projects:     make(map[string]*Project),
 		tasks:        make(map[string]*Task),
+		reports:      make(map[string]*ResearchReport),
 		projectsPath: filepath.Join(dataDir, "projects.yaml"),
 		tasksPath:    filepath.Join(dataDir, "tasks.yaml"),
+		reportsPath:  filepath.Join(dataDir, "reports.yaml"),
 	}
 
 	if err := s.loadProjects(); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	if err := s.loadTasks(); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err := s.loadReports(); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 
@@ -103,17 +114,25 @@ func (s *Store) DeleteProject(projectID string) error {
 
 	delete(s.projects, projectID)
 
-	// Cascade delete all tasks belonging to this project
+	// Cascade delete all tasks and reports belonging to this project
 	for id, t := range s.tasks {
 		if t.ProjectID == projectID {
 			delete(s.tasks, id)
+		}
+	}
+	for taskID, r := range s.reports {
+		if r.ProjectID == projectID {
+			delete(s.reports, taskID)
 		}
 	}
 
 	if err := s.saveProjects(); err != nil {
 		return err
 	}
-	return s.saveTasks()
+	if err := s.saveTasks(); err != nil {
+		return err
+	}
+	return s.saveReports()
 }
 
 // SaveTask creates or updates a task.
@@ -309,4 +328,73 @@ func (s *Store) saveTasks() error {
 		return err
 	}
 	return os.WriteFile(s.tasksPath, data, 0o644)
+}
+
+// --- Research Report operations ---
+
+// SaveReport creates or updates a research report (keyed by TaskID).
+func (s *Store) SaveReport(r *ResearchReport) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if r.ID == "" {
+		r.ID = fmt.Sprintf("r%d-%d", time.Now().UnixMilli(), idCounter.Add(1))
+	}
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Now()
+	}
+
+	s.reports[r.TaskID] = r
+	return s.saveReports()
+}
+
+// GetReport returns a report by task ID.
+func (s *Store) GetReport(taskID string) (*ResearchReport, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r, ok := s.reports[taskID]
+	return r, ok
+}
+
+// ListReports returns all reports for a project.
+func (s *Store) ListReports(projectID string) []*ResearchReport {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*ResearchReport
+	for _, r := range s.reports {
+		if r.ProjectID == projectID {
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
+func (s *Store) loadReports() error {
+	data, err := os.ReadFile(s.reportsPath)
+	if err != nil {
+		return err
+	}
+	var f reportsFile
+	if err := yaml.Unmarshal(data, &f); err != nil {
+		return err
+	}
+	for _, r := range f.Reports {
+		s.reports[r.TaskID] = r
+	}
+	return nil
+}
+
+func (s *Store) saveReports() error {
+	f := reportsFile{
+		Reports: make([]*ResearchReport, 0, len(s.reports)),
+	}
+	for _, r := range s.reports {
+		f.Reports = append(f.Reports, r)
+	}
+	data, err := yaml.Marshal(&f)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.reportsPath, data, 0o644)
 }

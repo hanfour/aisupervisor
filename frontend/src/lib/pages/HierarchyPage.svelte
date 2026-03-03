@@ -6,6 +6,7 @@
   import WorkerDetailDrawer from '../components/WorkerDetailDrawer.svelte'
   import ReviewQueuePanel from '../components/ReviewQueuePanel.svelte'
   import TrainingStatsPanel from '../components/TrainingStatsPanel.svelte'
+  import { t } from '../stores/i18n.js'
 
   let selectedWorkerId = null
   let expandedWorkers = {}
@@ -45,7 +46,7 @@
 
 <div class="hierarchy-page">
   <section class="nes-container with-title is-dark">
-    <p class="title">Company Hierarchy</p>
+    <p class="title">{$t('hierarchy.companyHierarchy')}</p>
 
     <div class="hierarchy-columns">
       {#each tierOrder as tier}
@@ -95,14 +96,14 @@
                       </div>
                     {/each}
                     {#if expandedWorkers[w.id].length === 0}
-                      <span class="empty-sub">No subordinates</span>
+                      <span class="empty-sub">{$t('hierarchy.noSubs')}</span>
                     {/if}
                   </div>
                 {/if}
               </div>
             {/each}
             {#if tierWorkers.length === 0}
-              <p class="empty-msg">No {tier}s hired yet</p>
+              <p class="empty-msg">{tierLabel(tier)} {$t('hierarchy.noHired')}</p>
             {/if}
           </div>
         </div>
@@ -116,11 +117,11 @@
 
   <div class="bottom-panels">
     <section class="nes-container with-title is-dark panel-half">
-      <p class="title">Review Queue</p>
+      <p class="title">{$t('hierarchy.reviewQueue')}</p>
       <ReviewQueuePanel />
     </section>
     <section class="nes-container with-title is-dark panel-half">
-      <p class="title">Training Stats</p>
+      <p class="title">{$t('hierarchy.trainingStats')}</p>
       <TrainingStatsPanel />
     </section>
   </div>

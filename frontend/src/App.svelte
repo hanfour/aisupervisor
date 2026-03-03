@@ -10,13 +10,22 @@
   import { initDiscussionStore } from './lib/stores/discussions.js'
   import { initCompanyStore } from './lib/stores/company.js'
   import { addError } from './lib/stores/errors.js'
+  import { initLanguage } from './lib/stores/i18n.js'
   import ProjectsPage from './lib/pages/ProjectsPage.svelte'
   import WorkersPage from './lib/pages/WorkersPage.svelte'
+  import WorkerChatDrawer from './lib/components/WorkerChatDrawer.svelte'
 
   let currentPage = 'dashboard'
   let selectedSessionId = ''
   let selectedProjectId = ''
   let darkMode = true
+
+  // Hash-based routing: read initial page from URL hash
+  function readHash() {
+    const hash = window.location.hash.replace('#', '').replace('/', '')
+    return hash || 'dashboard'
+  }
+  currentPage = readHash()
 
   // Lazy-loaded page components for Phase 5
   let RolesPage = null
@@ -28,6 +37,8 @@
   let OfficePage = null
 
   onMount(async () => {
+    window.addEventListener('hashchange', onHashChange)
+
     // Theme initialization
     const savedTheme = localStorage.getItem('theme')
     if (savedTheme === 'light') {
@@ -35,6 +46,7 @@
       document.body.classList.add('light')
     }
 
+    initLanguage()
     initEventStore()
     initDiscussionStore()
     initCompanyStore()
@@ -89,12 +101,20 @@
 
   function navigate(page, id) {
     currentPage = page
+    window.location.hash = page
     if (page === 'terminal' && id) selectedSessionId = id
     if (page === 'board' && id) selectedProjectId = id
+  }
+
+  // Sync hash changes (back/forward buttons)
+  function onHashChange() {
+    const page = readHash()
+    if (page !== currentPage) currentPage = page
   }
 </script>
 
 <Toast />
+<WorkerChatDrawer />
 <div class="app-layout">
   <Sidebar bind:currentPage bind:darkMode />
 

@@ -2,6 +2,13 @@ package project
 
 import "time"
 
+type TaskType string
+
+const (
+	TaskTypeCode     TaskType = "code"
+	TaskTypeResearch TaskType = "research"
+)
+
 type TaskStatus string
 
 const (
@@ -22,7 +29,8 @@ type Task struct {
 	Description  string     `yaml:"description" json:"description"`
 	Prompt       string     `yaml:"prompt" json:"prompt"`
 	Status       TaskStatus `yaml:"status" json:"status"`
-	Priority     int        `yaml:"priority" json:"priority"` // 1=highest
+	Type         TaskType   `yaml:"type,omitempty" json:"type,omitempty"` // "code" (default) or "research"
+	Priority     int        `yaml:"priority" json:"priority"`            // 1=highest
 	BranchName   string     `yaml:"branch_name" json:"branchName"`
 	AssigneeID   string     `yaml:"assignee_id,omitempty" json:"assigneeId,omitempty"`
 	DependsOn    []string   `yaml:"depends_on,omitempty" json:"dependsOn,omitempty"`

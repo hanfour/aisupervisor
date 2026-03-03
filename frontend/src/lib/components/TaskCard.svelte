@@ -5,6 +5,7 @@
   export let workers = []
   export let onAssign = () => {}
   export let onComplete = () => {}
+  export let onViewReport = () => {}
 
   $: assignee = workers.find(w => w.id === task.assigneeId)
 
@@ -24,7 +25,12 @@
 
 <div class="nes-container is-rounded task-card">
   <div class="card-header">
-    <span class="task-title">{task.title}</span>
+    <span class="task-title">
+      {#if task.type === 'research'}
+        <span class="type-badge research">R</span>
+      {/if}
+      {task.title}
+    </span>
     {#if task.priority}
       <span class="nes-badge"><span class={priorityClass(task.priority)}>{priorityLabel(task.priority)}</span></span>
     {/if}
@@ -63,6 +69,9 @@
     {#if task.status === 'review'}
       <button class="nes-btn is-success btn-sm" on:click={() => onComplete(task)}>Done</button>
     {/if}
+    {#if task.type === 'research' && (task.status === 'done' || task.status === 'review')}
+      <button class="nes-btn is-warning btn-sm" on:click={() => onViewReport(task)}>Report</button>
+    {/if}
   </div>
 </div>
 
@@ -83,6 +92,21 @@
   .task-title {
     font-size: 10px;
     color: var(--accent-green);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .type-badge {
+    font-size: 7px;
+    padding: 1px 4px;
+    border: 1px solid;
+    font-weight: bold;
+  }
+
+  .type-badge.research {
+    color: #f0c040;
+    border-color: #f0c040;
   }
 
   .task-desc {

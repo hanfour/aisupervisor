@@ -113,6 +113,33 @@ func TestStore_UpdateProfile(t *testing.T) {
 	}
 }
 
+func TestStore_Save_AtomicWrite(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	p := NewCharacterProfile("w1")
+	s.SetProfile(p)
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// No .tmp files should remain
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.tmp"))
+	if len(matches) > 0 {
+		t.Fatalf("temp files left behind: %v", matches)
+	}
+
+	// Data should be loadable
+	s2 := NewStore(dir)
+	if err := s2.Load(); err != nil {
+		t.Fatalf("Load after atomic save failed: %v", err)
+	}
+	if s2.GetProfile("w1") == nil {
+		t.Fatal("profile lost after atomic save")
+	}
+}
+
 func TestStore_GetRelationshipAffinity(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)

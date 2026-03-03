@@ -3,6 +3,7 @@
   import { activeDiscussions } from '../stores/discussions.js'
   import { liveDiscussions, loadActiveDiscussions } from '../stores/discussions.js'
   import GroupDiscussion from '../components/GroupDiscussion.svelte'
+  import { t } from '../stores/i18n.js'
 
   let groups = []
   let refreshTimer = null
@@ -22,16 +23,16 @@
 
 <div class="groups-page">
   <section class="nes-container with-title is-dark">
-    <p class="title">Groups</p>
+    <p class="title">{$t('groups.title')}</p>
     {#if groups.length > 0}
       <table class="nes-table is-bordered is-dark">
         <thead>
           <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Leader</th>
-            <th>Roles</th>
-            <th>Threshold</th>
+            <th>{$t('groups.id')}</th>
+            <th>{$t('groups.name')}</th>
+            <th>{$t('groups.leader')}</th>
+            <th>{$t('groups.roles')}</th>
+            <th>{$t('groups.threshold')}</th>
           </tr>
         </thead>
         <tbody>
@@ -47,13 +48,13 @@
         </tbody>
       </table>
     {:else}
-      <p class="empty">No groups configured</p>
+      <p class="empty">{$t('groups.noGroups')}</p>
     {/if}
   </section>
 
   <!-- Live Discussions from backend -->
   <section class="nes-container with-title is-dark discussions-section">
-    <p class="title">Live Discussions</p>
+    <p class="title">{$t('groups.liveDiscussions')}</p>
     {#if $liveDiscussions.length > 0}
       {#each $liveDiscussions as disc}
         <div class="nes-container is-rounded discussion-container">
@@ -69,13 +70,13 @@
         </div>
       {/each}
     {:else}
-      <p class="empty">No live discussions</p>
+      <p class="empty">{$t('groups.noLive')}</p>
     {/if}
   </section>
 
   <!-- Event-driven discussions -->
   <section class="nes-container with-title is-dark discussions-section">
-    <p class="title">Active Discussions</p>
+    <p class="title">{$t('groups.activeDiscussions')}</p>
     {#if $activeDiscussions.length > 0}
       {#each $activeDiscussions as disc}
         <div class="nes-container is-rounded discussion-container">
@@ -89,7 +90,7 @@
         </div>
       {/each}
     {:else}
-      <p class="empty">No active discussions</p>
+      <p class="empty">{$t('groups.noRecent')}</p>
     {/if}
   </section>
 </div>

@@ -28,6 +28,7 @@ const (
 	EventMoodChanged         EventType = "mood_changed"
 	EventRelationshipUpdated EventType = "relationship_updated"
 	EventProjectDeleted      EventType = "project_deleted"
+	EventResearchCompleted   EventType = "research_completed"
 )
 
 type Event struct {

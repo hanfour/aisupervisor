@@ -1,6 +1,7 @@
 <script>
   import { chatCreateProject, createProject, loadProjects } from '../stores/projects.js'
   import { addError } from '../stores/errors.js'
+  import { t } from '../stores/i18n.js'
 
   export let visible = false
   export let onClose = () => {}
@@ -91,12 +92,12 @@
 {#if visible}
   <div class="dialog-overlay" on:click={handleClose} on:keydown={(e) => e.key === 'Escape' && handleClose()} role="presentation">
     <div class="chat-dialog nes-container is-dark is-rounded" on:click|stopPropagation role="presentation">
-      <p class="title">AI Project Creator</p>
+      <p class="title">{$t('aiChat.title')}</p>
 
       <div class="chat-messages">
         {#if messages.length === 0}
           <div class="hint">
-            Describe the project you want to create. The AI will ask follow-up questions if needed.
+            {$t('aiChat.description')}
           </div>
         {/if}
 
@@ -111,7 +112,7 @@
         {#if loading}
           <div class="message assistant">
             <div class="bubble assistant">
-              <span class="typing">Thinking...</span>
+              <span class="typing">{$t('aiChat.thinking')}</span>
             </div>
           </div>
         {/if}
@@ -119,17 +120,17 @@
 
       {#if projectReady}
         <div class="project-preview nes-container is-rounded">
-          <div class="preview-row"><span class="label">Name:</span> {projectReady.name}</div>
-          <div class="preview-row"><span class="label">Desc:</span> {projectReady.description}</div>
-          <div class="preview-row"><span class="label">Repo:</span> {projectReady.repoPath}</div>
-          <div class="preview-row"><span class="label">Branch:</span> {projectReady.baseBranch}</div>
+          <div class="preview-row"><span class="label">{$t('projectForm.name')}:</span> {projectReady.name}</div>
+          <div class="preview-row"><span class="label">{$t('projectForm.description')}:</span> {projectReady.description}</div>
+          <div class="preview-row"><span class="label">{$t('projectForm.repoPath')}:</span> {projectReady.repoPath}</div>
+          <div class="preview-row"><span class="label">{$t('projectForm.baseBranch')}:</span> {projectReady.baseBranch}</div>
           {#if projectReady.goals && projectReady.goals.length > 0}
-            <div class="preview-row"><span class="label">Goals:</span> {projectReady.goals.join(', ')}</div>
+            <div class="preview-row"><span class="label">{$t('projects.goals')}</span> {projectReady.goals.join(', ')}</div>
           {/if}
         </div>
         <div class="dialog-actions">
-          <button class="nes-btn is-success" on:click={confirmCreate} disabled={loading}>Create Project</button>
-          <button class="nes-btn" on:click={handleClose}>Cancel</button>
+          <button class="nes-btn is-success" on:click={confirmCreate} disabled={loading}>{$t('aiChat.createProject')}</button>
+          <button class="nes-btn" on:click={handleClose}>{$t('common.cancel')}</button>
         </div>
       {:else}
         <div class="chat-input-row">
@@ -137,12 +138,12 @@
             class="nes-textarea is-dark"
             bind:value={userInput}
             on:keydown={handleKeydown}
-            placeholder="Describe your project..."
+            placeholder={$t('aiChat.placeholder')}
             rows="2"
             disabled={loading}
           ></textarea>
           <button class="nes-btn is-primary" on:click={sendMessage} disabled={loading || !userInput.trim()}>
-            Send
+            {$t('aiChat.send')}
           </button>
         </div>
       {/if}

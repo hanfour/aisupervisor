@@ -30,6 +30,7 @@ type Spawner struct {
 	tierConfigs   map[WorkerTier]TierSpawnConfig
 	skillProfiles map[string]config.SkillProfile
 	projectStore  projectStoreReader
+	language      string // "en" or "zh-TW"
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -68,6 +69,11 @@ func (s *Spawner) LoadTierConfigs(tiers []config.WorkerTierConfig) {
 		}
 		s.tierConfigs[tier] = sc
 	}
+}
+
+// SetLanguage sets the prompt language ("en" or "zh-TW").
+func (s *Spawner) SetLanguage(lang string) {
+	s.language = lang
 }
 
 // SetProjectStore sets the project store for dependency context lookups.
@@ -122,8 +128,10 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, p *project.Project) error {
 	tmuxName := fmt.Sprintf("aiworker-%s", w.ID)
 
-	// 1. Create git branch if it doesn't exist
-	if t.BranchName != "" {
+	isResearch := t.Type == project.TaskTypeResearch
+
+	// 1. Create git branch if it doesn't exist (skip for research tasks)
+	if !isResearch && t.BranchName != "" {
 		exists, err := s.gitOps.BranchExists(p.RepoPath, t.BranchName)
 		if err != nil {
 			return fmt.Errorf("checking branch: %w", err)
@@ -144,8 +152,8 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(p.RepoPath))+" Enter")
 	s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 
-	// 4. Checkout task branch
-	if t.BranchName != "" {
+	// 4. Checkout task branch (skip for research tasks)
+	if !isResearch && t.BranchName != "" {
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("git checkout %s", t.BranchName)+" Enter")
 		s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 	}
@@ -166,7 +174,7 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 
 	// 7. Send task prompt
 	deps := s.resolveDeps(t)
-	prompt := buildPromptForTier(t, p, w.EffectiveTier(), deps)
+	prompt := s.buildPromptForTier(t, p, w.EffectiveTier(), deps)
 	s.tmuxClient.SendLiteralKeys(tmuxName, 0, 0, prompt)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
@@ -325,32 +333,95 @@ func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout 
 	}
 }
 
-// buildPromptForTier formats the task prompt based on the worker tier.
-func buildPromptForTier(t *project.Task, p *project.Project, tier WorkerTier, deps []depContext) string {
+// buildPromptForTier formats the task prompt based on the worker tier and language.
+func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier WorkerTier, deps []depContext) string {
+	if t.Type == project.TaskTypeResearch {
+		return s.buildResearchPrompt(t, deps)
+	}
+
+	lang := s.language
+	if lang == "" {
+		lang = "zh-TW"
+	}
+
 	var sb strings.Builder
 
-	// Anti-planning directive
-	sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
-
-	sb.WriteString(t.Prompt)
-
-	if t.BranchName != "" {
-		sb.WriteString(fmt.Sprintf("\n\nYou are working on branch: %s", t.BranchName))
-	}
-
-	// Dependency context
-	if len(deps) > 0 {
-		sb.WriteString("\n\n--- Completed Dependencies ---\n")
-		for _, d := range deps {
-			sb.WriteString(fmt.Sprintf("- %s (branch: %s)\n", d.Title, d.Branch))
+	if lang == "en" {
+		sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
+		sb.WriteString(t.Prompt)
+		if t.BranchName != "" {
+			sb.WriteString(fmt.Sprintf("\n\nYou are working on branch: %s", t.BranchName))
 		}
-		sb.WriteString("You may reference or build on the code from these branches.\n")
+		if len(deps) > 0 {
+			sb.WriteString("\n\n--- Completed Dependencies ---\n")
+			for _, d := range deps {
+				sb.WriteString(fmt.Sprintf("- %s (branch: %s)\n", d.Title, d.Branch))
+			}
+			sb.WriteString("You may reference or build on the code from these branches.\n")
+		}
+		sb.WriteString("\n\n--- When Done ---\n")
+		sb.WriteString("1. Commit all changes with a descriptive message\n")
+		sb.WriteString("2. Type /stop to signal completion\n")
+	} else {
+		sb.WriteString("重要：請立即開始寫程式碼。不要建立規劃文件、設計文件或架構文件。直接寫程式碼。\n\n")
+		sb.WriteString(t.Prompt)
+		if t.BranchName != "" {
+			sb.WriteString(fmt.Sprintf("\n\n你正在分支上工作：%s", t.BranchName))
+		}
+		if len(deps) > 0 {
+			sb.WriteString("\n\n--- 已完成的依賴項目 ---\n")
+			for _, d := range deps {
+				sb.WriteString(fmt.Sprintf("- %s（分支：%s）\n", d.Title, d.Branch))
+			}
+			sb.WriteString("你可以參考或基於這些分支的程式碼進行開發。\n")
+		}
+		sb.WriteString("\n\n--- 完成時 ---\n")
+		sb.WriteString("1. 用描述性訊息提交所有變更\n")
+		sb.WriteString("2. 輸入 /stop 表示完成\n")
 	}
 
-	// Completion instructions
-	sb.WriteString("\n\n--- When Done ---\n")
-	sb.WriteString("1. Commit all changes with a descriptive message\n")
-	sb.WriteString("2. Type /stop to signal completion\n")
+	return sb.String()
+}
+
+// buildResearchPrompt creates a prompt for research tasks that instructs the
+// worker to investigate a topic and output a structured JSON report.
+func (s *Spawner) buildResearchPrompt(t *project.Task, deps []depContext) string {
+	lang := s.language
+	if lang == "" {
+		lang = "zh-TW"
+	}
+
+	var sb strings.Builder
+
+	if lang == "en" {
+		sb.WriteString("You are a professional researcher. Please conduct an in-depth investigation on the following topic:\n\n")
+		sb.WriteString(t.Prompt)
+		if len(deps) > 0 {
+			sb.WriteString("\n\n--- Related Prior Research ---\n")
+			for _, d := range deps {
+				sb.WriteString(fmt.Sprintf("- %s\n", d.Title))
+			}
+		}
+		sb.WriteString("\n\n--- Output Format ---\n")
+		sb.WriteString("After completing your research, output the following JSON report (must be valid JSON):\n")
+		sb.WriteString(`{"summary": "Research summary (under 200 words)", "keyFindings": ["Finding 1", ...], "recommendations": ["Recommendation 1", ...], "references": ["Reference 1", ...], "rawContent": "Full research content in markdown"}`)
+		sb.WriteString("\n\n--- When Done ---\n")
+		sb.WriteString("After outputting the JSON above, type /stop to complete the task.\n")
+	} else {
+		sb.WriteString("你是一位專業研究員。請針對以下主題進行深入調查研究：\n\n")
+		sb.WriteString(t.Prompt)
+		if len(deps) > 0 {
+			sb.WriteString("\n\n--- 相關前置研究 ---\n")
+			for _, d := range deps {
+				sb.WriteString(fmt.Sprintf("- %s\n", d.Title))
+			}
+		}
+		sb.WriteString("\n\n--- 輸出格式 ---\n")
+		sb.WriteString("研究完成後，請輸出以下 JSON 格式的報告（必須是合法 JSON）：\n")
+		sb.WriteString(`{"summary": "研究摘要 (200字以內)", "keyFindings": ["發現1", "發現2", ...], "recommendations": ["建議1", ...], "references": ["參考資料1", ...], "rawContent": "完整研究內容 markdown"}`)
+		sb.WriteString("\n\n--- When Done ---\n")
+		sb.WriteString("將上述 JSON 輸出後，輸入 /stop 完成任務。\n")
+	}
 
 	return sb.String()
 }

@@ -1,6 +1,7 @@
 <script>
   import { reviewQueue, loadReviewQueue } from '../stores/company.js'
   import { onMount } from 'svelte'
+  import { t } from '../stores/i18n.js'
 
   onMount(() => {
     loadReviewQueue()
@@ -15,16 +16,16 @@
 
 <div class="review-queue">
   {#if $reviewQueue.length === 0}
-    <p class="empty-msg">No pending reviews</p>
+    <p class="empty-msg">{$t('reviewQueue.noReviews')}</p>
   {:else}
     <div class="table-wrap">
       <table class="nes-table is-bordered is-dark">
         <thead>
           <tr>
-            <th>Task</th>
-            <th>Project</th>
-            <th>Engineer</th>
-            <th>Manager</th>
+            <th>{$t('reviewQueue.task')}</th>
+            <th>{$t('dashboard.projects')}</th>
+            <th>{$t('reviewQueue.engineer')}</th>
+            <th>{$t('reviewQueue.reviewManager')}</th>
             <th>Created</th>
           </tr>
         </thead>

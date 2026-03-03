@@ -4,6 +4,7 @@
   import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import { events } from '../stores/events.js'
   import { prerenderCharacter, getCharacterType, loadAllSprites, spritesReady } from '../office/sprites.js'
+  import { openChat } from '../stores/workerChat.js'
 
   export let workerId
   export let onBack = () => {}
@@ -147,6 +148,9 @@
         <div class="char-status" style="color: {statusColor(worker.status)}">
           ● {worker.status || 'idle'}
         </div>
+        <button class="nes-btn is-primary chat-profile-btn" on:click={() => openChat(worker.id, worker.name, worker.avatar)}>
+          Chat with {worker.name}
+        </button>
       </div>
 
       <!-- Equipment Section -->
@@ -420,6 +424,12 @@
   .char-status {
     font-size: 9px;
     margin-top: 4px;
+  }
+
+  .chat-profile-btn {
+    font-size: 8px !important;
+    padding: 4px 10px !important;
+    margin-top: 8px;
   }
 
   /* Equipment */

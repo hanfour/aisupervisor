@@ -40,6 +40,7 @@ type TaskDTO struct {
 	Title        string   `json:"title"`
 	Description  string   `json:"description"`
 	Prompt       string   `json:"prompt"`
+	Type         string   `json:"type"`
 	Status       string   `json:"status"`
 	Priority     int      `json:"priority"`
 	BranchName   string   `json:"branchName"`
@@ -55,12 +56,17 @@ type TaskDTO struct {
 }
 
 func TaskToDTO(t *project.Task) TaskDTO {
+	taskType := string(t.Type)
+	if taskType == "" {
+		taskType = "code"
+	}
 	dto := TaskDTO{
 		ID:           t.ID,
 		ProjectID:    t.ProjectID,
 		Title:        t.Title,
 		Description:  t.Description,
 		Prompt:       t.Prompt,
+		Type:         taskType,
 		Status:       string(t.Status),
 		Priority:     t.Priority,
 		BranchName:   t.BranchName,
@@ -239,6 +245,46 @@ type CharacterProfileDTO struct {
 	Mood      MoodDTO              `json:"mood"`
 	Habits    HabitsDTO            `json:"habits"`
 	Narrative NarrativeDTO         `json:"narrative"`
+}
+
+// ResearchReportDTO represents a research report for the frontend.
+type ResearchReportDTO struct {
+	ID              string   `json:"id"`
+	TaskID          string   `json:"taskId"`
+	ProjectID       string   `json:"projectId"`
+	WorkerID        string   `json:"workerId"`
+	Summary         string   `json:"summary"`
+	KeyFindings     []string `json:"keyFindings"`
+	Recommendations []string `json:"recommendations"`
+	References      []string `json:"references"`
+	RawContent      string   `json:"rawContent"`
+	CreatedAt       string   `json:"createdAt"`
+}
+
+func ReportToDTO(r *project.ResearchReport) ResearchReportDTO {
+	return ResearchReportDTO{
+		ID:              r.ID,
+		TaskID:          r.TaskID,
+		ProjectID:       r.ProjectID,
+		WorkerID:        r.WorkerID,
+		Summary:         r.Summary,
+		KeyFindings:     r.KeyFindings,
+		Recommendations: r.Recommendations,
+		References:      r.References,
+		RawContent:      r.RawContent,
+		CreatedAt:       r.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+// WorkerChatMessageDTO represents a message in a worker NPC chat.
+type WorkerChatMessageDTO struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// WorkerChatResponseDTO is the response from a worker NPC chat.
+type WorkerChatResponseDTO struct {
+	Content string `json:"content"`
 }
 
 type RelationshipDTO struct {

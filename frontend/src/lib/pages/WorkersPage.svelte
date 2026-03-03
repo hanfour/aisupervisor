@@ -4,6 +4,7 @@
   import WorkerCard from '../components/WorkerCard.svelte'
   import WorkerDetailDrawer from '../components/WorkerDetailDrawer.svelte'
   import { addError } from '../stores/errors.js'
+  import { t } from '../stores/i18n.js'
 
   let showHire = false
   let newName = ''
@@ -89,9 +90,9 @@
 
 <div class="workers-page">
   <section class="nes-container with-title is-dark">
-    <p class="title">Workers</p>
+    <p class="title">{$t('workers.title')}</p>
     <div class="toolbar">
-      <button class="nes-btn is-success" on:click={() => showHire = true}>+ Hire Worker</button>
+      <button class="nes-btn is-success" on:click={() => showHire = true}>{$t('workers.hire')}</button>
     </div>
 
     <div class="hierarchy-grid">
@@ -111,18 +112,18 @@
                 {/if}
                 {#if w.parentName}
                   <div class="parent-link">
-                    <span class="parent-arrow">&uarr;</span> Manager: {w.parentName}
+                    <span class="parent-arrow">&uarr;</span> {$t('workers.manager')} {w.parentName}
                   </div>
                 {/if}
                 {#if tier !== 'consultant'}
                   <button class="nes-btn is-warning promote-btn" on:click|stopPropagation={() => handlePromote(w)}>
-                    Promote
+                    {$t('workers.promote')}
                   </button>
                 {/if}
               </div>
             {/each}
             {#if tierWorkers.length === 0}
-              <p class="empty-msg">No {tier}s</p>
+              <p class="empty-msg">{$t('workers.noWorkers')}</p>
             {/if}
           </div>
         </div>
@@ -141,15 +142,15 @@
   {#if showHire}
     <div class="dialog-overlay" on:click={() => showHire = false} on:keydown={(e) => e.key === 'Escape' && (showHire = false)} role="presentation">
       <div class="nes-dialog is-dark is-rounded" on:click|stopPropagation role="presentation">
-        <p class="title">Hire Worker</p>
+        <p class="title">{$t('workers.hireTitle')}</p>
         <form on:submit|preventDefault={handleHire}>
           <div class="nes-field">
-            <label for="w-name">Name</label>
+            <label for="w-name">{$t('workers.name')}</label>
             <input type="text" id="w-name" class="nes-input is-dark" bind:value={newName} placeholder="e.g. Alice" />
           </div>
 
           <div class="nes-field">
-            <label>Avatar</label>
+            <label>{$t('workers.avatar')}</label>
             <div class="avatar-grid">
               {#each avatarOptions as opt}
                 <label class="avatar-option" class:selected={newAvatar === opt.id}>
@@ -161,7 +162,7 @@
           </div>
 
           <div class="nes-field">
-            <label for="w-tier">Tier</label>
+            <label for="w-tier">{$t('workers.tier')}</label>
             <div class="nes-select is-dark">
               <select id="w-tier" bind:value={newTier}>
                 {#each tierOptions as opt}
@@ -172,10 +173,10 @@
           </div>
 
           <div class="nes-field">
-            <label for="w-parent">Parent (Manager)</label>
+            <label for="w-parent">{$t('workers.parent')}</label>
             <div class="nes-select is-dark">
               <select id="w-parent" bind:value={newParentID}>
-                <option value="">None</option>
+                <option value="">{$t('workers.none')}</option>
                 {#each managers as m}
                   <option value={m.id}>{m.name} ({m.tier})</option>
                 {/each}
@@ -184,7 +185,7 @@
           </div>
 
           <div class="nes-field">
-            <label for="w-cli">CLI Tool</label>
+            <label for="w-cli">{$t('workers.cliTool')}</label>
             <div class="nes-select is-dark">
               <select id="w-cli" bind:value={newCliTool}>
                 {#each cliToolOptions as opt}
@@ -195,10 +196,10 @@
           </div>
 
           <div class="nes-field">
-            <label for="w-skill">Skill Profile</label>
+            <label for="w-skill">{$t('workers.skillProfile')}</label>
             <div class="nes-select is-dark">
               <select id="w-skill" bind:value={newSkillProfile}>
-                <option value="">None</option>
+                <option value="">{$t('workers.none')}</option>
                 {#each $skillProfiles as sp}
                   <option value={sp.id}>{sp.icon} {sp.name}</option>
                 {/each}
@@ -213,13 +214,13 @@
           </div>
 
           <div class="nes-field">
-            <label for="w-backend">Backend ID (optional)</label>
+            <label for="w-backend">{$t('workers.backendId')}</label>
             <input type="text" id="w-backend" class="nes-input is-dark" bind:value={newBackendID} placeholder="e.g. gpt-4" />
           </div>
 
           <div class="dialog-actions">
-            <button type="submit" class="nes-btn is-success">Hire</button>
-            <button type="button" class="nes-btn" on:click={() => showHire = false}>Cancel</button>
+            <button type="submit" class="nes-btn is-success">{$t('workers.hireBtn')}</button>
+            <button type="button" class="nes-btn" on:click={() => showHire = false}>{$t('common.cancel')}</button>
           </div>
         </form>
       </div>

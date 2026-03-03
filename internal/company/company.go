@@ -2,7 +2,9 @@ package company
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -43,6 +45,8 @@ type Manager struct {
 	finetuneCfg    training.FinetuneConfig
 	maxWorkers     map[worker.WorkerTier]int // per-tier worker limits (0 = unlimited)
 	shutdownCancel context.CancelFunc
+	language       string // "en" or "zh-TW"
+	langMu         sync.RWMutex
 }
 
 type workersFile struct {
@@ -203,7 +207,7 @@ func (m *Manager) CreateProject(name, description, repoPath, baseBranch string, 
 	m.emit(Event{
 		Type:      EventProjectCreated,
 		ProjectID: p.ID,
-		Message:   fmt.Sprintf("Project created: %s", name),
+		Message:   m.msgf("Project created: %s", "專案已建立：%s", name),
 	})
 	return p, nil
 }
@@ -232,7 +236,7 @@ func (m *Manager) DeleteProject(projectID string) error {
 	m.emit(Event{
 		Type:      EventProjectDeleted,
 		ProjectID: projectID,
-		Message:   fmt.Sprintf("Project deleted: %s", name),
+		Message:   m.msgf("Project deleted: %s", "專案已刪除：%s", name),
 	})
 	return nil
 }
@@ -247,10 +251,15 @@ func (m *Manager) GetProject(id string) (*project.Project, bool) {
 
 // --- Task operations ---
 
-func (m *Manager) AddTask(projectID, title, description, prompt string, dependsOn []string, priority int, milestone string) (*project.Task, error) {
+func (m *Manager) AddTask(projectID, title, description, prompt string, dependsOn []string, priority int, milestone string, taskType string) (*project.Task, error) {
 	p, ok := m.projectStore.GetProject(projectID)
 	if !ok {
 		return nil, fmt.Errorf("project %q not found", projectID)
+	}
+
+	tt := project.TaskType(taskType)
+	if tt != project.TaskTypeResearch {
+		tt = project.TaskTypeCode
 	}
 
 	slug := slugify(title)
@@ -259,10 +268,15 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 		Title:       title,
 		Description: description,
 		Prompt:      prompt,
+		Type:        tt,
 		Priority:    priority,
 		DependsOn:   dependsOn,
 		Milestone:   milestone,
-		BranchName:  gitops.BranchName(p.ID, "", slug), // ID set after save
+	}
+
+	// Research tasks don't need a git branch
+	if tt != project.TaskTypeResearch {
+		t.BranchName = gitops.BranchName(p.ID, "", slug)
 	}
 
 	// Determine initial status based on dependencies
@@ -274,17 +288,19 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 		return nil, err
 	}
 
-	// Fix branch name with actual task ID
-	t.BranchName = gitops.BranchName(p.ID, t.ID, slug)
-	if err := m.projectStore.SaveTask(t); err != nil {
-		return nil, err
+	// Fix branch name with actual task ID (only for code tasks)
+	if tt != project.TaskTypeResearch {
+		t.BranchName = gitops.BranchName(p.ID, t.ID, slug)
+		if err := m.projectStore.SaveTask(t); err != nil {
+			return nil, err
+		}
 	}
 
 	m.emit(Event{
 		Type:      EventTaskCreated,
 		ProjectID: projectID,
 		TaskID:    t.ID,
-		Message:   fmt.Sprintf("Task created: %s", title),
+		Message:   m.msgf("Task created: %s", "任務已建立：%s", title),
 	})
 	return t, nil
 }
@@ -346,7 +362,7 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 				m.emit(Event{
 					Type:     EventNarrativeGenerated,
 					WorkerID: workerID,
-					Message:  fmt.Sprintf("Narrative generated for %s", workerName),
+					Message:  m.msgf("Narrative generated for %s", "已為 %s 生成性格描述", workerName),
 				})
 			}
 		}(w.ID, w.Name, profile.Traits)
@@ -359,7 +375,7 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 	m.emit(Event{
 		Type:     EventWorkerSpawned,
 		WorkerID: w.ID,
-		Message:  fmt.Sprintf("Worker hired: %s (tier: %s)", name, w.EffectiveTier()),
+		Message:  m.msgf("Worker hired: %s (tier: %s)", "已雇用員工：%s（等級：%s）", name, w.EffectiveTier()),
 	})
 	return w, nil
 }
@@ -457,7 +473,7 @@ func (m *Manager) DeleteWorker(workerID string) error {
 	m.emit(Event{
 		Type:     EventWorkerSpawned,
 		WorkerID: workerID,
-		Message:  fmt.Sprintf("Worker removed: %s", w.Name),
+		Message:  m.msgf("Worker removed: %s", "已移除員工：%s", w.Name),
 	})
 	return nil
 }
@@ -552,14 +568,14 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 		ProjectID: p.ID,
 		TaskID:    taskID,
 		WorkerID:  workerID,
-		Message:   fmt.Sprintf("Task %q assigned to %s", t.Title, w.Name),
+		Message:   m.msgf("Task %q assigned to %s", "任務 %q 已分配給 %s", t.Title, w.Name),
 	})
 
 	m.emit(Event{
 		Type:      EventBranchCreated,
 		ProjectID: p.ID,
 		TaskID:    taskID,
-		Message:   fmt.Sprintf("Branch created: %s", t.BranchName),
+		Message:   m.msgf("Branch created: %s", "分支已建立：%s", t.BranchName),
 	})
 
 	// Start completion monitoring in background
@@ -595,6 +611,11 @@ func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *proj
 func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *project.Project, result worker.CompletionResult) {
 	m.mu.Lock()
 
+	if result.Success && t.Type == project.TaskTypeResearch {
+		m.handleResearchCompletion(w, t, p)
+		return
+	}
+
 	if result.Success {
 		// Check if this is a review task completed by a manager
 		if t.ParentTaskID != "" && w.EffectiveTier() == worker.TierManager {
@@ -622,7 +643,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			m.emit(Event{
 				Type:     EventWorkerIdle,
 				WorkerID: w.ID,
-				Message:  fmt.Sprintf("Manager %s is idle", w.Name),
+				Message:  m.msgf("Manager %s is idle", "管理員 %s 已閒置", w.Name),
 			})
 
 			// Try to drain review queue and engage idle managers
@@ -649,7 +670,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 				ProjectID: p.ID,
 				TaskID:    t.ID,
 				WorkerID:  w.ID,
-				Message:   fmt.Sprintf("Task %q completed by engineer, routing to review", t.Title),
+				Message:   m.msgf("Task %q completed by engineer, routing to review", "任務 %q 已由工程師完成，轉至審查", t.Title),
 			})
 
 			// Reset engineer to idle
@@ -661,7 +682,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			m.emit(Event{
 				Type:     EventWorkerIdle,
 				WorkerID: w.ID,
-				Message:  fmt.Sprintf("Worker %s is idle", w.Name),
+				Message:  m.msgf("Worker %s is idle", "員工 %s 已閒置", w.Name),
 			})
 
 			// Start manager review
@@ -694,7 +715,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			ProjectID: p.ID,
 			TaskID:    t.ID,
 			WorkerID:  w.ID,
-			Message:   fmt.Sprintf("Task %q completed (reason: %s)", t.Title, result.Reason),
+			Message:   m.msgf("Task %q completed (reason: %s)", "任務 %q 已完成（原因：%s）", t.Title, result.Reason),
 		})
 	} else {
 		m.projectStore.UpdateTaskStatus(t.ID, project.TaskFailed)
@@ -714,7 +735,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			ProjectID: p.ID,
 			TaskID:    t.ID,
 			WorkerID:  w.ID,
-			Message:   fmt.Sprintf("Task %q failed", t.Title),
+			Message:   m.msgf("Task %q failed", "任務 %q 失敗", t.Title),
 		})
 	}
 
@@ -726,7 +747,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	m.emit(Event{
 		Type:     EventWorkerIdle,
 		WorkerID: w.ID,
-		Message:  fmt.Sprintf("Worker %s is idle", w.Name),
+		Message:  m.msgf("Worker %s is idle", "員工 %s 已閒置", w.Name),
 	})
 
 	// Promote newly unblocked tasks
@@ -736,7 +757,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			Type:      EventTaskCreated,
 			ProjectID: p.ID,
 			TaskID:    pt.ID,
-			Message:   fmt.Sprintf("Task %q is now ready (dependencies resolved)", pt.Title),
+			Message:   m.msgf("Task %q is now ready (dependencies resolved)", "任務 %q 已就緒（依賴已解決）", pt.Title),
 		})
 	}
 
@@ -756,6 +777,160 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	}
 }
 
+// handleResearchCompletion processes a completed research task: extracts the JSON
+// report from the tmux pane output, saves it, and marks the task as done.
+// Must be called with m.mu held. Releases m.mu before returning (does not re-acquire).
+func (m *Manager) handleResearchCompletion(w *worker.Worker, t *project.Task, p *project.Project) {
+	// Try to extract report from tmux pane content
+	var rawOutput string
+	if m.tmuxClient != nil && w.TmuxSession != "" {
+		content, err := m.tmuxClient.CapturePane(w.TmuxSession, 0, 0, 500)
+		if err == nil {
+			rawOutput = content
+		}
+	}
+
+	// Parse JSON report from output
+	report := parseResearchReport(rawOutput)
+	report.TaskID = t.ID
+	report.ProjectID = p.ID
+	report.WorkerID = w.ID
+
+	// Save report
+	if err := m.projectStore.SaveReport(report); err != nil {
+		log.Printf("failed to save research report for task %s: %v", t.ID, err)
+	}
+
+	// Mark task as done (research tasks skip review)
+	if err := m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone); err != nil {
+		log.Printf("failed to update task %s status to done: %v", t.ID, err)
+	}
+
+	m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
+		personality.ApplyEvent(prof, personality.EventTaskCompleted)
+		personality.UpdateAutoMood(prof)
+	})
+	m.emit(Event{
+		Type:     EventMoodChanged,
+		WorkerID: w.ID,
+		Message:  fmt.Sprintf("Mood changed for %s", w.Name),
+	})
+
+	m.emit(Event{
+		Type:      EventResearchCompleted,
+		ProjectID: p.ID,
+		TaskID:    t.ID,
+		WorkerID:  w.ID,
+		Message:   m.msgf("%s completed research task %q — check the report.", "%s 完成了研究任務「%s」，請查看報告。", w.Name, t.Title),
+	})
+
+	// Reset worker to idle
+	w.Status = worker.WorkerIdle
+	w.CurrentTaskID = ""
+	m.saveWorkers()
+
+	m.emit(Event{
+		Type:     EventWorkerIdle,
+		WorkerID: w.ID,
+		Message:  m.msgf("Worker %s is idle", "員工 %s 已閒置", w.Name),
+	})
+
+	// Promote newly unblocked tasks
+	promoted, _ := m.projectStore.PromoteReady(p.ID)
+	for _, pt := range promoted {
+		m.emit(Event{
+			Type:      EventTaskCreated,
+			ProjectID: p.ID,
+			TaskID:    pt.ID,
+			Message:   m.msgf("Task %q is now ready (dependencies resolved)", "任務 %q 已就緒（依賴已解決）", pt.Title),
+		})
+	}
+
+	shouldAutoSchedule := m.autoSchedule
+	workerID := w.ID
+	projectID := p.ID
+
+	m.mu.Unlock()
+
+	if shouldAutoSchedule {
+		go m.tryAutoAssign(workerID)
+	}
+	if len(promoted) > 0 {
+		go m.engageIdleManagers(context.Background(), projectID)
+	}
+}
+
+// parseResearchReport attempts to extract a structured research report from raw output.
+func parseResearchReport(raw string) *project.ResearchReport {
+	report := &project.ResearchReport{
+		RawContent: raw,
+	}
+
+	// Try to find JSON in the output
+	type reportJSON struct {
+		Summary         string   `json:"summary"`
+		KeyFindings     []string `json:"keyFindings"`
+		Recommendations []string `json:"recommendations"`
+		References      []string `json:"references"`
+		RawContent      string   `json:"rawContent"`
+	}
+
+	jsonStr := extractJSON(raw)
+	if jsonStr != "" {
+		var parsed reportJSON
+		if err := json.Unmarshal([]byte(jsonStr), &parsed); err == nil {
+			report.Summary = parsed.Summary
+			report.KeyFindings = parsed.KeyFindings
+			report.Recommendations = parsed.Recommendations
+			report.References = parsed.References
+			if parsed.RawContent != "" {
+				report.RawContent = parsed.RawContent
+			}
+		}
+	}
+
+	return report
+}
+
+// extractJSON finds the first complete JSON object in a string.
+func extractJSON(text string) string {
+	start := strings.Index(text, "{")
+	if start == -1 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escape := false
+	for i := start; i < len(text); i++ {
+		if escape {
+			escape = false
+			continue
+		}
+		ch := text[i]
+		if ch == '\\' && inString {
+			escape = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch ch {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return text[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
 // tryAutoAssign picks the highest-priority ready task and assigns it to the given idle worker.
 func (m *Manager) tryAutoAssign(workerID string) {
 	candidates := m.projectStore.ReadyTasksByPriority()
@@ -770,7 +945,7 @@ func (m *Manager) tryAutoAssign(workerID string) {
 			Type:     EventTaskFailed,
 			TaskID:   task.ID,
 			WorkerID: workerID,
-			Message:  fmt.Sprintf("Auto-assign failed for task %q to worker %s: %v", task.Title, workerID, err),
+			Message:  m.msgf("Auto-assign failed for task %q to worker %s: %v", "自動分配任務 %q 給員工 %s 失敗：%v", task.Title, workerID, err),
 		})
 		return
 	}
@@ -779,7 +954,7 @@ func (m *Manager) tryAutoAssign(workerID string) {
 		Type:     EventAutoAssigned,
 		TaskID:   task.ID,
 		WorkerID: workerID,
-		Message:  fmt.Sprintf("Auto-assigned task %q to worker %s", task.Title, workerID),
+		Message:  m.msgf("Auto-assigned task %q to worker %s", "已自動分配任務 %q 給員工 %s", task.Title, workerID),
 	})
 }
 
@@ -801,7 +976,7 @@ func (m *Manager) UpdateTaskStatusDirect(taskID string, status string) error {
 		Type:      EventTaskCompleted,
 		ProjectID: t.ProjectID,
 		TaskID:    taskID,
-		Message:   fmt.Sprintf("Task %q status changed to %s", t.Title, status),
+		Message:   m.msgf("Task %q status changed to %s", "任務 %q 狀態已變更為 %s", t.Title, status),
 	})
 
 	return nil
@@ -825,7 +1000,7 @@ func (m *Manager) CompleteTask(taskID string) error {
 		Type:      EventTaskCompleted,
 		ProjectID: t.ProjectID,
 		TaskID:    taskID,
-		Message:   fmt.Sprintf("Task %q marked as done", t.Title),
+		Message:   m.msgf("Task %q marked as done", "任務 %q 已標記為完成", t.Title),
 	})
 
 	// Promote newly unblocked tasks
@@ -835,7 +1010,7 @@ func (m *Manager) CompleteTask(taskID string) error {
 			Type:      EventTaskCreated,
 			ProjectID: t.ProjectID,
 			TaskID:    pt.ID,
-			Message:   fmt.Sprintf("Task %q is now ready (dependencies resolved)", pt.Title),
+			Message:   m.msgf("Task %q is now ready (dependencies resolved)", "任務 %q 已就緒（依賴已解決）", pt.Title),
 		})
 	}
 
@@ -1010,6 +1185,41 @@ func (m *Manager) LoadMaxWorkers(tiers []config.WorkerTierConfig) {
 	}
 }
 
+// SetLanguage sets the prompt language for the company system.
+func (m *Manager) SetLanguage(lang string) {
+	m.langMu.Lock()
+	defer m.langMu.Unlock()
+	m.language = lang
+}
+
+// GetLanguage returns the current prompt language, defaulting to "zh-TW".
+// Uses a separate lock (langMu) to avoid deadlocks when called while m.mu is held.
+func (m *Manager) GetLanguage() string {
+	m.langMu.RLock()
+	defer m.langMu.RUnlock()
+	if m.language == "" {
+		return "zh-TW"
+	}
+	return m.language
+}
+
+// msg returns en or zh string based on current language setting.
+// Safe to call without holding m.mu (uses GetLanguage which acquires its own lock).
+func (m *Manager) msg(en, zh string) string {
+	if m.GetLanguage() == "en" {
+		return en
+	}
+	return zh
+}
+
+// msgf returns a formatted bilingual string.
+func (m *Manager) msgf(enFmt, zhFmt string, args ...interface{}) string {
+	if m.GetLanguage() == "en" {
+		return fmt.Sprintf(enFmt, args...)
+	}
+	return fmt.Sprintf(zhFmt, args...)
+}
+
 // PromoteWorker upgrades a worker's tier (e.g. engineer → manager).
 func (m *Manager) PromoteWorker(workerID string, newTier worker.WorkerTier) error {
 	m.mu.Lock()
@@ -1029,7 +1239,7 @@ func (m *Manager) PromoteWorker(workerID string, newTier worker.WorkerTier) erro
 	m.emit(Event{
 		Type:     EventWorkerPromoted,
 		WorkerID: workerID,
-		Message:  fmt.Sprintf("Worker %s promoted from %s to %s", w.Name, oldTier, newTier),
+		Message:  m.msgf("Worker %s promoted from %s to %s", "員工 %s 已從 %s 升遷至 %s", w.Name, oldTier, newTier),
 	})
 	return nil
 }

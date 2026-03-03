@@ -1,6 +1,7 @@
 <script>
   import { createProject } from '../stores/projects.js'
   import { addError } from '../stores/errors.js'
+  import { t } from '../stores/i18n.js'
 
   export let visible = false
   export let onClose = () => {}
@@ -31,31 +32,31 @@
 {#if visible}
   <div class="dialog-overlay" on:click={onClose} on:keydown={(e) => e.key === 'Escape' && onClose()} role="presentation">
     <div class="nes-dialog is-dark is-rounded" on:click|stopPropagation role="presentation">
-      <p class="title">New Project</p>
+      <p class="title">{$t('projectForm.title')}</p>
       <form on:submit|preventDefault={handleSubmit}>
         <div class="nes-field">
-          <label for="proj-name">Name</label>
+          <label for="proj-name">{$t('projectForm.name')}</label>
           <input type="text" id="proj-name" class="nes-input is-dark" bind:value={name} />
         </div>
         <div class="nes-field">
-          <label for="proj-desc">Description</label>
+          <label for="proj-desc">{$t('projectForm.description')}</label>
           <textarea id="proj-desc" class="nes-textarea is-dark" bind:value={description} rows="2"></textarea>
         </div>
         <div class="nes-field">
-          <label for="proj-repo">Repo Path</label>
+          <label for="proj-repo">{$t('projectForm.repoPath')}</label>
           <input type="text" id="proj-repo" class="nes-input is-dark" bind:value={repoPath} placeholder="/path/to/repo" />
         </div>
         <div class="nes-field">
-          <label for="proj-branch">Base Branch</label>
+          <label for="proj-branch">{$t('projectForm.baseBranch')}</label>
           <input type="text" id="proj-branch" class="nes-input is-dark" bind:value={baseBranch} />
         </div>
         <div class="nes-field">
-          <label for="proj-goals">Goals (one per line)</label>
+          <label for="proj-goals">{$t('projectForm.goalsLabel')}</label>
           <textarea id="proj-goals" class="nes-textarea is-dark" bind:value={goalsText} rows="3"></textarea>
         </div>
         <div class="dialog-actions">
-          <button type="submit" class="nes-btn is-primary">Create</button>
-          <button type="button" class="nes-btn" on:click={onClose}>Cancel</button>
+          <button type="submit" class="nes-btn is-primary">{$t('projectForm.create')}</button>
+          <button type="button" class="nes-btn" on:click={onClose}>{$t('common.cancel')}</button>
         </div>
       </form>
     </div>

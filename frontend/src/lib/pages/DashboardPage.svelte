@@ -8,6 +8,7 @@
   import TrainingStatsPanel from '../components/TrainingStatsPanel.svelte'
   import { events } from '../stores/events.js'
   import { companyStats, loadCompanyStats, loadReviewQueue, loadTrainingStats } from '../stores/company.js'
+  import { t } from '../stores/i18n.js'
 
   export let onNavigate = () => {}
 
@@ -47,43 +48,43 @@
 
 <div class="dashboard">
   <section class="nes-container with-title is-dark">
-    <p class="title">Company</p>
+    <p class="title">{$t('dashboard.company')}</p>
     <div class="stat-cards">
       <div class="nes-container is-rounded stat-card">
         <span class="stat-value">{$companyStats.projects}</span>
-        <span class="stat-label">Projects</span>
+        <span class="stat-label">{$t('dashboard.projects')}</span>
       </div>
       <div class="nes-container is-rounded stat-card">
         <span class="stat-value">{$companyStats.inProgress}</span>
-        <span class="stat-label">In Progress</span>
+        <span class="stat-label">{$t('dashboard.inProgress')}</span>
       </div>
       <div class="nes-container is-rounded stat-card">
         <span class="stat-value">{$companyStats.idleWorkers}</span>
-        <span class="stat-label">Idle Workers</span>
+        <span class="stat-label">{$t('dashboard.idleWorkers')}</span>
       </div>
       <div class="nes-container is-rounded stat-card">
         <span class="stat-value">{$companyStats.reviewsPending}</span>
-        <span class="stat-label">Reviews Pending</span>
+        <span class="stat-label">{$t('dashboard.reviewsPending')}</span>
       </div>
       <div class="nes-container is-rounded stat-card">
         <span class="stat-value">{$companyStats.trainingPairs}</span>
-        <span class="stat-label">Training Pairs</span>
+        <span class="stat-label">{$t('dashboard.trainingPairs')}</span>
       </div>
     </div>
   </section>
 
   <section class="nes-container with-title is-dark">
-    <p class="title">Review Queue</p>
+    <p class="title">{$t('dashboard.reviewQueue')}</p>
     <ReviewQueuePanel />
   </section>
 
   <section class="nes-container with-title is-dark">
-    <p class="title">Training Stats</p>
+    <p class="title">{$t('dashboard.trainingStats')}</p>
     <TrainingStatsPanel />
   </section>
 
   <section class="nes-container with-title is-dark">
-    <p class="title">Sessions</p>
+    <p class="title">{$t('dashboard.sessions')}</p>
     <div class="sessions-grid">
       {#each $sessions as session}
         <TerminalCard
@@ -92,13 +93,13 @@
         />
       {/each}
       {#if $sessions.length === 0}
-        <p class="empty-msg">No sessions monitored</p>
+        <p class="empty-msg">{$t('dashboard.noSessions')}</p>
       {/if}
     </div>
   </section>
 
   <section class="nes-container with-title is-dark events-section">
-    <p class="title">Events</p>
+    <p class="title">{$t('dashboard.events')}</p>
     <EventLog />
   </section>
 

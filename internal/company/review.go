@@ -130,11 +130,11 @@ func (rp *ReviewPipeline) DrainQueue(ctx context.Context) {
 
 func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, managerWorker *worker.Worker, t *project.Task, p *project.Project) error {
 	// Create a review sub-task
-	reviewPrompt := buildReviewPrompt(t, p)
+	reviewPrompt := rp.buildReviewPrompt(t, p)
 	reviewTask := &project.Task{
 		ProjectID:    p.ID,
-		Title:        fmt.Sprintf("Review: %s", t.Title),
-		Description:  fmt.Sprintf("Code review for task %s", t.ID),
+		Title:        rp.mgr.msgf("Review: %s", "審查：%s", t.Title),
+		Description:  rp.mgr.msgf("Code review for task %s", "程式碼審查任務 %s", t.ID),
 		Prompt:       reviewPrompt,
 		Status:       project.TaskReady,
 		Priority:     t.Priority,
@@ -159,7 +159,7 @@ func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, 
 		ProjectID: p.ID,
 		TaskID:    t.ID,
 		WorkerID:  managerWorker.ID,
-		Message:   fmt.Sprintf("Manager %s reviewing task %q", managerWorker.Name, t.Title),
+		Message:   rp.mgr.msgf("Manager %s reviewing task %q", "管理員 %s 正在審查任務 %q", managerWorker.Name, t.Title),
 	})
 
 	// Assign review task to manager
@@ -202,7 +202,7 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 		rp.mgr.emit(Event{
 			Type:     EventMoodChanged,
 			WorkerID: engineerID,
-			Message:  fmt.Sprintf("Mood changed for %s after review", engineerID),
+			Message:  rp.mgr.msgf("Mood changed for %s after review", "%s 審查後心情變化", engineerID),
 		})
 	}
 
@@ -213,7 +213,7 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			ProjectID: p.ID,
 			TaskID:    originalTask.ID,
 			WorkerID:  managerWorker.ID,
-			Message:   fmt.Sprintf("Task %q approved by %s", originalTask.Title, managerWorker.Name),
+			Message:   rp.mgr.msgf("Task %q approved by %s", "任務 %q 已由 %s 核准", originalTask.Title, managerWorker.Name),
 		})
 
 		// Promote newly unblocked tasks
@@ -223,7 +223,7 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 				Type:      EventTaskCreated,
 				ProjectID: p.ID,
 				TaskID:    pt.ID,
-				Message:   fmt.Sprintf("Task %q is now ready (dependencies resolved)", pt.Title),
+				Message:   rp.mgr.msgf("Task %q is now ready (dependencies resolved)", "任務 %q 已就緒（依賴已解決）", pt.Title),
 			})
 		}
 
@@ -238,7 +238,7 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			ProjectID: p.ID,
 			TaskID:    originalTask.ID,
 			WorkerID:  managerWorker.ID,
-			Message:   fmt.Sprintf("Task %q rejected by %s", originalTask.Title, managerWorker.Name),
+			Message:   rp.mgr.msgf("Task %q rejected by %s", "任務 %q 已由 %s 退回", originalTask.Title, managerWorker.Name),
 		})
 
 		// Re-assign to original engineer with feedback
@@ -246,11 +246,15 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			Type:      EventTaskRevision,
 			ProjectID: p.ID,
 			TaskID:    originalTask.ID,
-			Message:   fmt.Sprintf("Task %q sent back for revision", originalTask.Title),
+			Message:   rp.mgr.msgf("Task %q sent back for revision", "任務 %q 已退回修改", originalTask.Title),
 		})
 
 		// Update prompt with feedback and re-queue
-		originalTask.Prompt = fmt.Sprintf("%s\n\n--- Review Feedback ---\n%s\n\nPlease address the above feedback and resubmit.", originalTask.Prompt, output)
+		if rp.mgr.GetLanguage() == "en" {
+			originalTask.Prompt = fmt.Sprintf("%s\n\n--- Review Feedback ---\n%s\n\nPlease address the above feedback and resubmit.", originalTask.Prompt, output)
+		} else {
+			originalTask.Prompt = fmt.Sprintf("%s\n\n--- 審查回饋 ---\n%s\n\n請針對以上回饋進行修改後重新提交。", originalTask.Prompt, output)
+		}
 		originalTask.Status = project.TaskReady
 		rp.mgr.projectStore.SaveTask(originalTask)
 
@@ -332,7 +336,7 @@ func (rp *ReviewPipeline) captureTrainingData(originalTask *project.Task, manage
 				Type:      EventTrainingCaptured,
 				ProjectID: p.ID,
 				TaskID:    originalTask.ID,
-				Message:   fmt.Sprintf("Training data captured for task %q (verdict: %s)", originalTask.Title, verdict),
+				Message:   rp.mgr.msgf("Training data captured for task %q (verdict: %s)", "已擷取任務 %q 的訓練資料（結果：%s）", originalTask.Title, verdict),
 			})
 
 			// Check auto-trigger for fine-tuning
@@ -341,7 +345,7 @@ func (rp *ReviewPipeline) captureTrainingData(originalTask *project.Task, manage
 					if job, err := rp.mgr.finetuneRunner.Launch(rp.mgr.finetuneCfg); err == nil {
 						rp.mgr.emit(Event{
 							Type:    EventFinetuneStarted,
-							Message: fmt.Sprintf("Auto-triggered fine-tune job %s (%d pairs threshold)", job.ID, rp.mgr.finetuneCfg.AutoTrigger),
+							Message: rp.mgr.msgf("Auto-triggered fine-tune job %s (%d pairs threshold)", "已自動觸發微調任務 %s（%d 對閾值）", job.ID, rp.mgr.finetuneCfg.AutoTrigger),
 						})
 					}
 				}
@@ -361,21 +365,37 @@ func (rp *ReviewPipeline) captureManagerOutput(w *worker.Worker) string {
 	return content
 }
 
-func buildReviewPrompt(t *project.Task, p *project.Project) string {
+func (rp *ReviewPipeline) buildReviewPrompt(t *project.Task, p *project.Project) string {
 	var sb strings.Builder
-	sb.WriteString("IMPORTANT: Start reviewing IMMEDIATELY. No planning or preparation needed.\n\n")
-	sb.WriteString(fmt.Sprintf("Review code on branch %s.\n\n", t.BranchName))
-	sb.WriteString(fmt.Sprintf("Task: %s\n", t.Title))
-	if t.Description != "" {
-		sb.WriteString(fmt.Sprintf("Description: %s\n", t.Description))
+	if rp.mgr.GetLanguage() == "en" {
+		sb.WriteString("IMPORTANT: Start reviewing IMMEDIATELY. No planning or preparation needed.\n\n")
+		sb.WriteString(fmt.Sprintf("Review code on branch %s.\n\n", t.BranchName))
+		sb.WriteString(fmt.Sprintf("Task: %s\n", t.Title))
+		if t.Description != "" {
+			sb.WriteString(fmt.Sprintf("Description: %s\n", t.Description))
+		}
+		sb.WriteString("\nSteps:\n")
+		sb.WriteString(fmt.Sprintf("1. Run `git log main..%s --oneline` to see commits\n", t.BranchName))
+		sb.WriteString(fmt.Sprintf("2. Run `git diff main...%s` to review all changes\n", t.BranchName))
+		sb.WriteString("3. Check code quality, correctness, and test coverage\n")
+		sb.WriteString("4. End your response with EXACTLY one of:\n")
+		sb.WriteString("   APPROVED\n")
+		sb.WriteString("   REJECTED: <specific reason and required changes>\n")
+	} else {
+		sb.WriteString("重要：請立即開始審查。不需要規劃或準備。\n\n")
+		sb.WriteString(fmt.Sprintf("審查分支 %s 上的程式碼。\n\n", t.BranchName))
+		sb.WriteString(fmt.Sprintf("任務：%s\n", t.Title))
+		if t.Description != "" {
+			sb.WriteString(fmt.Sprintf("描述：%s\n", t.Description))
+		}
+		sb.WriteString("\n步驟：\n")
+		sb.WriteString(fmt.Sprintf("1. 執行 `git log main..%s --oneline` 查看提交紀錄\n", t.BranchName))
+		sb.WriteString(fmt.Sprintf("2. 執行 `git diff main...%s` 審查所有變更\n", t.BranchName))
+		sb.WriteString("3. 檢查程式碼品質、正確性和測試覆蓋率\n")
+		sb.WriteString("4. 在回覆最後務必使用以下其中一個結論：\n")
+		sb.WriteString("   APPROVED\n")
+		sb.WriteString("   REJECTED: <具體原因和需要修改的內容>\n")
 	}
-	sb.WriteString("\nSteps:\n")
-	sb.WriteString(fmt.Sprintf("1. Run `git log main..%s --oneline` to see commits\n", t.BranchName))
-	sb.WriteString(fmt.Sprintf("2. Run `git diff main...%s` to review all changes\n", t.BranchName))
-	sb.WriteString("3. Check code quality, correctness, and test coverage\n")
-	sb.WriteString("4. End your response with EXACTLY one of:\n")
-	sb.WriteString("   APPROVED\n")
-	sb.WriteString("   REJECTED: <specific reason and required changes>\n")
 	return sb.String()
 }
 

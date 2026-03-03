@@ -20,6 +20,7 @@ type CompanyApp struct {
 	tmuxClient    tmux.TmuxClient
 	trainingDir   string
 	skillProfiles []config.SkillProfile
+	spawner       *worker.Spawner
 }
 
 func NewCompanyApp(company *company.Manager, tmuxClient tmux.TmuxClient) *CompanyApp {
@@ -34,6 +35,31 @@ func (c *CompanyApp) SetTrainingDir(dir string) {
 // SetSkillProfiles sets the available skill profiles for listing.
 func (c *CompanyApp) SetSkillProfiles(profiles []config.SkillProfile) {
 	c.skillProfiles = profiles
+}
+
+// SetSpawner sets the spawner reference for language propagation.
+func (c *CompanyApp) SetSpawner(s *worker.Spawner) {
+	c.spawner = s
+}
+
+// SetLanguage updates the prompt language and persists it to the config file.
+func (c *CompanyApp) SetLanguage(lang string) error {
+	c.company.SetLanguage(lang)
+	if c.spawner != nil {
+		c.spawner.SetLanguage(lang)
+	}
+	// Persist to config file
+	cfg, err := config.Load("")
+	if err != nil {
+		return err
+	}
+	cfg.Language = lang
+	return cfg.Save("")
+}
+
+// GetLanguage returns the current prompt language.
+func (c *CompanyApp) GetLanguage() string {
+	return c.company.GetLanguage()
 }
 
 // ListSkillProfiles returns all available skill profiles.
@@ -124,8 +150,8 @@ func (c *CompanyApp) ChatCreateProject(messages []ChatMessageDTO) (*ChatProjectR
 
 // --- Task operations ---
 
-func (c *CompanyApp) CreateTask(projectID, title, description, prompt string, dependsOn []string, priority int, milestone string) (*TaskDTO, error) {
-	t, err := c.company.AddTask(projectID, title, description, prompt, dependsOn, priority, milestone)
+func (c *CompanyApp) CreateTask(projectID, title, description, prompt string, dependsOn []string, priority int, milestone string, taskType string) (*TaskDTO, error) {
+	t, err := c.company.AddTask(projectID, title, description, prompt, dependsOn, priority, milestone, taskType)
 	if err != nil {
 		return nil, err
 	}
@@ -318,6 +344,50 @@ func (c *CompanyApp) GetTrainingStats() (*TrainingStatsDTO, error) {
 		Accepted:     stats.Accepted,
 		Rejected:     stats.Rejected,
 		ApprovalRate: stats.ApprovalRate,
+	}, nil
+}
+
+// --- Research Report operations ---
+
+// GetReport returns the research report for a given task.
+func (c *CompanyApp) GetReport(taskID string) *ResearchReportDTO {
+	r, ok := c.company.ProjectStore().GetReport(taskID)
+	if !ok {
+		return nil
+	}
+	dto := ReportToDTO(r)
+	return &dto
+}
+
+// ListReports returns all research reports for a project.
+func (c *CompanyApp) ListReports(projectID string) []ResearchReportDTO {
+	reports := c.company.ProjectStore().ListReports(projectID)
+	dtos := make([]ResearchReportDTO, len(reports))
+	for i, r := range reports {
+		dtos[i] = ReportToDTO(r)
+	}
+	return dtos
+}
+
+// --- Worker Chat (NPC Dialogue) ---
+
+// ChatWithWorker sends a conversation to a worker's NPC persona and returns its response.
+func (c *CompanyApp) ChatWithWorker(workerID string, messages []WorkerChatMessageDTO) (*WorkerChatResponseDTO, error) {
+	chatMessages := make([]company.WorkerChatMessage, len(messages))
+	for i, m := range messages {
+		chatMessages[i] = company.WorkerChatMessage{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+
+	resp, err := c.company.ChatWithWorker(c.ctx, workerID, chatMessages)
+	if err != nil {
+		return nil, err
+	}
+
+	return &WorkerChatResponseDTO{
+		Content: resp.Content,
 	}, nil
 }
 

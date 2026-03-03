@@ -4,7 +4,9 @@
   import { workers, loadWorkers } from '../stores/workers.js'
   import TaskCard from '../components/TaskCard.svelte'
   import TaskForm from '../components/TaskForm.svelte'
+  import ResearchReportCard from '../components/ResearchReportCard.svelte'
   import { addError } from '../stores/errors.js'
+  import { t } from '../stores/i18n.js'
 
   export let projectId = ''
   export let onNavigate = () => {}
@@ -16,16 +18,19 @@
   let selectedWorker = ''
   let dragTaskId = null
   let dragOverCol = null
+  let viewingReport = null
+  let reportWorkerName = ''
+  let eventCleanup = null
 
-  const columns = [
-    { key: 'backlog', label: 'Backlog', statuses: ['backlog'], dropStatus: 'backlog' },
-    { key: 'ready', label: 'Ready', statuses: ['ready'], dropStatus: 'ready' },
-    { key: 'progress', label: 'In Progress', statuses: ['assigned', 'in_progress'], dropStatus: 'in_progress' },
-    { key: 'review', label: 'Review', statuses: ['review'], dropStatus: 'review' },
-    { key: 'done', label: 'Done', statuses: ['done', 'failed'], dropStatus: 'done' },
+  const columnDefs = [
+    { key: 'backlog', i18nKey: 'board.backlog', statuses: ['backlog'], dropStatus: 'backlog' },
+    { key: 'ready', i18nKey: 'board.ready', statuses: ['ready'], dropStatus: 'ready' },
+    { key: 'progress', i18nKey: 'board.inProgress', statuses: ['assigned', 'in_progress'], dropStatus: 'in_progress' },
+    { key: 'review', i18nKey: 'board.review', statuses: ['review'], dropStatus: 'review' },
+    { key: 'done', i18nKey: 'board.done', statuses: ['done', 'failed'], dropStatus: 'done' },
   ]
 
-  $: tasksByColumn = columns.map(col => ({
+  $: tasksByColumn = columnDefs.map(col => ({
     ...col,
     tasks: ($tasks || []).filter(t => col.statuses.includes(t.status))
   }))
@@ -46,7 +51,7 @@
     }
 
     if (window.runtime) {
-      window.runtime.EventsOn('company:event', async () => {
+      eventCleanup = window.runtime.EventsOn('company:event', async () => {
         if (projectId) {
           await loadTasks(projectId)
           progress = await window.go.gui.CompanyApp.GetProjectProgress(projectId)
@@ -54,6 +59,10 @@
         await loadWorkers()
       })
     }
+  })
+
+  onDestroy(() => {
+    if (eventCleanup) eventCleanup()
   })
 
   function handleAssign(task) {
@@ -79,6 +88,21 @@
       progress = await window.go.gui.CompanyApp.GetProjectProgress(projectId)
     } catch (e) {
       addError('Failed to complete task: ' + e.message)
+    }
+  }
+
+  async function handleViewReport(task) {
+    try {
+      const report = await window.go.gui.CompanyApp.GetReport(task.id)
+      if (report) {
+        const assignee = ($workers || []).find(w => w.id === task.assigneeId)
+        reportWorkerName = assignee ? assignee.name : ''
+        viewingReport = report
+      } else {
+        addError('No report found for this task')
+      }
+    } catch (e) {
+      addError('Failed to load report: ' + e.message)
     }
   }
 
@@ -123,7 +147,7 @@
 <div class="board-page">
   <div class="board-header nes-container is-dark">
     <div class="header-left">
-      <button class="nes-btn btn-sm" on:click={() => onNavigate('projects')}>Back</button>
+      <button class="nes-btn btn-sm" on:click={() => onNavigate('projects')}>&larr;</button>
       <span class="proj-title">{project?.name || 'Project Board'}</span>
     </div>
     {#if progress}
@@ -132,7 +156,7 @@
         <span class="progress-label">{progress.done}/{progress.total} done</span>
       </div>
     {/if}
-    <button class="nes-btn is-primary btn-sm" on:click={() => showTaskForm = true}>+ Task</button>
+    <button class="nes-btn is-primary btn-sm" on:click={() => showTaskForm = true}>{$t('board.addTask')}</button>
   </div>
 
   <div class="kanban">
@@ -146,7 +170,7 @@
         role="list"
       >
         <div class="col-header">
-          <span class="col-title">{col.label}</span>
+          <span class="col-title">{$t(col.i18nKey)}</span>
           <span class="col-count">{col.tasks.length}</span>
         </div>
         <div class="col-body">
@@ -164,6 +188,7 @@
                 workers={$workers}
                 onAssign={handleAssign}
                 onComplete={handleComplete}
+                onViewReport={handleViewReport}
               />
             </div>
           {/each}
@@ -179,12 +204,18 @@
     onClose={() => showTaskForm = false}
   />
 
+  <ResearchReportCard
+    report={viewingReport}
+    workerName={reportWorkerName}
+    onClose={() => viewingReport = null}
+  />
+
   {#if assignDialog}
     <div class="dialog-overlay" on:click={() => assignDialog = null} on:keydown={(e) => e.key === 'Escape' && (assignDialog = null)} role="presentation">
       <div class="nes-dialog is-dark is-rounded" on:click|stopPropagation role="presentation">
         <p class="title">Assign: {assignDialog.title}</p>
         {#if idleWorkers.length === 0}
-          <p class="empty-msg">No idle workers available</p>
+          <p class="empty-msg">{$t('workers.noWorkers')}</p>
         {:else}
           <div class="worker-list">
             {#each idleWorkers as w}
@@ -196,8 +227,8 @@
           </div>
         {/if}
         <div class="dialog-actions">
-          <button class="nes-btn is-primary" disabled={!selectedWorker} on:click={confirmAssign}>Assign</button>
-          <button class="nes-btn" on:click={() => assignDialog = null}>Cancel</button>
+          <button class="nes-btn is-primary" disabled={!selectedWorker} on:click={confirmAssign}>{$t('common.assign')}</button>
+          <button class="nes-btn" on:click={() => assignDialog = null}>{$t('common.cancel')}</button>
         </div>
       </div>
     </div>

@@ -1,4 +1,6 @@
 <script>
+  import { openChat } from '../stores/workerChat.js'
+
   export let worker = {}
   export let onClick = null
 
@@ -39,6 +41,9 @@
       <span class="label">Task:</span> {worker.currentTaskId}
     </div>
   {/if}
+  <button class="nes-btn is-primary chat-btn" on:click|stopPropagation={() => openChat(worker.id, worker.name, worker.avatar)}>
+    Chat
+  </button>
 </div>
 
 <style>
@@ -85,5 +90,11 @@
 
   .label {
     color: var(--text-secondary);
+  }
+
+  .chat-btn {
+    font-size: 7px !important;
+    padding: 2px 8px !important;
+    margin-top: 4px;
   }
 </style>

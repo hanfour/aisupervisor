@@ -9,6 +9,7 @@
   import { playFinished, playError, playAssign, setSoundEnabled, isSoundEnabled } from '../office/sounds.js'
   import CharacterProfilePage from '../components/CharacterProfilePage.svelte'
   import { initPersonalityEvents, loadCharacterProfile } from '../stores/personality.js'
+  import { t } from '../stores/i18n.js'
 
   let canvasEl
   let renderer
@@ -143,9 +144,9 @@
   <!-- Office canvas always in DOM and always rendering -->
   <div class="office-page">
     <div class="office-header">
-      <h2 class="office-title">&#9635; PIXEL OFFICE</h2>
+      <h2 class="office-title">&#9635; {$t('office.title')}</h2>
       <div class="header-controls">
-        <span class="worker-count">{allWorkers.length} workers</span>
+        <span class="worker-count">{allWorkers.length} {$t('office.workers')}</span>
         <button class="nes-btn sound-btn" class:is-primary={soundOn} on:click={toggleSound}>
           {soundOn ? '&#9835; ON' : '&#9835; OFF'}
         </button>
@@ -163,7 +164,7 @@
 
     {#if overflowWorkers.length > 0}
       <div class="nes-container is-dark overflow-list">
-        <p class="overflow-title">Workers without desks ({overflowWorkers.length})</p>
+        <p class="overflow-title">{$t('office.overflow')} ({overflowWorkers.length})</p>
         <div class="overflow-grid">
           {#each overflowWorkers as w}
             <button class="nes-btn overflow-btn" on:click={() => selectedWorkerId = w.id}>

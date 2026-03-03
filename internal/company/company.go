@@ -47,6 +47,8 @@ type Manager struct {
 	shutdownCancel context.CancelFunc
 	language       string // "en" or "zh-TW"
 	langMu         sync.RWMutex
+	ollamaEndpoint string
+	ollamaModel    string
 }
 
 type workersFile struct {
@@ -104,6 +106,8 @@ func New(
 		maxWorkers:       make(map[worker.WorkerTier]int),
 		personalityStore: personalityStore,
 		narrator:         narrator,
+		ollamaEndpoint:   ollamaEndpoint,
+		ollamaModel:      ollamaModel,
 	}
 	m.review = newReviewPipeline(m)
 

@@ -1,12 +1,14 @@
 package company
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 )
 
@@ -21,7 +23,25 @@ type WorkerChatResponse struct {
 	Content string `json:"content"`
 }
 
-// ChatWithWorker sends a conversation to the Claude API with a system prompt
+// ollamaChatRequest is the request body for Ollama's /api/chat endpoint.
+type ollamaChatRequest struct {
+	Model    string              `json:"model"`
+	Messages []ollamaChatMessage `json:"messages"`
+	Stream   bool                `json:"stream"`
+}
+
+// ollamaChatMessage is a single message in the Ollama chat format.
+type ollamaChatMessage struct {
+	Role    string `json:"role"`    // "system", "user", or "assistant"
+	Content string `json:"content"`
+}
+
+// ollamaChatResponse is the response body from Ollama's /api/chat endpoint.
+type ollamaChatResponse struct {
+	Message ollamaChatMessage `json:"message"`
+}
+
+// ChatWithWorker sends a conversation to the Ollama chat API with a system prompt
 // that reflects the worker's personality and knowledge (including research reports).
 func (m *Manager) ChatWithWorker(ctx context.Context, workerID string, messages []WorkerChatMessage) (*WorkerChatResponse, error) {
 	w, ok := m.GetWorker(workerID)
@@ -32,36 +52,54 @@ func (m *Manager) ChatWithWorker(ctx context.Context, workerID string, messages 
 	// Build system prompt from personality
 	systemPrompt := m.buildWorkerSystemPrompt(workerID, w.Name, string(w.EffectiveTier()))
 
-	// Convert messages
-	apiMessages := make([]anthropic.MessageParam, 0, len(messages))
+	// Build Ollama chat messages
+	chatMessages := make([]ollamaChatMessage, 0, len(messages)+1)
+	chatMessages = append(chatMessages, ollamaChatMessage{Role: "system", Content: systemPrompt})
 	for _, msg := range messages {
-		switch msg.Role {
-		case "user":
-			apiMessages = append(apiMessages, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Content)))
-		case "assistant":
-			apiMessages = append(apiMessages, anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Content)))
-		}
+		chatMessages = append(chatMessages, ollamaChatMessage{Role: msg.Role, Content: msg.Content})
 	}
 
-	client := anthropic.NewClient(option.WithAPIKey(""))
-	resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.Model("claude-sonnet-4-6"),
-		MaxTokens: 512,
-		System: []anthropic.TextBlockParam{
-			{Text: systemPrompt},
-		},
-		Messages: apiMessages,
+	reqBody, err := json.Marshal(ollamaChatRequest{
+		Model:    m.ollamaModel,
+		Messages: chatMessages,
+		Stream:   false,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API call: %w", err)
+		return nil, fmt.Errorf("marshalling request: %w", err)
 	}
 
-	if len(resp.Content) == 0 {
-		return nil, fmt.Errorf("empty response from API")
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", m.ollamaEndpoint+"/api/chat", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("ollama chat request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var chatResp ollamaChatResponse
+	if err := json.Unmarshal(body, &chatResp); err != nil {
+		return nil, fmt.Errorf("parsing ollama response: %w", err)
+	}
+
+	if chatResp.Message.Content == "" {
+		return nil, fmt.Errorf("empty response from Ollama")
 	}
 
 	return &WorkerChatResponse{
-		Content: resp.Content[0].Text,
+		Content: chatResp.Message.Content,
 	}, nil
 }
 
@@ -139,9 +177,9 @@ func (m *Manager) buildWorkerSystemPrompt(workerID, name, tier string) string {
 	}
 
 	if lang == "en" {
-		sb.WriteString("\nRespond in character. Use English. Keep it concise (under 200 words per reply).")
+		sb.WriteString("\nIMPORTANT: You MUST respond entirely in English regardless of the language used in your personality description above. Respond in character. Keep it concise (under 200 words per reply).")
 	} else {
-		sb.WriteString("\n請以符合你性格的方式回覆用戶。使用繁體中文。保持簡潔（每次回覆不超過 200 字）。")
+		sb.WriteString("\n重要：無論上方性格描述使用什麼語言，你必須完全使用繁體中文回覆。請以符合你性格的方式回覆用戶。保持簡潔（每次回覆不超過 200 字）。")
 	}
 
 	return sb.String()

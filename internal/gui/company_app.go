@@ -6,6 +6,7 @@ import (
 
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
+	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
@@ -367,11 +368,14 @@ func (c *CompanyApp) GenerateNarrative(workerID string) error {
 	if ok && w != nil {
 		name = w.Name
 	}
-	narrative, err := narrator.GeneratePersonality(context.Background(), name, p.Traits)
+	// Copy traits before the long AI call to avoid holding references to store internals
+	traits := p.Traits
+	narrative, err := narrator.GeneratePersonality(context.Background(), name, traits)
 	if err != nil {
 		return err
 	}
-	p.Narrative = *narrative
-	store.Save()
+	store.UpdateProfile(workerID, func(p *personality.CharacterProfile) {
+		p.Narrative = *narrative
+	})
 	return nil
 }

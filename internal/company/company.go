@@ -13,6 +13,7 @@ import (
 
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
+	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/training"
@@ -34,8 +35,9 @@ type Manager struct {
 	cancels      map[string]context.CancelFunc
 	wg           sync.WaitGroup
 	workersPath  string
-	review         *ReviewPipeline
-	collector      *training.Collector
+	personalityStore *personality.Store
+	review           *ReviewPipeline
+	collector        *training.Collector
 	finetuneRunner *training.FinetuneRunner
 	finetuneCfg    training.FinetuneConfig
 	maxWorkers     map[worker.WorkerTier]int // per-tier worker limits (0 = unlimited)
@@ -66,17 +68,23 @@ func New(
 		return nil, err
 	}
 
+	personalityStore := personality.NewStore(dataDir)
+	if err := personalityStore.Load(); err != nil {
+		// Just log, don't fail startup
+	}
+
 	m := &Manager{
-		projectStore: projectStore,
-		spawner:      spawner,
-		gitOps:       gitOps,
-		monitor:      monitor,
-		tmuxClient:   tmuxClient,
-		autoSchedule: true,
-		workers:      make(map[string]*worker.Worker),
-		cancels:      make(map[string]context.CancelFunc),
-		workersPath:  filepath.Join(dataDir, "workers.yaml"),
-		maxWorkers:   make(map[worker.WorkerTier]int),
+		projectStore:     projectStore,
+		spawner:          spawner,
+		gitOps:           gitOps,
+		monitor:          monitor,
+		tmuxClient:       tmuxClient,
+		autoSchedule:     true,
+		workers:          make(map[string]*worker.Worker),
+		cancels:          make(map[string]context.CancelFunc),
+		workersPath:      filepath.Join(dataDir, "workers.yaml"),
+		maxWorkers:       make(map[worker.WorkerTier]int),
+		personalityStore: personalityStore,
 	}
 	m.review = newReviewPipeline(m)
 
@@ -86,6 +94,15 @@ func New(
 
 	// Recovery: reset workers with stale tmux sessions to idle
 	m.recoverStaleWorkers()
+
+	// Periodically persist personality data
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			m.personalityStore.Save()
+		}
+	}()
 
 	return m, nil
 }
@@ -234,6 +251,11 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 	}
 
 	m.workers[w.ID] = w
+
+	profile := personality.NewCharacterProfile(w.ID)
+	m.personalityStore.SetProfile(profile)
+	m.personalityStore.Save()
+
 	if err := m.saveWorkers(); err != nil {
 		return nil, err
 	}
@@ -485,6 +507,13 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			w.CurrentTaskID = ""
 			m.saveWorkers()
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
+
+			if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
+				personality.ApplyEvent(profile, personality.EventTaskCompleted)
+				personality.UpdateAutoMood(profile)
+				m.personalityStore.Save()
+			}
+
 			m.mu.Unlock()
 
 			// Handle review result
@@ -504,6 +533,13 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		// Check if engineer with a parent → route to manager review
 		if w.EffectiveTier() == worker.TierEngineer && w.ParentID != "" {
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
+
+			if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
+				personality.ApplyEvent(profile, personality.EventTaskCompleted)
+				personality.UpdateAutoMood(profile)
+				m.personalityStore.Save()
+			}
+
 			m.emit(Event{
 				Type:      EventTaskCompleted,
 				ProjectID: p.ID,
@@ -538,6 +574,13 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 
 		// Default: no review needed (consultant or engineer without parent)
 		m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
+
+		if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
+			personality.ApplyEvent(profile, personality.EventTaskCompleted)
+			personality.UpdateAutoMood(profile)
+			m.personalityStore.Save()
+		}
+
 		m.emit(Event{
 			Type:      EventTaskCompleted,
 			ProjectID: p.ID,
@@ -547,6 +590,13 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		})
 	} else {
 		m.projectStore.UpdateTaskStatus(t.ID, project.TaskFailed)
+
+		if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
+			personality.ApplyEvent(profile, personality.EventTaskFailed)
+			personality.UpdateAutoMood(profile)
+			m.personalityStore.Save()
+		}
+
 		m.emit(Event{
 			Type:      EventTaskFailed,
 			ProjectID: p.ID,
@@ -888,6 +938,11 @@ func (m *Manager) PendingReviews() []ReviewRequest {
 // ProjectStore returns the underlying project store.
 func (m *Manager) ProjectStore() *project.Store {
 	return m.projectStore
+}
+
+// GetPersonalityStore returns the personality store.
+func (m *Manager) GetPersonalityStore() *personality.Store {
+	return m.personalityStore
 }
 
 // Shutdown cancels all active workers and waits for goroutines to exit.

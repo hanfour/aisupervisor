@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
@@ -186,6 +187,20 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 
 	// Capture training data via collector
 	rp.captureTrainingData(originalTask, managerWorker, p, output, approved)
+
+	// Update personality mood based on review outcome
+	if rp.mgr.personalityStore != nil {
+		engineerID := originalTask.AssigneeID
+		if profile := rp.mgr.personalityStore.GetProfile(engineerID); profile != nil {
+			if approved {
+				personality.ApplyEvent(profile, personality.EventReviewApproved)
+			} else {
+				personality.ApplyEvent(profile, personality.EventReviewRejected)
+			}
+			personality.UpdateAutoMood(profile)
+			rp.mgr.personalityStore.Save()
+		}
+	}
 
 	if approved {
 		_ = rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskDone)

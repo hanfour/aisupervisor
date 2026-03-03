@@ -75,3 +75,56 @@ func TestStore_DeleteProfile(t *testing.T) {
 		t.Error("profile should be nil after delete")
 	}
 }
+
+func TestStore_UpdateRelationship(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	s.UpdateRelationship("a", "b", func(r *Relationship) {
+		r.AdjustAffinity(10)
+	})
+	rel := s.GetRelationship("a", "b")
+	if rel == nil || rel.Affinity != 60 {
+		t.Fatalf("expected affinity 60 after UpdateRelationship, got %v", rel)
+	}
+}
+
+func TestStore_UpdateProfile(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	p := NewCharacterProfile("w1")
+	s.SetProfile(p)
+
+	ok := s.UpdateProfile("w1", func(p *CharacterProfile) {
+		p.Mood.Morale = 99
+	})
+	if !ok {
+		t.Fatal("expected UpdateProfile to return true")
+	}
+	got := s.GetProfile("w1")
+	if got.Mood.Morale != 99 {
+		t.Fatalf("expected morale 99, got %d", got.Mood.Morale)
+	}
+
+	ok = s.UpdateProfile("nonexistent", func(p *CharacterProfile) {})
+	if ok {
+		t.Fatal("expected UpdateProfile to return false for nonexistent")
+	}
+}
+
+func TestStore_GetRelationshipAffinity(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	if a := s.GetRelationshipAffinity("a", "b"); a != 50 {
+		t.Fatalf("expected default 50, got %d", a)
+	}
+
+	s.UpdateRelationship("a", "b", func(r *Relationship) {
+		r.AdjustAffinity(20)
+	})
+	if a := s.GetRelationshipAffinity("a", "b"); a != 70 {
+		t.Fatalf("expected 70, got %d", a)
+	}
+}

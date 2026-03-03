@@ -180,3 +180,41 @@ func (s *Store) readYAML(filename string, out interface{}) error {
 	}
 	return yaml.Unmarshal(data, out)
 }
+
+// UpdateRelationship applies fn to the relationship between a and b while holding the write lock.
+// If the relationship does not exist, it is created first.
+func (s *Store) UpdateRelationship(a, b string, fn func(r *Relationship)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := RelationshipKey(a, b)
+	r, ok := s.relationships[key]
+	if !ok {
+		r = NewRelationship(a, b)
+		s.relationships[key] = r
+	}
+	fn(r)
+}
+
+// UpdateProfile applies fn to the profile for the given worker while holding the write lock.
+// Returns false if the profile does not exist.
+func (s *Store) UpdateProfile(workerID string, fn func(p *CharacterProfile)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.profiles[workerID]
+	if !ok {
+		return false
+	}
+	fn(p)
+	return true
+}
+
+// GetRelationshipAffinity returns the affinity between two workers, or the default (50) if no relationship exists.
+func (s *Store) GetRelationshipAffinity(a, b string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r := s.relationships[RelationshipKey(a, b)]
+	if r == nil {
+		return 50
+	}
+	return r.Affinity
+}

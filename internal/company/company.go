@@ -122,7 +122,7 @@ func New(
 			case <-bgCtx.Done():
 				return
 			case <-ticker.C:
-				m.personalityStore.Save()
+				m.personalityStore.SaveIfDirty()
 			}
 		}
 	}()
@@ -149,7 +149,7 @@ func New(
 						})
 					}
 				}
-				m.personalityStore.Save()
+				m.personalityStore.SaveIfDirty()
 			}
 		}
 	}()
@@ -304,7 +304,6 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 
 	profile := personality.NewCharacterProfile(w.ID)
 	m.personalityStore.SetProfile(profile)
-	m.personalityStore.Save()
 
 	if m.narrator != nil {
 		go func(workerID, workerName string, traits personality.PersonalityTraits) {

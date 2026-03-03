@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 )
@@ -11,6 +12,7 @@ import (
 // Store manages in-memory personality profiles and relationships with YAML persistence.
 type Store struct {
 	mu            sync.RWMutex
+	dirty         atomic.Bool
 	dataDir       string
 	profiles      map[string]*CharacterProfile
 	relationships map[string]*Relationship
@@ -38,6 +40,7 @@ func (s *Store) SetProfile(p *CharacterProfile) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.profiles[p.WorkerID] = p
+	s.dirty.Store(true)
 }
 
 // GetProfile returns the profile for the given worker, or nil if not found.
@@ -52,6 +55,7 @@ func (s *Store) DeleteProfile(workerID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.profiles, workerID)
+	s.dirty.Store(true)
 }
 
 // ListProfiles returns all stored profiles.
@@ -71,6 +75,7 @@ func (s *Store) SetRelationship(r *Relationship) {
 	defer s.mu.Unlock()
 	key := RelationshipKey(r.WorkerA, r.WorkerB)
 	s.relationships[key] = r
+	s.dirty.Store(true)
 }
 
 // GetRelationship returns the relationship between two workers, or nil if not found.
@@ -135,6 +140,19 @@ func (s *Store) Save() error {
 	return s.writeYAML("relationships.yaml", rf)
 }
 
+// MarkDirty flags the store as having unsaved changes.
+func (s *Store) MarkDirty() {
+	s.dirty.Store(true)
+}
+
+// SaveIfDirty persists data only if there are unsaved changes.
+func (s *Store) SaveIfDirty() error {
+	if !s.dirty.Swap(false) {
+		return nil
+	}
+	return s.Save()
+}
+
 // Load reads profiles and relationships from YAML files in the data directory.
 func (s *Store) Load() error {
 	s.mu.Lock()
@@ -162,14 +180,26 @@ func (s *Store) Load() error {
 
 func (s *Store) writeYAML(filename string, data interface{}) error {
 	path := filepath.Join(s.dataDir, filename)
-	f, err := os.Create(path)
+	tmpPath := path + ".tmp"
+
+	f, err := os.Create(tmpPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+
 	enc := yaml.NewEncoder(f)
 	enc.SetIndent(2)
-	return enc.Encode(data)
+	if err := enc.Encode(data); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	return os.Rename(tmpPath, path)
 }
 
 func (s *Store) readYAML(filename string, out interface{}) error {
@@ -193,6 +223,7 @@ func (s *Store) UpdateRelationship(a, b string, fn func(r *Relationship)) {
 		s.relationships[key] = r
 	}
 	fn(r)
+	s.dirty.Store(true)
 }
 
 // UpdateProfile applies fn to the profile for the given worker while holding the write lock.
@@ -205,6 +236,7 @@ func (s *Store) UpdateProfile(workerID string, fn func(p *CharacterProfile)) boo
 		return false
 	}
 	fn(p)
+	s.dirty.Store(true)
 	return true
 }
 

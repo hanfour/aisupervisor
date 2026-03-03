@@ -74,6 +74,18 @@ func New(
 		// Just log, don't fail startup
 	}
 
+	// Initialize Ollama narrator
+	ollamaEndpoint := os.Getenv("OLLAMA_ENDPOINT")
+	ollamaModel := os.Getenv("OLLAMA_MODEL")
+	if ollamaEndpoint == "" {
+		ollamaEndpoint = "http://localhost:11434"
+	}
+	if ollamaModel == "" {
+		ollamaModel = "llama3.2"
+	}
+	adapter := personality.NewOllamaAdapter(ollamaEndpoint, ollamaModel)
+	narrator := personality.NewNarrator(adapter)
+
 	m := &Manager{
 		projectStore:     projectStore,
 		spawner:          spawner,
@@ -86,6 +98,7 @@ func New(
 		workersPath:      filepath.Join(dataDir, "workers.yaml"),
 		maxWorkers:       make(map[worker.WorkerTier]int),
 		personalityStore: personalityStore,
+		narrator:         narrator,
 	}
 	m.review = newReviewPipeline(m)
 
@@ -275,6 +288,18 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 	profile := personality.NewCharacterProfile(w.ID)
 	m.personalityStore.SetProfile(profile)
 	m.personalityStore.Save()
+
+	if m.narrator != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			narrative, err := m.narrator.GeneratePersonality(ctx, w.Name, profile.Traits)
+			if err == nil && narrative != nil {
+				profile.Narrative = *narrative
+				m.personalityStore.Save()
+			}
+		}()
+	}
 
 	if err := m.saveWorkers(); err != nil {
 		return nil, err

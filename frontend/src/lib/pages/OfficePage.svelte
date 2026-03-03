@@ -8,6 +8,7 @@
   import { loadAllSprites } from '../office/sprites.js'
   import { playFinished, playError, playAssign, setSoundEnabled, isSoundEnabled } from '../office/sounds.js'
   import CharacterProfilePage from '../components/CharacterProfilePage.svelte'
+  import { initPersonalityEvents, loadCharacterProfile } from '../stores/personality.js'
 
   let canvasEl
   let renderer
@@ -22,14 +23,30 @@
 
   $: allWorkers = $workersStore || []
 
+  async function loadAllProfiles(workers) {
+    const profiles = new Map()
+    for (const w of workers) {
+      const p = await loadCharacterProfile(w.id)
+      if (p) profiles.set(w.id, p)
+    }
+    if (renderer) renderer.setProfiles(profiles)
+    if (simulation) simulation.setProfiles(profiles)
+  }
+
   onMount(async () => {
     // Clear stale desk assignments from previous sessions
     localStorage.removeItem('pixelOffice_deskAssignments')
+
+    initPersonalityEvents()
 
     await loadAllSprites()  // load MetroCity PNG spritesheets
     await loadWorkers()
     await tick()  // ensure canvas element is bound
     initRenderer()
+
+    // Load personality profiles for all workers
+    const workers = $workersStore || []
+    if (workers.length > 0) loadAllProfiles(workers)
 
     // Retry renderer init after a delay in case sprites weren't fully decoded
     setTimeout(() => updateRenderer(), 500)

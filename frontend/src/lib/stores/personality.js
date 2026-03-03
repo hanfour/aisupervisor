@@ -29,6 +29,26 @@ export async function loadWorkerRelationships(workerId) {
     }
 }
 
+export function initPersonalityEvents() {
+    if (!window.runtime) return
+
+    window.runtime.EventsOn('personality:mood', (data) => {
+        if (data?.workerId) {
+            loadCharacterProfile(data.workerId)
+        }
+    })
+    window.runtime.EventsOn('personality:relationship', (data) => {
+        if (data?.workerId) {
+            loadWorkerRelationships(data.workerId)
+        }
+    })
+    window.runtime.EventsOn('personality:narrative', (data) => {
+        if (data?.workerId) {
+            loadCharacterProfile(data.workerId)
+        }
+    })
+}
+
 export async function generateNarrative(workerId) {
     if (!window.go?.gui?.CompanyApp) return
     try {

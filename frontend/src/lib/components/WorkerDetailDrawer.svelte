@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { getWorker, getManager, getSubordinates, skillProfiles, loadSkillProfiles, loadWorkers, loadHierarchy } from '../stores/workers.js'
+  import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import WorkerLogPanel from './WorkerLogPanel.svelte'
 
   export let workerId = ''
@@ -14,10 +15,21 @@
   let loading = false
   let editingSkill = false
   let selectedSkill = ''
+  let profile = null
+  let workerRelationships = []
 
   const avatarMap = {
     robot: '🤖', cat: '🐱', kirby: '⭐', mario: '🍄',
     ash: '⚡', bulbasaur: '🌿', charmander: '🔥', squirtle: '💧', pokeball: '⚪',
+  }
+
+  const traitLabels = {
+    sociability: '社交性',
+    focus: '專注力',
+    creativity: '創造力',
+    empathy: '同理心',
+    ambition: '野心',
+    humor: '幽默感'
   }
 
   const tierColors = {
@@ -34,6 +46,8 @@
       subordinates = await getSubordinates(id)
       selectedSkill = worker.skillProfile || ''
       await loadSkillProfiles()
+      profile = await loadCharacterProfile(id)
+      workerRelationships = await loadWorkerRelationships(id)
     }
     loading = false
   }
@@ -49,6 +63,15 @@
       await loadHierarchy()
     } catch (e) {
       // ignore
+    }
+  }
+
+  async function handleGenerateNarrative() {
+    try {
+      await generateNarrative(workerId)
+      profile = await loadCharacterProfile(workerId)
+    } catch (e) {
+      console.error(e)
     }
   }
 
@@ -188,6 +211,79 @@
           <button class="nes-btn is-warning logs-btn" on:click={() => showLogs = true}>
             View Logs
           </button>
+        {/if}
+
+        {#if profile}
+        <section class="nes-container is-dark" style="margin-top: 12px;">
+          <h3 class="section-title">性格</h3>
+          <p style="font-size: 11px; color: #aaa; margin-bottom: 8px;">
+            {profile.narrative?.description || '尚未生成性格描述'}
+          </p>
+
+          {#if profile.narrative?.catchphrases?.length}
+          <div style="margin-bottom: 8px;">
+            {#each profile.narrative.catchphrases as phrase}
+            <span class="nes-badge" style="margin: 2px;"><span class="is-primary">{phrase}</span></span>
+            {/each}
+          </div>
+          {/if}
+
+          <h4 style="font-size: 11px; margin-top: 8px;">情緒</h4>
+          <div style="font-size: 10px;">
+            <label>心情: {profile.mood?.current || 'neutral'}</label>
+            <progress class="nes-progress is-primary" value={profile.mood?.energy || 0} max="100" style="height: 12px;"></progress>
+            <label>能量: {profile.mood?.energy || 0}%</label>
+            <progress class="nes-progress is-success" value={profile.mood?.morale || 0} max="100" style="height: 12px;"></progress>
+            <label>士氣: {profile.mood?.morale || 0}%</label>
+          </div>
+
+          <h4 style="font-size: 11px; margin-top: 8px;">特質</h4>
+          <div style="font-size: 10px;">
+            {#each Object.entries(profile.traits || {}) as [key, value]}
+            <div style="display: flex; align-items: center; gap: 4px; margin: 2px 0;">
+              <span style="width: 50px;">{traitLabels[key] || key}</span>
+              <progress class="nes-progress" value={value} max="100" style="height: 8px; flex: 1;"></progress>
+              <span style="width: 24px; text-align: right;">{value}</span>
+            </div>
+            {/each}
+          </div>
+        </section>
+
+        {#if !profile.narrative?.description}
+        <button class="nes-btn is-primary" style="margin-top: 8px; font-size: 10px;" on:click={handleGenerateNarrative}>
+          生成性格描述 (Ollama)
+        </button>
+        {/if}
+        {/if}
+
+        {#if workerRelationships.length > 0}
+        <section class="nes-container is-dark" style="margin-top: 12px;">
+          <h3 class="section-title">人際關係</h3>
+          {#each workerRelationships as rel}
+          <div style="margin-bottom: 8px; font-size: 10px;">
+            <span style="color: #00ff41;">
+              {rel.workerA === workerId ? rel.workerB : rel.workerA}
+            </span>
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <span>好感</span>
+              <progress class="nes-progress is-warning" value={rel.affinity} max="100" style="height: 8px; flex: 1;"></progress>
+              <span>{rel.affinity}</span>
+            </div>
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <span>信任</span>
+              <progress class="nes-progress is-success" value={rel.trust} max="100" style="height: 8px; flex: 1;"></progress>
+              <span>{rel.trust}</span>
+            </div>
+            {#if rel.tags?.length}
+            <div>
+              {#each rel.tags as tag}
+              <span class="nes-badge" style="margin: 1px;"><span class="is-dark">{tag}</span></span>
+              {/each}
+            </div>
+            {/if}
+          </div>
+          {/each}
+        </section>
         {/if}
       </div>
     {:else}

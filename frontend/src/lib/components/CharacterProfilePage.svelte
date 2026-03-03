@@ -1,8 +1,9 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { getWorker, getManager, getSubordinates } from '../stores/workers.js'
+  import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import { events } from '../stores/events.js'
-  import { prerenderCharacter, getCharacterType, PALETTES } from '../office/sprites.js'
+  import { prerenderCharacter, getCharacterType, loadAllSprites, spritesReady } from '../office/sprites.js'
 
   export let workerId
   export let onBack = () => {}
@@ -12,6 +13,8 @@
   let manager = null
   let subordinates = []
   let workerEvents = []
+  let profile = null
+  let workerRelationships = []
   let portraitCanvas
   let animFrame = 0
   let animTimer
@@ -33,6 +36,7 @@
     : 0
 
   onMount(async () => {
+    await loadAllSprites()
     await loadData()
     startPortraitAnim()
   })
@@ -41,11 +45,31 @@
     if (animTimer) clearInterval(animTimer)
   })
 
+  const traitLabels = {
+    sociability: '社交性',
+    focus: '專注力',
+    creativity: '創造力',
+    empathy: '同理心',
+    ambition: '野心',
+    humor: '幽默感'
+  }
+
   async function loadData() {
     worker = await getWorker(workerId)
     if (!worker) return
     manager = await getManager(workerId)
     subordinates = await getSubordinates(workerId) || []
+    profile = await loadCharacterProfile(workerId)
+    workerRelationships = await loadWorkerRelationships(workerId)
+  }
+
+  async function handleGenerateNarrative() {
+    try {
+      await generateNarrative(workerId)
+      profile = await loadCharacterProfile(workerId)
+    } catch (e) {
+      console.error(e)
+    }
   }
 
   function startPortraitAnim() {
@@ -194,6 +218,89 @@
           </div>
         </div>
       </div>
+
+      <!-- Personality Section -->
+      {#if profile}
+      <div class="nes-container is-dark personality-section">
+        <p class="section-title">🎭 PERSONALITY</p>
+        <p style="font-size: 9px; color: #aaa; margin-bottom: 8px;">
+          {profile.narrative?.description || '尚未生成性格描述'}
+        </p>
+
+        {#if profile.narrative?.catchphrases?.length}
+        <div style="margin-bottom: 8px;">
+          {#each profile.narrative.catchphrases as phrase}
+          <span class="nes-badge" style="margin: 2px;"><span class="is-primary">{phrase}</span></span>
+          {/each}
+        </div>
+        {/if}
+
+        <p class="section-title" style="margin-top: 8px;">情緒</p>
+        <div style="font-size: 8px;">
+          <div class="mood-row">
+            <span>心情: {profile.mood?.current || 'neutral'}</span>
+          </div>
+          <div class="mood-row">
+            <span>能量</span>
+            <progress class="nes-progress is-primary" value={profile.mood?.energy || 0} max="100" style="height: 10px; flex: 1;"></progress>
+            <span>{profile.mood?.energy || 0}%</span>
+          </div>
+          <div class="mood-row">
+            <span>士氣</span>
+            <progress class="nes-progress is-success" value={profile.mood?.morale || 0} max="100" style="height: 10px; flex: 1;"></progress>
+            <span>{profile.mood?.morale || 0}%</span>
+          </div>
+        </div>
+
+        <p class="section-title" style="margin-top: 8px;">特質</p>
+        <div style="font-size: 8px;">
+          {#each Object.entries(profile.traits || {}) as [key, value]}
+          <div class="trait-row">
+            <span class="trait-label">{traitLabels[key] || key}</span>
+            <progress class="nes-progress" value={value} max="100" style="height: 8px; flex: 1;"></progress>
+            <span class="trait-value">{value}</span>
+          </div>
+          {/each}
+        </div>
+
+        {#if !profile.narrative?.description}
+        <button class="nes-btn is-primary" style="margin-top: 8px; font-size: 8px;" on:click={handleGenerateNarrative}>
+          生成性格描述 (Ollama)
+        </button>
+        {/if}
+      </div>
+      {/if}
+
+      <!-- Relationships Section -->
+      {#if workerRelationships.length > 0}
+      <div class="nes-container is-dark relationships-section">
+        <p class="section-title">💬 RELATIONSHIPS</p>
+        {#each workerRelationships as rel}
+        <div style="margin-bottom: 8px; font-size: 8px;">
+          <span style="color: var(--accent-green);">
+            {rel.workerA === workerId ? rel.workerB : rel.workerA}
+          </span>
+          <div class="mood-row">
+            <span>好感</span>
+            <progress class="nes-progress is-warning" value={rel.affinity} max="100" style="height: 8px; flex: 1;"></progress>
+            <span>{rel.affinity}</span>
+          </div>
+          <div class="mood-row">
+            <span>信任</span>
+            <progress class="nes-progress is-success" value={rel.trust} max="100" style="height: 8px; flex: 1;"></progress>
+            <span>{rel.trust}</span>
+          </div>
+          {#if rel.tags?.length}
+          <div>
+            {#each rel.tags as tag}
+            <span class="nes-badge" style="margin: 1px;"><span class="is-dark">{tag}</span></span>
+            {/each}
+          </div>
+          {/if}
+        </div>
+        {/each}
+      </div>
+      {/if}
 
       <!-- Team Section -->
       <div class="nes-container is-dark team-section">
@@ -453,11 +560,42 @@
     color: var(--text-color);
   }
 
+  /* Personality */
+  .personality-section, .relationships-section {
+    grid-column: span 2;
+  }
+
+  .mood-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 2px 0;
+  }
+
+  .trait-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 2px 0;
+  }
+
+  .trait-label {
+    width: 50px;
+    flex-shrink: 0;
+  }
+
+  .trait-value {
+    width: 24px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
   @media (max-width: 800px) {
     .profile-grid {
       grid-template-columns: 1fr;
     }
     .portrait-section { grid-row: auto; }
     .log-section { grid-column: auto; }
+    .personality-section, .relationships-section { grid-column: auto; }
   }
 </style>

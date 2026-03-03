@@ -202,7 +202,18 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 				others = idleWorkers[i+1:]
 			}
 			if len(others) > 0 {
-				partner := others[rng.Intn(len(others))]
+				var candidateIDs []string
+				for _, o := range others {
+					candidateIDs = append(candidateIDs, o.ID)
+				}
+				partnerID := personality.SelectPartner(w.ID, candidateIDs, m.personalityStore)
+				partner := others[0]
+				for _, o := range others {
+					if o.ID == partnerID {
+						partner = o
+						break
+					}
+				}
 				activities = append(activities, SimulationActivity{
 					ID:         newActivityID(rng),
 					Type:       ActivityDiscussion,

@@ -201,6 +201,11 @@ export class OfficeRenderer {
     ctx.fillText('REC', 12 * TILE_PX, 13 * TILE_PX)
   }
 
+  // ── Profile data (mood indicators) ───────────────────────────────────────
+  setProfiles(profileMap) {
+    this.profiles = profileMap // Map<workerId, CharacterProfileDTO>
+  }
+
   // ── SimulationEngine integration ──────────────────────────────────────────
   setSimulation(sim) { this.simulation = sim }
 
@@ -393,6 +398,14 @@ export class OfficeRenderer {
       ctx.fillText(w.name, nameX, py + TILE_PX + 10)
       ctx.restore()
 
+      // Mood indicator (above character name)
+      if (this.profiles) {
+        const profile = this.profiles.get(w.id)
+        if (profile?.mood) {
+          this._drawMoodIndicator(ctx, nameX, py - 12, profile.mood.current)
+        }
+      }
+
       // Hover highlight
       if (this.hoveredWorkerId === w.id) {
         ctx.strokeStyle = '#00ff41'
@@ -432,6 +445,25 @@ export class OfficeRenderer {
       ctx.fillRect(tile.x - TILE_PX, tile.y - TILE_PX, TILE_PX * 3, TILE_PX * 3)
     }
     ctx.restore()
+  }
+
+  _drawMoodIndicator(ctx, x, y, mood) {
+    if (!mood || mood === 'neutral') return
+
+    const icons = {
+      'happy': '\u{1F60A}',
+      'stressed': '\u{1F4A2}',
+      'frustrated': '\u{1F624}',
+      'excited': '\u2B50',
+      'tired': '\u{1F4A4}'
+    }
+
+    const icon = icons[mood]
+    if (!icon) return
+
+    ctx.font = '12px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(icon, x, y - 20)
   }
 
   _drawPixelBubble(ctx, x, y, bubble) {

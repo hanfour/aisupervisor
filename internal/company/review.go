@@ -191,15 +191,14 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 	// Update personality mood based on review outcome
 	if rp.mgr.personalityStore != nil {
 		engineerID := originalTask.AssigneeID
-		if profile := rp.mgr.personalityStore.GetProfile(engineerID); profile != nil {
+		rp.mgr.personalityStore.UpdateProfile(engineerID, func(profile *personality.CharacterProfile) {
 			if approved {
 				personality.ApplyEvent(profile, personality.EventReviewApproved)
 			} else {
 				personality.ApplyEvent(profile, personality.EventReviewRejected)
 			}
 			personality.UpdateAutoMood(profile)
-			rp.mgr.personalityStore.Save()
-		}
+		})
 	}
 
 	if approved {

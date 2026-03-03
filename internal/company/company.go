@@ -130,7 +130,10 @@ func New(
 			for _, rel := range m.personalityStore.ListRelationships() {
 				daysSince := time.Since(rel.LastInteraction).Hours() / 24
 				if daysSince > 1 {
-					rel.AdjustAffinity(-1 * int(daysSince))
+					delta := -1 * int(daysSince)
+					m.personalityStore.UpdateRelationship(rel.WorkerA, rel.WorkerB, func(r *personality.Relationship) {
+						r.AdjustAffinity(delta)
+					})
 				}
 			}
 			m.personalityStore.Save()
@@ -290,15 +293,16 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 	m.personalityStore.Save()
 
 	if m.narrator != nil {
-		go func() {
+		go func(workerID, workerName string, traits personality.PersonalityTraits) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			narrative, err := m.narrator.GeneratePersonality(ctx, w.Name, profile.Traits)
+			narrative, err := m.narrator.GeneratePersonality(ctx, workerName, traits)
 			if err == nil && narrative != nil {
-				profile.Narrative = *narrative
-				m.personalityStore.Save()
+				m.personalityStore.UpdateProfile(workerID, func(p *personality.CharacterProfile) {
+					p.Narrative = *narrative
+				})
 			}
-		}()
+		}(w.ID, w.Name, profile.Traits)
 	}
 
 	if err := m.saveWorkers(); err != nil {
@@ -553,11 +557,10 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			m.saveWorkers()
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
 
-			if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
-				personality.ApplyEvent(profile, personality.EventTaskCompleted)
-				personality.UpdateAutoMood(profile)
-				m.personalityStore.Save()
-			}
+			m.personalityStore.UpdateProfile(w.ID, func(p *personality.CharacterProfile) {
+				personality.ApplyEvent(p, personality.EventTaskCompleted)
+				personality.UpdateAutoMood(p)
+			})
 
 			m.mu.Unlock()
 
@@ -579,11 +582,10 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		if w.EffectiveTier() == worker.TierEngineer && w.ParentID != "" {
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
 
-			if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
-				personality.ApplyEvent(profile, personality.EventTaskCompleted)
-				personality.UpdateAutoMood(profile)
-				m.personalityStore.Save()
-			}
+			m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
+				personality.ApplyEvent(prof, personality.EventTaskCompleted)
+				personality.UpdateAutoMood(prof)
+			})
 
 			m.emit(Event{
 				Type:      EventTaskCompleted,
@@ -620,11 +622,10 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		// Default: no review needed (consultant or engineer without parent)
 		m.projectStore.UpdateTaskStatus(t.ID, project.TaskReview)
 
-		if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
-			personality.ApplyEvent(profile, personality.EventTaskCompleted)
-			personality.UpdateAutoMood(profile)
-			m.personalityStore.Save()
-		}
+		m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
+			personality.ApplyEvent(prof, personality.EventTaskCompleted)
+			personality.UpdateAutoMood(prof)
+		})
 
 		m.emit(Event{
 			Type:      EventTaskCompleted,
@@ -636,11 +637,10 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	} else {
 		m.projectStore.UpdateTaskStatus(t.ID, project.TaskFailed)
 
-		if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
-			personality.ApplyEvent(profile, personality.EventTaskFailed)
-			personality.UpdateAutoMood(profile)
-			m.personalityStore.Save()
-		}
+		m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
+			personality.ApplyEvent(prof, personality.EventTaskFailed)
+			personality.UpdateAutoMood(prof)
+		})
 
 		m.emit(Event{
 			Type:      EventTaskFailed,

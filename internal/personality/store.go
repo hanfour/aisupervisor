@@ -93,6 +93,17 @@ func (s *Store) GetOrCreateRelationship(a, b string) *Relationship {
 	return r
 }
 
+// ListRelationships returns all stored relationships.
+func (s *Store) ListRelationships() []*Relationship {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*Relationship, 0, len(s.relationships))
+	for _, r := range s.relationships {
+		result = append(result, r)
+	}
+	return result
+}
+
 // GetWorkerRelationships returns all relationships involving the given worker.
 func (s *Store) GetWorkerRelationships(workerID string) []*Relationship {
 	s.mu.RLock()

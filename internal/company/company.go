@@ -104,6 +104,25 @@ func New(
 		}
 	}()
 
+	// Relationship decay: reduce affinity for stale relationships
+	go func() {
+		// For simulation purposes, decay runs every hour (not every 24h)
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if m.personalityStore == nil {
+				continue
+			}
+			for _, rel := range m.personalityStore.ListRelationships() {
+				daysSince := time.Since(rel.LastInteraction).Hours() / 24
+				if daysSince > 1 {
+					rel.AdjustAffinity(-1 * int(daysSince))
+				}
+			}
+			m.personalityStore.Save()
+		}
+	}()
+
 	return m, nil
 }
 

@@ -54,3 +54,89 @@ export function setSoundEnabled(val) {
 export function isSoundEnabled() {
   return enabled
 }
+
+// ── Ambient & interaction sounds (used by officeRenderer) ─────────────────
+
+let ambientInterval = null
+
+export function startAmbient() {
+  if (ambientInterval) return
+  ambientInterval = setInterval(() => {
+    if (!enabled) return
+    // Subtle low hum tick
+    playTone(110, 0.04, 'sine', 0)
+  }, 4000)
+}
+
+export function stopAmbient() {
+  if (ambientInterval) {
+    clearInterval(ambientInterval)
+    ambientInterval = null
+  }
+}
+
+let lastKeyClatter = 0
+
+export function playKeyClatter() {
+  const now = Date.now()
+  if (now - lastKeyClatter < 300) return
+  lastKeyClatter = now
+  playTone(800 + Math.random() * 400, 0.03, 'square', 0)
+  playTone(600 + Math.random() * 300, 0.03, 'square', 0.03)
+}
+
+let lastFootstep = 0
+
+export function playFootstep() {
+  const now = Date.now()
+  if (now - lastFootstep < 300) return
+  lastFootstep = now
+  playTone(150 + Math.random() * 50, 0.05, 'triangle', 0)
+}
+
+export function playDiscussionStart() {
+  playTone(660, 0.06, 'square', 0)
+  playTone(880, 0.06, 'square', 0.06)
+}
+
+export function playMeetingBell() {
+  playTone(1047, 0.15, 'sine', 0)
+  playTone(1319, 0.15, 'sine', 0.12)
+  playTone(1568, 0.2, 'sine', 0.24)
+}
+
+export function playWatercooler() {
+  playTone(300, 0.08, 'sine', 0)
+  playTone(350, 0.08, 'sine', 0.06)
+  playTone(250, 0.1, 'sine', 0.12)
+}
+
+export function playApproval() {
+  playTone(523, 0.1, 'square', 0)
+  playTone(784, 0.15, 'square', 0.08)
+}
+
+export function playTypewriter() {
+  const freq = 500 + Math.random() * 300
+  playTone(freq, 0.02, 'square', 0)
+}
+
+export function playCelebration() {
+  // Happy ascending fanfare
+  playTone(523, 0.1, 'square', 0)
+  playTone(659, 0.1, 'square', 0.1)
+  playTone(784, 0.1, 'square', 0.2)
+  playTone(1047, 0.2, 'square', 0.3)
+}
+
+export function playComfort() {
+  // Gentle low tones
+  playTone(330, 0.2, 'sine', 0)
+  playTone(392, 0.2, 'sine', 0.2)
+}
+
+export function playPairProgramming() {
+  // Two quick beeps
+  playTone(660, 0.08, 'square', 0)
+  playTone(880, 0.08, 'square', 0.12)
+}

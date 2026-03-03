@@ -24,6 +24,9 @@ const (
 	EventFinetuneStarted     EventType = "finetune_started"
 	EventFinetuneCompleted   EventType = "finetune_completed"
 	EventBenchmarkCompleted  EventType = "benchmark_completed"
+	EventNarrativeGenerated  EventType = "narrative_generated"
+	EventMoodChanged         EventType = "mood_changed"
+	EventRelationshipUpdated EventType = "relationship_updated"
 )
 
 type Event struct {

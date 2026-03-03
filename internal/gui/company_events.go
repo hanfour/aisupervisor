@@ -21,6 +21,25 @@ func startCompanyEventForwarding(ctx context.Context, mgr *company.Manager) {
 			}
 			dto := CompanyEventToDTO(e)
 			wailsRuntime.EventsEmit(ctx, "company:event", dto)
+
+			// Forward personality-specific events with dedicated channels
+			switch e.Type {
+			case company.EventNarrativeGenerated:
+				wailsRuntime.EventsEmit(ctx, "personality:narrative", map[string]string{
+					"workerId": e.WorkerID,
+					"message":  e.Message,
+				})
+			case company.EventMoodChanged:
+				wailsRuntime.EventsEmit(ctx, "personality:mood", map[string]string{
+					"workerId": e.WorkerID,
+					"message":  e.Message,
+				})
+			case company.EventRelationshipUpdated:
+				wailsRuntime.EventsEmit(ctx, "personality:relationship", map[string]string{
+					"workerId": e.WorkerID,
+					"message":  e.Message,
+				})
+			}
 		}
 	}
 }

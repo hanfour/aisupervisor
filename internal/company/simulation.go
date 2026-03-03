@@ -240,8 +240,7 @@ func (m *Manager) GenerateActivities() ([]SimulationActivity, error) {
 		for i := 0; i < len(idleWorkers)-1; i++ {
 			for j := i + 1; j < len(idleWorkers); j++ {
 				w1, w2 := idleWorkers[i], idleWorkers[j]
-				rel := m.personalityStore.GetOrCreateRelationship(w1.ID, w2.ID)
-				if rel.Affinity > 60 {
+				if m.personalityStore.GetRelationshipAffinity(w1.ID, w2.ID) > 60 {
 					activities = append(activities, SimulationActivity{
 						ID:         newActivityID(rng),
 						Type:       ActivityPairProgramming,
@@ -273,8 +272,7 @@ doneWithPairProgramming:
 				if other.ID == w.ID {
 					continue
 				}
-				rel := m.personalityStore.GetOrCreateRelationship(w.ID, other.ID)
-				if rel.Affinity > 70 && rng.Intn(100) < 20 {
+				if m.personalityStore.GetRelationshipAffinity(w.ID, other.ID) > 70 && rng.Intn(100) < 20 {
 					activities = append(activities, SimulationActivity{
 						ID:         newActivityID(rng),
 						Type:       ActivityComforting,
@@ -435,11 +433,6 @@ doneWithComforting:
 			for _, wID := range activity.WorkerIDs {
 				for _, otherID := range activity.WorkerIDs {
 					if wID != otherID {
-						rel := m.personalityStore.GetOrCreateRelationship(wID, otherID)
-						rel.AdjustAffinity(affinityDelta)
-						rel.AdjustTrust(trustDelta)
-						rel.RecordInteraction()
-						// Check manager relationship for auto-tagging
 						isManager := false
 						m.mu.RLock()
 						w1 := m.workers[wID]
@@ -448,7 +441,19 @@ doneWithComforting:
 						if w1 != nil && w2 != nil {
 							isManager = w1.Tier == worker.TierManager || w2.Tier == worker.TierManager
 						}
-						rel.UpdateTags(isManager)
+						m.personalityStore.UpdateRelationship(wID, otherID, func(rel *personality.Relationship) {
+							rel.AdjustAffinity(affinityDelta)
+							rel.AdjustTrust(trustDelta)
+							rel.RecordInteraction()
+							rel.UpdateTags(isManager)
+						})
+						if wID < otherID {
+							m.emit(Event{
+								Type:     EventRelationshipUpdated,
+								WorkerID: wID,
+								Message:  fmt.Sprintf("Relationship updated: %s ↔ %s", wID, otherID),
+							})
+						}
 					}
 				}
 			}

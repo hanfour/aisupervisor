@@ -315,6 +315,11 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 				m.personalityStore.UpdateProfile(workerID, func(p *personality.CharacterProfile) {
 					p.Narrative = *narrative
 				})
+				m.emit(Event{
+					Type:     EventNarrativeGenerated,
+					WorkerID: workerID,
+					Message:  fmt.Sprintf("Narrative generated for %s", workerName),
+				})
 			}
 		}(w.ID, w.Name, profile.Traits)
 	}
@@ -605,6 +610,11 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 				personality.ApplyEvent(prof, personality.EventTaskCompleted)
 				personality.UpdateAutoMood(prof)
 			})
+			m.emit(Event{
+				Type:     EventMoodChanged,
+				WorkerID: w.ID,
+				Message:  fmt.Sprintf("Mood changed for %s", w.Name),
+			})
 
 			m.emit(Event{
 				Type:      EventTaskCompleted,
@@ -645,6 +655,11 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			personality.ApplyEvent(prof, personality.EventTaskCompleted)
 			personality.UpdateAutoMood(prof)
 		})
+		m.emit(Event{
+			Type:     EventMoodChanged,
+			WorkerID: w.ID,
+			Message:  fmt.Sprintf("Mood changed for %s", w.Name),
+		})
 
 		m.emit(Event{
 			Type:      EventTaskCompleted,
@@ -659,6 +674,11 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
 			personality.ApplyEvent(prof, personality.EventTaskFailed)
 			personality.UpdateAutoMood(prof)
+		})
+		m.emit(Event{
+			Type:     EventMoodChanged,
+			WorkerID: w.ID,
+			Message:  fmt.Sprintf("Mood changed for %s", w.Name),
 		})
 
 		m.emit(Event{

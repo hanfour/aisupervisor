@@ -199,6 +199,11 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			}
 			personality.UpdateAutoMood(profile)
 		})
+		rp.mgr.emit(Event{
+			Type:     EventMoodChanged,
+			WorkerID: engineerID,
+			Message:  fmt.Sprintf("Mood changed for %s after review", engineerID),
+		})
 	}
 
 	if approved {

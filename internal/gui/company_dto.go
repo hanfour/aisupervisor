@@ -186,3 +186,49 @@ func CompanyEventToDTO(e company.Event) CompanyEventDTO {
 		Timestamp: e.Timestamp.Format(time.RFC3339),
 	}
 }
+
+type PersonalityTraitsDTO struct {
+	Sociability int `json:"sociability"`
+	Focus       int `json:"focus"`
+	Creativity  int `json:"creativity"`
+	Empathy     int `json:"empathy"`
+	Ambition    int `json:"ambition"`
+	Humor       int `json:"humor"`
+}
+
+type MoodDTO struct {
+	Current string `json:"current"`
+	Energy  int    `json:"energy"`
+	Morale  int    `json:"morale"`
+}
+
+type HabitsDTO struct {
+	CoffeeTime       string   `json:"coffeeTime"`
+	FavoriteSpot     string   `json:"favoriteSpot"`
+	WorkStyle        string   `json:"workStyle"`
+	SocialPreference string   `json:"socialPreference"`
+	Quirks           []string `json:"quirks"`
+}
+
+type NarrativeDTO struct {
+	Description  string   `json:"description"`
+	Catchphrases []string `json:"catchphrases"`
+	Backstory    string   `json:"backstory"`
+}
+
+type CharacterProfileDTO struct {
+	WorkerID  string               `json:"workerId"`
+	Traits    PersonalityTraitsDTO `json:"traits"`
+	Mood      MoodDTO              `json:"mood"`
+	Habits    HabitsDTO            `json:"habits"`
+	Narrative NarrativeDTO         `json:"narrative"`
+}
+
+type RelationshipDTO struct {
+	WorkerA          string   `json:"workerA"`
+	WorkerB          string   `json:"workerB"`
+	Affinity         int      `json:"affinity"`
+	Trust            int      `json:"trust"`
+	InteractionCount int      `json:"interactionCount"`
+	Tags             []string `json:"tags"`
+}

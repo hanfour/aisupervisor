@@ -36,6 +36,7 @@ type Manager struct {
 	wg           sync.WaitGroup
 	workersPath  string
 	personalityStore *personality.Store
+	narrator         *personality.Narrator
 	review           *ReviewPipeline
 	collector        *training.Collector
 	finetuneRunner *training.FinetuneRunner
@@ -962,6 +963,11 @@ func (m *Manager) ProjectStore() *project.Store {
 // GetPersonalityStore returns the personality store.
 func (m *Manager) GetPersonalityStore() *personality.Store {
 	return m.personalityStore
+}
+
+// GetNarrator returns the narrator instance (may be nil if Ollama is not configured).
+func (m *Manager) GetNarrator() *personality.Narrator {
+	return m.narrator
 }
 
 // Shutdown cancels all active workers and waits for goroutines to exit.

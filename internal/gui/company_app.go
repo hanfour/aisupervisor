@@ -287,3 +287,91 @@ func (c *CompanyApp) GetTrainingStats() (*TrainingStatsDTO, error) {
 		ApprovalRate: stats.ApprovalRate,
 	}, nil
 }
+
+// --- Personality operations ---
+
+func (c *CompanyApp) GetCharacterProfile(workerID string) *CharacterProfileDTO {
+	store := c.company.GetPersonalityStore()
+	if store == nil {
+		return nil
+	}
+	p := store.GetProfile(workerID)
+	if p == nil {
+		return nil
+	}
+	return &CharacterProfileDTO{
+		WorkerID: p.WorkerID,
+		Traits: PersonalityTraitsDTO{
+			Sociability: p.Traits.Sociability,
+			Focus:       p.Traits.Focus,
+			Creativity:  p.Traits.Creativity,
+			Empathy:     p.Traits.Empathy,
+			Ambition:    p.Traits.Ambition,
+			Humor:       p.Traits.Humor,
+		},
+		Mood: MoodDTO{
+			Current: p.Mood.Current,
+			Energy:  p.Mood.Energy,
+			Morale:  p.Mood.Morale,
+		},
+		Habits: HabitsDTO{
+			CoffeeTime:       p.Habits.CoffeeTime,
+			FavoriteSpot:     p.Habits.FavoriteSpot,
+			WorkStyle:        p.Habits.WorkStyle,
+			SocialPreference: p.Habits.SocialPreference,
+			Quirks:           p.Habits.Quirks,
+		},
+		Narrative: NarrativeDTO{
+			Description:  p.Narrative.Description,
+			Catchphrases: p.Narrative.Catchphrases,
+			Backstory:    p.Narrative.Backstory,
+		},
+	}
+}
+
+func (c *CompanyApp) GetWorkerRelationships(workerID string) []RelationshipDTO {
+	store := c.company.GetPersonalityStore()
+	if store == nil {
+		return nil
+	}
+	rels := store.GetWorkerRelationships(workerID)
+	dtos := make([]RelationshipDTO, len(rels))
+	for i, r := range rels {
+		dtos[i] = RelationshipDTO{
+			WorkerA:          r.WorkerA,
+			WorkerB:          r.WorkerB,
+			Affinity:         r.Affinity,
+			Trust:            r.Trust,
+			InteractionCount: r.InteractionCount,
+			Tags:             r.Tags,
+		}
+	}
+	return dtos
+}
+
+func (c *CompanyApp) GenerateNarrative(workerID string) error {
+	store := c.company.GetPersonalityStore()
+	if store == nil {
+		return fmt.Errorf("personality store not initialized")
+	}
+	p := store.GetProfile(workerID)
+	if p == nil {
+		return fmt.Errorf("profile not found: %s", workerID)
+	}
+	narrator := c.company.GetNarrator()
+	if narrator == nil {
+		return fmt.Errorf("narrator not available (Ollama not configured)")
+	}
+	w, ok := c.company.GetWorker(workerID)
+	name := workerID
+	if ok && w != nil {
+		name = w.Name
+	}
+	narrative, err := narrator.GeneratePersonality(context.Background(), name, p.Traits)
+	if err != nil {
+		return err
+	}
+	p.Narrative = *narrative
+	store.Save()
+	return nil
+}

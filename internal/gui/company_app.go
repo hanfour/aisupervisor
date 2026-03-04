@@ -469,7 +469,8 @@ func (c *CompanyApp) GetAvailableChatBackends() []string {
 	if err != nil {
 		return nil
 	}
-	chatTypes := map[string]bool{"openai": true, "ollama": true, "anthropic_api": true, "anthropic_oauth": true}
+	// anthropic_oauth is excluded — Anthropic restricts OAuth tokens to Claude Code only.
+	chatTypes := map[string]bool{"openai": true, "ollama": true, "anthropic_api": true}
 	var result []string
 	for _, bc := range cfg.Backends {
 		if chatTypes[bc.Type] {

@@ -53,8 +53,9 @@
         messages = [...messages, { role: 'assistant', content: questionText }]
       }
     } catch (e) {
-      addError('AI chat error: ' + e.message)
-      messages = [...messages, { role: 'assistant', content: 'Sorry, an error occurred. Please try again.' }]
+      const errMsg = typeof e === 'string' ? e : (e.message || String(e))
+      addError('AI chat error: ' + errMsg)
+      messages = [...messages, { role: 'assistant', content: errMsg }]
     }
 
     loading = false

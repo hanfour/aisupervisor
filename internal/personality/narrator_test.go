@@ -39,7 +39,7 @@ func TestNarrator_GenerateDialogue(t *testing.T) {
 	mock := &mockAIBackend{response: "先喝杯咖啡再來看這個 bug"}
 	n := NewNarrator(mock)
 
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Narrative.Catchphrases = []string{"先喝杯咖啡"}
 
 	dialogue, err := n.GenerateDialogue(context.Background(), p, "watercooler")

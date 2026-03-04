@@ -5,7 +5,7 @@ import { findPath, isWalkable, getAdjacentWalkable, findNearestWalkable } from '
 import { TILE_SIZE, SCALE } from './layout.js'
 
 export const TILE_PX = TILE_SIZE * SCALE                // 48
-const SPEED_PX_PER_MS = (3 * TILE_PX) / 1000           // 0.144 px/ms
+const BASE_SPEED = (3 * TILE_PX) / 1000                 // 0.144 px/ms
 
 function tileCenter(col, row) {
   return { x: col * TILE_PX + TILE_PX / 2, y: row * TILE_PX + TILE_PX / 2 }
@@ -32,9 +32,24 @@ export class CharacterPosition {
 
 // ── MovementController ───────────────────────────────────────────────────────
 
+// Mood → speed multiplier mapping
+export const MOOD_SPEED = {
+  excited:    1.4,
+  happy:      1.15,
+  neutral:    1.0,
+  stressed:   1.1,
+  frustrated: 0.8,
+  tired:      0.65,
+}
+
 export class MovementController {
   constructor() {
     this._positions = new Map() // workerId → CharacterPosition
+    this._speedMultipliers = new Map() // workerId → number
+  }
+
+  setSpeedMultiplier(workerId, mult) {
+    this._speedMultipliers.set(workerId, mult)
   }
 
   registerWorker(workerId, col, row) {
@@ -90,13 +105,14 @@ export class MovementController {
   }
 
   update(deltaMs) {
-    for (const pos of this._positions.values()) {
+    for (const [workerId, pos] of this._positions) {
       if (!pos.isMoving) continue
 
       const dx = pos.targetPixelX - pos.pixelX
       const dy = pos.targetPixelY - pos.pixelY
       const dist = Math.sqrt(dx * dx + dy * dy)
-      const step = SPEED_PX_PER_MS * deltaMs
+      const multiplier = this._speedMultipliers.get(workerId) ?? 1.0
+      const step = BASE_SPEED * multiplier * deltaMs
 
       if (dist <= 1 || step >= dist) {
         // Snap to tile center

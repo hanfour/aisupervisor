@@ -3,7 +3,7 @@ package personality
 import "testing"
 
 func TestActivityWeights_HighSociability(t *testing.T) {
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Traits.Sociability = 80
 
 	w := ComputeActivityWeights(p)
@@ -16,7 +16,7 @@ func TestActivityWeights_HighSociability(t *testing.T) {
 }
 
 func TestActivityWeights_LowSociability(t *testing.T) {
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Traits.Sociability = 20
 
 	w := ComputeActivityWeights(p)
@@ -29,7 +29,7 @@ func TestActivityWeights_LowSociability(t *testing.T) {
 }
 
 func TestActivityWeights_Tired(t *testing.T) {
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Mood.Energy = 10
 
 	w := ComputeActivityWeights(p)

@@ -1,6 +1,9 @@
 package personality
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestNewTraits_RandomRange(t *testing.T) {
 	traits := NewRandomTraits()
@@ -45,4 +48,54 @@ func TestMoodState_Clamp(t *testing.T) {
 	if m.Energy != 0 {
 		t.Errorf("Energy = %d, want 0 (clamped)", m.Energy)
 	}
+}
+
+func TestGenerateRandomBirthday_EngineerAgeRange(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		bd := GenerateRandomBirthday("engineer")
+		age := ageFromBirthday(bd)
+		if age < 21 || age > 30 {
+			t.Errorf("engineer age = %d, want 21-30", age)
+		}
+	}
+}
+
+func TestGenerateRandomBirthday_ManagerAgeRange(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		bd := GenerateRandomBirthday("manager")
+		age := ageFromBirthday(bd)
+		if age < 27 || age > 40 {
+			t.Errorf("manager age = %d, want 27-40", age)
+		}
+	}
+}
+
+func TestGenerateRandomBirthday_ConsultantAgeRange(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		bd := GenerateRandomBirthday("consultant")
+		age := ageFromBirthday(bd)
+		if age < 34 || age > 55 {
+			t.Errorf("consultant age = %d, want 34-55", age)
+		}
+	}
+}
+
+func TestNewCharacterProfile_HasBirthday(t *testing.T) {
+	p := NewCharacterProfile("w1", "engineer")
+	if p.Birthday == nil {
+		t.Fatal("Birthday should not be nil")
+	}
+	age := ageFromBirthday(*p.Birthday)
+	if age < 21 || age > 30 {
+		t.Errorf("profile birthday age = %d, want 21-30", age)
+	}
+}
+
+func ageFromBirthday(bd time.Time) int {
+	now := time.Now()
+	age := now.Year() - bd.Year()
+	if now.YearDay() < bd.YearDay() {
+		age--
+	}
+	return age
 }

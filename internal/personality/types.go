@@ -65,6 +65,7 @@ type CharacterProfile struct {
 	GrowthLog      []GrowthEntry    `yaml:"growth_log" json:"growthLog"`
 	SkillScores    SkillScores   `yaml:"skill_scores" json:"skillScores"`
 	TasksCompleted int           `yaml:"tasks_completed" json:"tasksCompleted"`
+	Birthday       *time.Time    `yaml:"birthday,omitempty" json:"birthday,omitempty"`
 }
 
 // NewRandomTraits generates personality traits with values in the range [40, 80].
@@ -111,12 +112,37 @@ func (m *MoodState) AdjustEnergy(delta int) {
 	m.Energy = clamp(m.Energy+delta, 0, 100)
 }
 
+// GenerateRandomBirthday produces a random birthday based on the worker's tier.
+// Age ranges: engineer 22-30, manager 28-40, consultant 35-55.
+func GenerateRandomBirthday(tier string) time.Time {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	var minAge, maxAge int
+	switch tier {
+	case "manager":
+		minAge, maxAge = 28, 40
+	case "consultant":
+		minAge, maxAge = 35, 55
+	default: // engineer
+		minAge, maxAge = 22, 30
+	}
+	age := minAge + r.Intn(maxAge-minAge+1)
+	now := time.Now()
+	// Random day within the birth year
+	birthYear := now.Year() - age
+	dayOfYear := 1 + r.Intn(365)
+	bd := time.Date(birthYear, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, dayOfYear-1)
+	return bd
+}
+
 // NewCharacterProfile creates a new profile with random traits and default mood.
-func NewCharacterProfile(workerID string) *CharacterProfile {
+// The tier parameter is used to generate an age-appropriate birthday.
+func NewCharacterProfile(workerID string, tier string) *CharacterProfile {
+	bd := GenerateRandomBirthday(tier)
 	return &CharacterProfile{
 		WorkerID:    workerID,
 		Traits:      NewRandomTraits(),
 		Mood:        NewDefaultMood(),
 		SkillScores: NewDefaultSkillScores(),
+		Birthday:    &bd,
 	}
 }

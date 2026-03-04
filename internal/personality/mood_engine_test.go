@@ -3,7 +3,7 @@ package personality
 import "testing"
 
 func TestApplyEvent_TaskCompleted(t *testing.T) {
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Mood.Energy = 80
 	p.Mood.Morale = 60
 
@@ -21,7 +21,7 @@ func TestApplyEvent_TaskCompleted(t *testing.T) {
 }
 
 func TestApplyEvent_TaskFailed(t *testing.T) {
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Mood.Morale = 60
 
 	ApplyEvent(p, EventTaskFailed)
@@ -35,7 +35,7 @@ func TestApplyEvent_TaskFailed(t *testing.T) {
 }
 
 func TestApplyEvent_SocialActivity_HighSociability(t *testing.T) {
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Traits.Sociability = 75
 	p.Mood.Morale = 60
 
@@ -47,7 +47,7 @@ func TestApplyEvent_SocialActivity_HighSociability(t *testing.T) {
 }
 
 func TestApplyEvent_SocialActivity_LowSociability(t *testing.T) {
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Traits.Sociability = 30
 	p.Mood.Morale = 60
 
@@ -59,7 +59,7 @@ func TestApplyEvent_SocialActivity_LowSociability(t *testing.T) {
 }
 
 func TestAutoMoodFromEnergy(t *testing.T) {
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Mood.Energy = 15
 	p.Mood.Current = MoodNeutral
 

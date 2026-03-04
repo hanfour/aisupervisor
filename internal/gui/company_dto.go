@@ -93,6 +93,7 @@ type WorkerDTO struct {
 	Avatar        string `json:"avatar"`
 	Status        string `json:"status"`
 	Tier          string `json:"tier"`
+	Role          string `json:"role,omitempty"`
 	BackendID     string `json:"backendId,omitempty"`
 	ParentID      string `json:"parentId,omitempty"`
 	ModelVersion  string `json:"modelVersion,omitempty"`
@@ -119,6 +120,7 @@ func WorkerToDTO(w *worker.Worker) WorkerDTO {
 		Avatar:        w.Avatar,
 		Status:        string(w.Status),
 		Tier:          string(w.EffectiveTier()),
+		Role:          string(w.EffectiveRole()),
 		BackendID:     w.BackendID,
 		ParentID:      w.ParentID,
 		ModelVersion:  w.ModelVersion,
@@ -241,12 +243,31 @@ type NarrativeDTO struct {
 	Backstory    string   `json:"backstory"`
 }
 
+type SkillScoresDTO struct {
+	Carefulness          int `json:"carefulness"`
+	BoundaryChecking     int `json:"boundaryChecking"`
+	TestCoverageAware    int `json:"testCoverageAware"`
+	CommunicationClarity int `json:"communicationClarity"`
+	CodeQuality          int `json:"codeQuality"`
+	SecurityAwareness    int `json:"securityAwareness"`
+}
+
+type GrowthEntryDTO struct {
+	Event   string         `json:"event"`
+	Date    string         `json:"date"`
+	Changes map[string]int `json:"changes"`
+}
+
 type CharacterProfileDTO struct {
-	WorkerID  string               `json:"workerId"`
-	Traits    PersonalityTraitsDTO `json:"traits"`
-	Mood      MoodDTO              `json:"mood"`
-	Habits    HabitsDTO            `json:"habits"`
-	Narrative NarrativeDTO         `json:"narrative"`
+	WorkerID       string               `json:"workerId"`
+	Traits         PersonalityTraitsDTO `json:"traits"`
+	Mood           MoodDTO              `json:"mood"`
+	Habits         HabitsDTO            `json:"habits"`
+	Narrative      NarrativeDTO         `json:"narrative"`
+	SkillScores    SkillScoresDTO       `json:"skillScores"`
+	TasksCompleted int                  `json:"tasksCompleted"`
+	GrowthLog      []GrowthEntryDTO     `json:"growthLog"`
+	Birthday       string               `json:"birthday,omitempty"`
 }
 
 // ResearchReportDTO represents a research report for the frontend.

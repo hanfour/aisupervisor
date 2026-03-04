@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
@@ -189,7 +190,7 @@ func (c *CompanyApp) CreateWorker(name, avatar string) (*WorkerDTO, error) {
 }
 
 // CreateWorkerWithTier creates a worker with tier and hierarchy options.
-func (c *CompanyApp) CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile string) (*WorkerDTO, error) {
+func (c *CompanyApp) CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile, gender string) (*WorkerDTO, error) {
 	var opts []company.WorkerOption
 	if tier != "" {
 		opts = append(opts, company.WithTier(worker.WorkerTier(tier)))
@@ -205,6 +206,13 @@ func (c *CompanyApp) CreateWorkerWithTier(name, avatar, tier, parentID, backendI
 	}
 	if skillProfile != "" {
 		opts = append(opts, company.WithSkillProfile(skillProfile))
+	}
+	if gender != "" {
+		g := worker.WorkerGender(gender)
+		if g != worker.GenderMale && g != worker.GenderFemale {
+			return nil, fmt.Errorf("invalid gender %q: must be 'male' or 'female'", gender)
+		}
+		opts = append(opts, company.WithGender(g))
 	}
 	w, err := c.company.CreateWorker(name, avatar, opts...)
 	if err != nil {
@@ -402,7 +410,15 @@ func (c *CompanyApp) GetCharacterProfile(workerID string) *CharacterProfileDTO {
 	if p == nil {
 		return nil
 	}
-	return &CharacterProfileDTO{
+	growthLog := make([]GrowthEntryDTO, len(p.GrowthLog))
+	for i, g := range p.GrowthLog {
+		growthLog[i] = GrowthEntryDTO{
+			Event:   g.Event,
+			Date:    g.Date.Format(time.RFC3339),
+			Changes: g.Changes,
+		}
+	}
+	dto := &CharacterProfileDTO{
 		WorkerID: p.WorkerID,
 		Traits: PersonalityTraitsDTO{
 			Sociability: p.Traits.Sociability,
@@ -429,7 +445,21 @@ func (c *CompanyApp) GetCharacterProfile(workerID string) *CharacterProfileDTO {
 			Catchphrases: p.Narrative.Catchphrases,
 			Backstory:    p.Narrative.Backstory,
 		},
+		SkillScores: SkillScoresDTO{
+			Carefulness:          p.SkillScores.Carefulness,
+			BoundaryChecking:     p.SkillScores.BoundaryChecking,
+			TestCoverageAware:    p.SkillScores.TestCoverageAware,
+			CommunicationClarity: p.SkillScores.CommunicationClarity,
+			CodeQuality:          p.SkillScores.CodeQuality,
+			SecurityAwareness:    p.SkillScores.SecurityAwareness,
+		},
+		TasksCompleted: p.TasksCompleted,
+		GrowthLog:      growthLog,
 	}
+	if p.Birthday != nil {
+		dto.Birthday = p.Birthday.Format("2006-01-02")
+	}
+	return dto
 }
 
 func (c *CompanyApp) GetWorkerRelationships(workerID string) []RelationshipDTO {
@@ -479,5 +509,24 @@ func (c *CompanyApp) GenerateNarrative(workerID string) error {
 	store.UpdateProfile(workerID, func(p *personality.CharacterProfile) {
 		p.Narrative = *narrative
 	})
+	return nil
+}
+
+// UpdateWorkerBirthday updates a worker's birthday (ISO date string, e.g. "1998-03-15").
+func (c *CompanyApp) UpdateWorkerBirthday(workerID, birthday string) error {
+	store := c.company.GetPersonalityStore()
+	if store == nil {
+		return fmt.Errorf("personality store not initialized")
+	}
+	bd, err := time.Parse("2006-01-02", birthday)
+	if err != nil {
+		return fmt.Errorf("invalid birthday format (expected YYYY-MM-DD): %w", err)
+	}
+	ok := store.UpdateProfile(workerID, func(p *personality.CharacterProfile) {
+		p.Birthday = &bd
+	})
+	if !ok {
+		return fmt.Errorf("profile not found: %s", workerID)
+	}
 	return nil
 }

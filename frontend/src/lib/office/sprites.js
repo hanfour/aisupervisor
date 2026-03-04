@@ -42,6 +42,30 @@ const CHARACTER_CONFIGS = {
   reviewer:   { bodyRow: 2, outfit: 'outfit3', hair: 'hair5' },
 }
 
+// ── Per-worker unique appearance ─────────────────────────────────────────────
+// Each worker gets a unique body/outfit/hair combination (252 possible combos)
+const WORKER_CONFIGS = {
+  'Hanfour':           { bodyRow: 4, outfit: 'outfit5', hair: 'hair5' },
+  'Ken Norton':        { bodyRow: 1, outfit: 'outfit2', hair: 'hair3' },
+  'Sundar Pichai':     { bodyRow: 3, outfit: 'outfit3', hair: 'hair2' },
+  'Steve':             { bodyRow: 0, outfit: 'outfit4', hair: 'hair4' },
+  'Joe':               { bodyRow: 5, outfit: 'outfit1', hair: 'hair6' },
+  'Ryan':              { bodyRow: 2, outfit: 'outfit6', hair: 'hair1' },
+  'Jamie':             { bodyRow: 1, outfit: 'outfit5', hair: 'hair7' },
+  'Mario':             { bodyRow: 0, outfit: 'outfit3', hair: 'hair3' },
+  'Lastor':            { bodyRow: 3, outfit: 'outfit6', hair: 'hair1' },
+  'Rocco':             { bodyRow: 5, outfit: 'outfit4', hair: 'hair4' },
+  'Kirt':              { bodyRow: 2, outfit: 'outfit2', hair: 'hair6' },
+  'Bruce Tognazinni':  { bodyRow: 4, outfit: 'outfit1', hair: 'hair2' },
+  'Jakob Nielsen':     { bodyRow: 1, outfit: 'outfit4', hair: 'hair5' },
+  'Luke Wroblewski':   { bodyRow: 0, outfit: 'outfit6', hair: 'hair7' },
+  'Alice':             { bodyRow: 2, outfit: 'outfit2', hair: 'hair3' },
+  'Elain':             { bodyRow: 0, outfit: 'outfit3', hair: 'hair5' },
+  'Edwina':            { bodyRow: 4, outfit: 'outfit5', hair: 'hair1' },
+  'Niko':              { bodyRow: 3, outfit: 'outfit6', hair: 'hair7' },
+  'Shan':              { bodyRow: 5, outfit: 'outfit2', hair: 'hair4' },
+}
+
 const CHARACTER_NAMES = Object.keys(CHARACTER_CONFIGS)
 
 // ── Animation state → frame indices (from down-facing direction) ─────────────
@@ -144,7 +168,7 @@ function compositeFrame(bodyImg, bodyRow, outfitImg, hairImg, col) {
 
 export function prerenderCharacter(charType) {
   if (!imagesLoaded) return null
-  const config = CHARACTER_CONFIGS[charType]
+  const config = WORKER_CONFIGS[charType] || CHARACTER_CONFIGS[charType]
   if (!config) return null
 
   const bodyImg = imageCache.body
@@ -188,6 +212,9 @@ const AVATAR_TO_CHAR = {
 }
 
 export function getCharacterType(worker) {
+  // Per-worker unique appearance takes priority
+  if (worker.name && WORKER_CONFIGS[worker.name]) return worker.name
+
   if (worker.avatar && AVATAR_TO_CHAR[worker.avatar]) return AVATAR_TO_CHAR[worker.avatar]
   if (worker.skillProfile && AVATAR_TO_CHAR[worker.skillProfile]) return AVATAR_TO_CHAR[worker.skillProfile]
   let hash = 0
@@ -451,4 +478,4 @@ export const SKILL_PROFILE_ICONS = {
   reviewer:   '\u2705',
 }
 
-export { FURNITURE_SPRITES, ENV_SPRITES, CHARACTER_NAMES, CHARACTER_CONFIGS }
+export { FURNITURE_SPRITES, ENV_SPRITES, CHARACTER_NAMES, CHARACTER_CONFIGS, WORKER_CONFIGS }

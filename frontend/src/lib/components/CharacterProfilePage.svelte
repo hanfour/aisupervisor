@@ -5,6 +5,8 @@
   import { events } from '../stores/events.js'
   import { prerenderCharacter, getCharacterType, loadAllSprites, spritesReady } from '../office/sprites.js'
   import { openChat } from '../stores/workerChat.js'
+  import { t } from '../stores/i18n.js'
+  import { calcAge, genderIcon } from '../utils/worker.js'
 
   export let workerId
   export let onBack = () => {}
@@ -46,13 +48,13 @@
     if (animTimer) clearInterval(animTimer)
   })
 
-  const traitLabels = {
-    sociability: '社交性',
-    focus: '專注力',
-    creativity: '創造力',
-    empathy: '同理心',
-    ambition: '野心',
-    humor: '幽默感'
+  const traitKeys = {
+    sociability: 'trait.sociability',
+    focus: 'trait.focus',
+    creativity: 'trait.creativity',
+    empathy: 'trait.empathy',
+    ambition: 'trait.ambition',
+    humor: 'trait.humor',
   }
 
   async function loadData() {
@@ -122,8 +124,17 @@
 
   // Skill tree progress (simplified: engineer=1, manager=2, consultant=3)
   function skillLevel(tier) {
-    const t = (tier || 'engineer').toLowerCase()
-    return { engineer: 1, manager: 2, consultant: 3 }[t] || 1
+    const ti = (tier || 'engineer').toLowerCase()
+    return { engineer: 1, manager: 2, consultant: 3 }[ti] || 1
+  }
+
+  const skillScoreKeys = {
+    carefulness: 'skill.carefulness',
+    boundaryChecking: 'skill.boundaryChecking',
+    testCoverageAware: 'skill.testCoverageAware',
+    communicationClarity: 'skill.communicationClarity',
+    codeQuality: 'skill.codeQuality',
+    securityAwareness: 'skill.securityAwareness',
   }
 </script>
 
@@ -145,6 +156,15 @@
           <span class="tier-icon">{tierIcon(worker.tier)}</span>
           {tierLabel(worker.tier)}
         </div>
+        {#if worker.gender}
+          <div class="char-gender">{genderIcon(worker.gender)} {$t('gender.' + worker.gender)}</div>
+        {/if}
+        {#if worker.role}
+          <div class="char-role">{$t('role.' + worker.role)}</div>
+        {/if}
+        {#if profile?.birthday}
+          <div class="char-age">{$t('workerDetail.age')}: {calcAge(profile.birthday)}</div>
+        {/if}
         <div class="char-status" style="color: {statusColor(worker.status)}">
           ● {worker.status || 'idle'}
         </div>
@@ -228,7 +248,7 @@
       <div class="nes-container is-dark personality-section">
         <p class="section-title">🎭 PERSONALITY</p>
         <p style="font-size: 9px; color: #aaa; margin-bottom: 8px;">
-          {profile.narrative?.description || '尚未生成性格描述'}
+          {profile.narrative?.description || $t('workerDetail.noNarrative')}
         </p>
 
         {#if profile.narrative?.catchphrases?.length}
@@ -239,39 +259,107 @@
         </div>
         {/if}
 
-        <p class="section-title" style="margin-top: 8px;">情緒</p>
+        <p class="section-title" style="margin-top: 8px;">{$t('workerDetail.mood')}</p>
         <div style="font-size: 8px;">
           <div class="mood-row">
-            <span>心情: {profile.mood?.current || 'neutral'}</span>
+            <span>{$t('workerDetail.moodCurrent')} {profile.mood?.current || 'neutral'}</span>
           </div>
           <div class="mood-row">
-            <span>能量</span>
+            <span>{$t('workerDetail.energy')}</span>
             <progress class="nes-progress is-primary" value={profile.mood?.energy || 0} max="100" style="height: 10px; flex: 1;"></progress>
             <span>{profile.mood?.energy || 0}%</span>
           </div>
           <div class="mood-row">
-            <span>士氣</span>
+            <span>{$t('workerDetail.morale')}</span>
             <progress class="nes-progress is-success" value={profile.mood?.morale || 0} max="100" style="height: 10px; flex: 1;"></progress>
             <span>{profile.mood?.morale || 0}%</span>
           </div>
         </div>
 
-        <p class="section-title" style="margin-top: 8px;">特質</p>
+        <p class="section-title" style="margin-top: 8px;">{$t('workerDetail.traits')}</p>
         <div style="font-size: 8px;">
           {#each Object.entries(profile.traits || {}) as [key, value]}
           <div class="trait-row">
-            <span class="trait-label">{traitLabels[key] || key}</span>
+            <span class="trait-label">{$t(traitKeys[key] || key)}</span>
             <progress class="nes-progress" value={value} max="100" style="height: 8px; flex: 1;"></progress>
             <span class="trait-value">{value}</span>
           </div>
           {/each}
         </div>
 
+        {#if profile.narrative?.backstory}
+        <p class="section-title" style="margin-top: 8px;">{$t('workerDetail.backstory')}</p>
+        <p style="font-size: 8px; color: #aaa;">{profile.narrative.backstory}</p>
+        {/if}
+
         {#if !profile.narrative?.description}
-        <button class="nes-btn is-primary" style="margin-top: 8px; font-size: 8px;" on:click={handleGenerateNarrative}>
-          生成性格描述 (Ollama)
+        <button class="nes-btn is-primary generate-btn" on:click={handleGenerateNarrative}>
+          {$t('workerDetail.generateNarrative')}
         </button>
         {/if}
+      </div>
+      {/if}
+
+      <!-- Habits Section -->
+      {#if profile && (profile.habits?.coffeeTime || profile.habits?.favoriteSpot || profile.habits?.workStyle || profile.habits?.socialPreference || profile.habits?.quirks?.length)}
+      <div class="nes-container is-dark habits-section">
+        <p class="section-title">☕ {$t('workerDetail.habits')}</p>
+        <div class="equip-list">
+          {#if profile.habits.coffeeTime}
+            <div class="equip-item"><span class="equip-label">{$t('habit.coffeeTime')}</span><span class="equip-value">{profile.habits.coffeeTime}</span></div>
+          {/if}
+          {#if profile.habits.favoriteSpot}
+            <div class="equip-item"><span class="equip-label">{$t('habit.favoriteSpot')}</span><span class="equip-value">{profile.habits.favoriteSpot}</span></div>
+          {/if}
+          {#if profile.habits.workStyle}
+            <div class="equip-item"><span class="equip-label">{$t('habit.workStyle')}</span><span class="equip-value">{profile.habits.workStyle}</span></div>
+          {/if}
+          {#if profile.habits.socialPreference}
+            <div class="equip-item"><span class="equip-label">{$t('habit.socialPreference')}</span><span class="equip-value">{profile.habits.socialPreference}</span></div>
+          {/if}
+          {#if profile.habits.quirks?.length}
+            <div class="equip-item"><span class="equip-label">{$t('habit.quirks')}</span><span class="equip-value">{profile.habits.quirks.join(', ')}</span></div>
+          {/if}
+        </div>
+      </div>
+      {/if}
+
+      <!-- Skill Scores Section -->
+      {#if profile}
+      <div class="nes-container is-dark skill-scores-section">
+        <p class="section-title">🎯 {$t('workerDetail.skillScores')}</p>
+        <div style="font-size: 8px;">
+          {#each Object.entries(profile.skillScores || {}) as [key, value]}
+          <div class="trait-row">
+            <span class="trait-label" style="width: 70px;">{$t(skillScoreKeys[key] || key)}</span>
+            <progress class="nes-progress is-warning" value={value} max="100" style="height: 8px; flex: 1;"></progress>
+            <span class="trait-value">{value}</span>
+          </div>
+          {/each}
+        </div>
+        <div style="margin-top: 8px; text-align: center;">
+          <span style="font-size: 10px; color: var(--accent-green);">{$t('workerDetail.tasksCompleted')}: {profile.tasksCompleted || 0}</span>
+        </div>
+      </div>
+      {/if}
+
+      <!-- Growth Log Section -->
+      {#if profile?.growthLog?.length}
+      <div class="nes-container is-dark growth-section">
+        <p class="section-title">📈 {$t('workerDetail.growthLog')}</p>
+        <div style="font-size: 7px; max-height: 150px; overflow-y: auto;">
+          {#each profile.growthLog.slice(-10) as entry}
+          <div style="padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <span style="color: var(--accent-blue);">[{new Date(entry.date).toLocaleDateString()}]</span>
+            <span>{entry.event}</span>
+            {#if entry.changes}
+              <span style="color: var(--text-secondary);">
+                ({Object.entries(entry.changes).map(([k,v]) => `${k}: ${v > 0 ? '+' : ''}${v}`).join(', ')})
+              </span>
+            {/if}
+          </div>
+          {/each}
+        </div>
       </div>
       {/if}
 
@@ -285,12 +373,12 @@
             {rel.workerA === workerId ? rel.workerB : rel.workerA}
           </span>
           <div class="mood-row">
-            <span>好感</span>
+            <span>{$t('workerDetail.affinity')}</span>
             <progress class="nes-progress is-warning" value={rel.affinity} max="100" style="height: 8px; flex: 1;"></progress>
             <span>{rel.affinity}</span>
           </div>
           <div class="mood-row">
-            <span>信任</span>
+            <span>{$t('workerDetail.trust')}</span>
             <progress class="nes-progress is-success" value={rel.trust} max="100" style="height: 8px; flex: 1;"></progress>
             <span>{rel.trust}</span>
           </div>
@@ -419,6 +507,24 @@
 
   .tier-icon {
     font-size: 14px;
+  }
+
+  .char-gender {
+    font-size: 9px;
+    color: var(--accent-blue);
+    margin-top: 2px;
+  }
+
+  .char-role {
+    font-size: 8px;
+    color: var(--accent-yellow);
+    margin-top: 2px;
+  }
+
+  .char-age {
+    font-size: 9px;
+    color: var(--text-color);
+    margin-top: 2px;
   }
 
   .char-status {
@@ -571,8 +677,17 @@
   }
 
   /* Personality */
-  .personality-section, .relationships-section {
+  .personality-section, .relationships-section, .skill-scores-section, .growth-section {
     grid-column: span 2;
+  }
+
+  .habits-section {
+    grid-column: span 1;
+  }
+
+  .generate-btn {
+    margin-top: 8px;
+    font-size: 8px !important;
   }
 
   .mood-row {

@@ -10,7 +10,7 @@ func TestStore_SaveAndLoad_Profiles(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	p.Traits.Sociability = 72
 	p.Narrative.Description = "測試角色"
 	s.SetProfile(p)
@@ -69,7 +69,7 @@ func TestStore_SaveAndLoad_Relationships(t *testing.T) {
 func TestStore_DeleteProfile(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	s.SetProfile(NewCharacterProfile("w1"))
+	s.SetProfile(NewCharacterProfile("w1", "engineer"))
 	s.DeleteProfile("w1")
 	if s.GetProfile("w1") != nil {
 		t.Error("profile should be nil after delete")
@@ -93,7 +93,7 @@ func TestStore_UpdateProfile(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	s.SetProfile(p)
 
 	ok := s.UpdateProfile("w1", func(p *CharacterProfile) {
@@ -117,7 +117,7 @@ func TestStore_Save_AtomicWrite(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 
-	p := NewCharacterProfile("w1")
+	p := NewCharacterProfile("w1", "engineer")
 	s.SetProfile(p)
 
 	if err := s.Save(); err != nil {

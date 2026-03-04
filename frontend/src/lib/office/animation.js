@@ -26,6 +26,23 @@ const STATUS_TO_ANIM = {
   'completed': 'finished',
 }
 
+// Mood-based animation interval modifiers (applied to idle/working/waiting states)
+const MOOD_ANIM_MODIFIERS = {
+  stressed:   { idle: 250, working: 200, waiting: 400 },   // fidgety
+  tired:      { idle: 900, working: 400, waiting: 1000 },  // sluggish
+  excited:    { idle: 300, working: 200, waiting: 450 },   // bouncy
+  frustrated: { idle: 650, working: 300, waiting: 800 },   // heavy
+  happy:      { idle: 450, working: 230, waiting: 650 },   // slightly upbeat
+}
+
+export function getAnimInterval(state, mood) {
+  const config = ANIM_CONFIG[state]
+  if (!config) return 500
+  const moodMod = mood && MOOD_ANIM_MODIFIERS[mood]
+  if (moodMod && moodMod[state] !== undefined) return moodMod[state]
+  return config.interval
+}
+
 export function statusToAnim(workerStatus) {
   return STATUS_TO_ANIM[workerStatus] || 'idle'
 }
@@ -46,13 +63,14 @@ export class AnimationState {
     this.playCount = 0
   }
 
-  update(deltaMs) {
+  update(deltaMs, mood) {
     const config = ANIM_CONFIG[this.state]
     if (!config) return
 
+    const interval = getAnimInterval(this.state, mood)
     this.elapsed += deltaMs
-    if (this.elapsed >= config.interval) {
-      this.elapsed -= config.interval
+    if (this.elapsed >= interval) {
+      this.elapsed -= interval
       this.frame++
 
       if (this.frame >= config.frameCount) {

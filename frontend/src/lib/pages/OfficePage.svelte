@@ -8,19 +8,22 @@
   import { loadAllSprites } from '../office/sprites.js'
   import { playFinished, playError, playAssign, setSoundEnabled, isSoundEnabled } from '../office/sounds.js'
   import CharacterProfilePage from '../components/CharacterProfilePage.svelte'
-  import { initPersonalityEvents, loadCharacterProfile } from '../stores/personality.js'
+  import { initPersonalityEvents, loadCharacterProfile, loadAllRelationships } from '../stores/personality.js'
   import { t } from '../stores/i18n.js'
+  import { gameTimeString, currentPhase, gameClockSpeed } from '../stores/simulation.js'
 
   let canvasEl
   let renderer
   let simulation
   let selectedWorkerId = null
   let soundOn = isSoundEnabled()
+  let clockSpeed = 1
   let pollTimer
   let prevStatuses = {}
 
   // Workers not assigned to any desk (overflow)
   let overflowWorkers = []
+  let cachedRelationships = null
 
   $: allWorkers = $workersStore || []
 
@@ -47,7 +50,16 @@
 
     // Load personality profiles for all workers
     const workers = $workersStore || []
-    if (workers.length > 0) loadAllProfiles(workers)
+    if (workers.length > 0) {
+      loadAllProfiles(workers)
+      // Load relationships for social graph and desk assignment
+      loadAllRelationships(workers.map(w => w.id)).then(rels => {
+        cachedRelationships = rels
+        if (simulation) simulation.setRelationships(rels)
+        // Re-assign desks with relationship awareness
+        updateRenderer()
+      })
+    }
 
     // Retry renderer init after a delay in case sprites weren't fully decoded
     setTimeout(() => updateRenderer(), 500)
@@ -79,7 +91,7 @@
       if (!renderer) return
     }
     const workers = $workersStore || []
-    const assignments = assignDesksToWorkers(workers)
+    const assignments = assignDesksToWorkers(workers, cachedRelationships)
     renderer.setWorkers(workers, assignments)
 
     // Detect status changes for sounds
@@ -138,6 +150,24 @@
   function handleSelectWorker(id) {
     selectedWorkerId = id
   }
+
+  function handleClockSpeed(e) {
+    const speeds = [1, 2, 4, 8]
+    const idx = parseInt(e.target.value)
+    clockSpeed = speeds[idx] || 1
+    if (simulation) simulation.setGameClockSpeed(clockSpeed)
+  }
+
+  const PHASE_LABELS = {
+    morning_arrival: '上班',
+    work_morning: '上午',
+    lunch: '午餐',
+    work_afternoon: '下午',
+    tea_break: '下午茶',
+    work_late: '下午',
+    overtime: '加班',
+    night: '深夜',
+  }
 </script>
 
 <div class="office-wrapper">
@@ -146,6 +176,22 @@
     <div class="office-header">
       <h2 class="office-title">&#9635; {$t('office.title')}</h2>
       <div class="header-controls">
+        <div class="clock-hud">
+          <span class="clock-time">{$gameTimeString}</span>
+          <span class="clock-phase">{PHASE_LABELS[$currentPhase] || $currentPhase}</span>
+          <div class="speed-control">
+            <span class="speed-label">{clockSpeed}x</span>
+            <input
+              type="range"
+              min="0"
+              max="3"
+              step="1"
+              value={[1,2,4,8].indexOf(clockSpeed)}
+              on:input={handleClockSpeed}
+              class="speed-slider"
+            />
+          </div>
+        </div>
         <span class="worker-count">{allWorkers.length} {$t('office.workers')}</span>
         <button class="nes-btn sound-btn" class:is-primary={soundOn} on:click={toggleSound}>
           {soundOn ? '&#9835; ON' : '&#9835; OFF'}
@@ -241,6 +287,58 @@
   .sound-btn {
     font-size: 8px !important;
     padding: 4px 8px !important;
+  }
+
+  .clock-hud {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Press Start 2P', monospace;
+  }
+
+  .clock-time {
+    font-size: 11px;
+    color: #00ff41;
+    text-shadow: 0 0 6px rgba(0,255,65,0.4);
+  }
+
+  .clock-phase {
+    font-size: 7px;
+    color: #888;
+    background: rgba(0,255,65,0.1);
+    padding: 2px 6px;
+    border: 1px solid rgba(0,255,65,0.2);
+  }
+
+  .speed-control {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .speed-label {
+    font-size: 7px;
+    color: #00ddff;
+    min-width: 20px;
+  }
+
+  .speed-slider {
+    width: 50px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #333;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 10px;
+    height: 10px;
+    background: #00ddff;
+    cursor: pointer;
   }
 
   .canvas-container {

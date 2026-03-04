@@ -4,6 +4,7 @@
   import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import WorkerLogPanel from './WorkerLogPanel.svelte'
   import { t } from '../stores/i18n.js'
+  import { calcAge, genderIcon } from '../utils/worker.js'
 
   export let workerId = ''
   export let onClose = () => {}
@@ -18,6 +19,8 @@
   let selectedSkill = ''
   let profile = null
   let workerRelationships = []
+  let editingBirthday = false
+  let birthdayInput = ''
 
   const avatarMap = {
     robot: '🤖', cat: '🐱', kirby: '⭐', mario: '🍄',
@@ -67,6 +70,32 @@
     }
   }
 
+  function genderLabel(g) {
+    if (g === 'female') return $t('gender.female')
+    if (g === 'male') return $t('gender.male')
+    return ''
+  }
+
+  const skillScoreKeys = {
+    carefulness: 'skill.carefulness',
+    boundaryChecking: 'skill.boundaryChecking',
+    testCoverageAware: 'skill.testCoverageAware',
+    communicationClarity: 'skill.communicationClarity',
+    codeQuality: 'skill.codeQuality',
+    securityAwareness: 'skill.securityAwareness',
+  }
+
+  async function handleBirthdaySave() {
+    if (!worker || !birthdayInput) return
+    try {
+      await window.go.gui.CompanyApp.UpdateWorkerBirthday(worker.id, birthdayInput)
+      editingBirthday = false
+      profile = await loadCharacterProfile(worker.id)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   async function handleGenerateNarrative() {
     try {
       await generateNarrative(workerId)
@@ -101,6 +130,36 @@
             </span>
           </div>
         </div>
+
+        <!-- Gender & Birthday -->
+        {#if worker.gender}
+          <div class="detail-row">
+            <span class="label">{$t('workerDetail.gender')}</span>
+            <span class="value">{genderIcon(worker.gender)} {genderLabel(worker.gender)}</span>
+          </div>
+        {/if}
+        {#if worker.role}
+          <div class="detail-row">
+            <span class="label">{$t('workerDetail.role')}</span>
+            <span class="value">{$t('role.' + worker.role) || worker.role}</span>
+          </div>
+        {/if}
+        {#if profile?.birthday}
+          <div class="detail-row">
+            <span class="label">{$t('workerDetail.birthday')}</span>
+            {#if editingBirthday}
+              <div class="skill-edit">
+                <input type="date" class="birthday-input" bind:value={birthdayInput} />
+                <button class="nes-btn is-success btn-sm" on:click={handleBirthdaySave}>OK</button>
+                <button class="nes-btn btn-sm" on:click={() => editingBirthday = false}>X</button>
+              </div>
+            {:else}
+              <span class="value skill-value" on:click={() => { editingBirthday = true; birthdayInput = profile.birthday }} on:keydown={(e) => e.key === 'Enter' && (editingBirthday = true)} role="button" tabindex="0">
+                {profile.birthday} ({$t('workerDetail.age')}: {calcAge(profile.birthday)})
+              </span>
+            {/if}
+          </div>
+        {/if}
 
         <!-- Status -->
         <div class="detail-row">
@@ -248,6 +307,71 @@
             </div>
             {/each}
           </div>
+          {#if profile.narrative?.backstory}
+          <h4 style="font-size: 11px; margin-top: 8px;">{$t('workerDetail.backstory')}</h4>
+          <p style="font-size: 9px; color: #aaa;">{profile.narrative.backstory}</p>
+          {/if}
+
+          <!-- Habits -->
+          {#if profile.habits?.coffeeTime || profile.habits?.favoriteSpot || profile.habits?.workStyle || profile.habits?.socialPreference || profile.habits?.quirks?.length}
+          <h4 style="font-size: 11px; margin-top: 8px;">{$t('workerDetail.habits')}</h4>
+          <div style="font-size: 9px;">
+            {#if profile.habits.coffeeTime}
+              <div class="detail-row"><span class="label">{$t('habit.coffeeTime')}</span><span class="value">{profile.habits.coffeeTime}</span></div>
+            {/if}
+            {#if profile.habits.favoriteSpot}
+              <div class="detail-row"><span class="label">{$t('habit.favoriteSpot')}</span><span class="value">{profile.habits.favoriteSpot}</span></div>
+            {/if}
+            {#if profile.habits.workStyle}
+              <div class="detail-row"><span class="label">{$t('habit.workStyle')}</span><span class="value">{profile.habits.workStyle}</span></div>
+            {/if}
+            {#if profile.habits.socialPreference}
+              <div class="detail-row"><span class="label">{$t('habit.socialPreference')}</span><span class="value">{profile.habits.socialPreference}</span></div>
+            {/if}
+            {#if profile.habits.quirks?.length}
+              <div class="detail-row">
+                <span class="label">{$t('habit.quirks')}</span>
+                <span class="value">{profile.habits.quirks.join(', ')}</span>
+              </div>
+            {/if}
+          </div>
+          {/if}
+
+          <!-- Skill Scores -->
+          <h4 style="font-size: 11px; margin-top: 8px;">{$t('workerDetail.skillScores')}</h4>
+          <div style="font-size: 10px;">
+            {#each Object.entries(profile.skillScores || {}) as [key, value]}
+            <div style="display: flex; align-items: center; gap: 4px; margin: 2px 0;">
+              <span style="width: 70px;">{$t(skillScoreKeys[key] || key)}</span>
+              <progress class="nes-progress is-warning" value={value} max="100" style="height: 8px; flex: 1;"></progress>
+              <span style="width: 24px; text-align: right;">{value}</span>
+            </div>
+            {/each}
+          </div>
+
+          <!-- Tasks Completed -->
+          <div class="detail-row" style="margin-top: 8px;">
+            <span class="label">{$t('workerDetail.tasksCompleted')}</span>
+            <span class="value" style="font-size: 12px; color: var(--accent-green);">{profile.tasksCompleted || 0}</span>
+          </div>
+
+          <!-- Growth Log -->
+          {#if profile.growthLog?.length}
+          <h4 style="font-size: 11px; margin-top: 8px;">{$t('workerDetail.growthLog')}</h4>
+          <div style="font-size: 8px; max-height: 120px; overflow-y: auto;">
+            {#each profile.growthLog.slice(-10) as entry}
+            <div style="padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+              <span style="color: var(--accent-blue);">[{new Date(entry.date).toLocaleDateString()}]</span>
+              <span>{entry.event}</span>
+              {#if entry.changes}
+                <span style="color: var(--text-secondary);">
+                  ({Object.entries(entry.changes).map(([k,v]) => `${k}: ${v > 0 ? '+' : ''}${v}`).join(', ')})
+                </span>
+              {/if}
+            </div>
+            {/each}
+          </div>
+          {/if}
         </section>
 
         {#if !profile.narrative?.description}
@@ -464,6 +588,15 @@
   .btn-sm {
     font-size: 7px !important;
     padding: 1px 6px !important;
+  }
+
+  .birthday-input {
+    font-size: 9px;
+    padding: 2px 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 2px solid var(--border-color);
+    max-width: 120px;
   }
 
   .skill-description {

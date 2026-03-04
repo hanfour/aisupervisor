@@ -359,7 +359,7 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 
 	m.workers[w.ID] = w
 
-	profile := personality.NewCharacterProfile(w.ID)
+	profile := personality.NewCharacterProfile(w.ID, string(w.EffectiveTier()))
 	m.personalityStore.SetProfile(profile)
 
 	if m.narrator != nil {

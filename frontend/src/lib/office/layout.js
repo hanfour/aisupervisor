@@ -83,7 +83,7 @@ export function getFloorMap() {
 // Persists to localStorage
 const STORAGE_KEY = 'pixelOffice_deskAssignments'
 
-export function assignDesksToWorkers(workers) {
+export function assignDesksToWorkers(workers, relationships = null) {
   // Try to restore from localStorage
   const saved = localStorage.getItem(STORAGE_KEY)
   let assignments = saved ? JSON.parse(saved) : {}
@@ -102,6 +102,12 @@ export function assignDesksToWorkers(workers) {
     const tier = (w.tier || 'engineer').toLowerCase()
     if (byTier[tier]) byTier[tier].push(w)
     else byTier.engineer.push(w)
+  }
+
+  // Sort engineers by relationship affinity if relationships are provided
+  // Workers with high mutual affinity get assigned sequentially → adjacent desks
+  if (relationships && byTier.engineer.length > 1) {
+    byTier.engineer = _sortByAffinity(byTier.engineer, relationships)
   }
 
   // Get available desks per zone
@@ -132,6 +138,48 @@ export function assignDesksToWorkers(workers) {
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(assignments))
   return assignments
+}
+
+// Sort workers so high-affinity pairs end up adjacent in the array
+// (which maps to adjacent desks since desks are assigned sequentially)
+function _sortByAffinity(engineers, relationships) {
+  if (!relationships?.length) return engineers
+
+  // Build affinity lookup
+  const affinityMap = new Map()
+  for (const r of relationships) {
+    const key = r.workerA < r.workerB ? `${r.workerA}-${r.workerB}` : `${r.workerB}-${r.workerA}`
+    affinityMap.set(key, r.affinity || 50)
+  }
+
+  function getAffinity(idA, idB) {
+    const key = idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`
+    return affinityMap.get(key) ?? 50
+  }
+
+  // Greedy nearest-neighbor: start with first, pick highest affinity next
+  const result = []
+  const remaining = new Set(engineers.map((_, i) => i))
+  let current = 0
+  remaining.delete(0)
+  result.push(engineers[0])
+
+  while (remaining.size > 0) {
+    let bestIdx = -1
+    let bestAff = -1
+    for (const idx of remaining) {
+      const aff = getAffinity(engineers[current].id, engineers[idx].id)
+      if (aff > bestAff) {
+        bestAff = aff
+        bestIdx = idx
+      }
+    }
+    remaining.delete(bestIdx)
+    result.push(engineers[bestIdx])
+    current = bestIdx
+  }
+
+  return result
 }
 
 // Build a lookup: workerId → desk object

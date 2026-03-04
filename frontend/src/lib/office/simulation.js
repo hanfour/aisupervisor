@@ -2,6 +2,10 @@
 // Drives the activity state machine for each worker and reacts to backend events
 
 import { getZoneTiles } from './layout.js'
+import { MOOD_SPEED } from './movement.js'
+import { GameClock, PHASES } from './gameClock.js'
+import { SocialGraph } from './socialGraph.js'
+import { gameTimeString, currentPhase, gameClockSpeed, gameDayCount } from '../stores/simulation.js'
 
 // ── Message pools ─────────────────────────────────────────────────────────────
 
@@ -94,6 +98,16 @@ const PAIR_PROG_MESSAGES = [
     '試試這個方法', '我來寫你來看'
 ]
 
+const ARRIVAL_MESSAGES = [
+  '早安！', 'Good morning!', '今天也加油！',
+  '來了來了~', '☕ 先來杯咖啡',
+]
+
+const LEAVING_MESSAGES = [
+  '下班了～', '明天見！', '辛苦了大家',
+  'Bye bye~', '回家啦',
+]
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function pick(arr) {
@@ -122,6 +136,28 @@ export class SimulationEngine {
     this.tickInterval = 5000        // ms between auto-ticks (unadjusted)
     this.lastTick = 0
     this.activityLog = []
+
+    // Game clock
+    this.gameClock = new GameClock()
+    this._prevPhase = null
+
+    // Social graph
+    this.socialGraph = new SocialGraph()
+
+    // Day-cycle state
+    this.arrivedWorkers = new Set()
+    this.lunchGroups = []
+    this._arrivalSchedule = new Map() // workerId → arrival game-minute
+    this._departureSchedule = new Map() // workerId → departure flag
+    this._habitsChecked = new Map() // workerId → Set of habit keys done today
+
+    // Listen for clock events
+    this.gameClock.onEvent((evt) => {
+      if (evt.type === 'day_start') this._onDayStart()
+      if (evt.type === 'phase_change') {
+        currentPhase.set(evt.phase)
+      }
+    })
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -142,15 +178,37 @@ export class SimulationEngine {
     }
 
     this._workers = workers
+
+    // Generate arrival schedule for workers without one
+    for (const w of workers) {
+      if (!this._arrivalSchedule.has(w.id)) {
+        this._arrivalSchedule.set(w.id, this._calcArrivalMinute(w))
+      }
+    }
   }
 
   setProfiles(profileMap) {
     this.profiles = profileMap // Map<workerId, CharacterProfileDTO>
+    this._updateMoodSpeeds()
+  }
+
+  setRelationships(relationships) {
+    this.socialGraph.setRelationships(relationships)
+  }
+
+  setGameClockSpeed(speed) {
+    this.gameClock.setSpeed(speed)
+    gameClockSpeed.set(speed)
   }
 
   update(deltaMs) {
     if (this.paused || !this._workers?.length) return
     const adjusted = deltaMs * this.speed
+
+    // Update game clock
+    this.gameClock.update(adjusted)
+    gameTimeString.set(this.gameClock.getTimeString())
+    gameDayCount.set(this.gameClock.getDayCount())
 
     this._updateActivities(adjusted)
 
@@ -198,6 +256,7 @@ export class SimulationEngine {
       switch (ws.state) {
         case 'walking-to-zone':
         case 'walking-to-person':
+        case 'arriving':
           if (!this.renderer.isWorkerMoving(id)) {
             this._onArrived(id, ws)
           }
@@ -214,6 +273,15 @@ export class SimulationEngine {
           break
         }
 
+        case 'leaving':
+          // Worker leaving the office — once movement stops, hide them
+          if (!this.renderer.isWorkerMoving(id)) {
+            ws.state = 'gone'
+            ws.data = {}
+            ws.timer = 0
+          }
+          break
+
         case 'returning':
           if (!this.renderer.isWorkerMoving(id)) {
             ws.state = 'at-desk'
@@ -227,6 +295,21 @@ export class SimulationEngine {
 
   _onArrived(id, ws) {
     const { activity } = ws.data
+
+    // Handle arrival from door to desk
+    if (activity === 'arrive-at-desk') {
+      ws.state = 'at-desk'
+      ws.data = {}
+      ws.timer = 0
+      this.arrivedWorkers.add(id)
+      const worker = this._findWorker(id)
+      if (worker) {
+        this.renderer.showSpeech(id, pick(ARRIVAL_MESSAGES), 2000)
+        this._log(id, 'arrived at office')
+      }
+      return
+    }
+
     switch (activity) {
       case 'watercooler': {
         const dur = randBetween(3000, 5000)
@@ -247,21 +330,14 @@ export class SimulationEngine {
         break
       }
       case 'meeting': {
-        // Only the first walker arriving triggers the meeting bubble
         const { meetingIds, topic } = ws.data
-        const allArrived = meetingIds.every(mid => {
-          const s = this.workerStates.get(mid)
-          return s && (s.state === 'in-meeting' || (s.state === 'walking-to-zone' && !this.renderer.isWorkerMoving(mid)))
-        })
         const dur = randBetween(8000, 12000)
         ws.state = 'in-meeting'
         ws.timer = dur
 
-        // Only first participant to arrive shows the bubble
         if (!ws.data.bubbleShown) {
           ws.data.bubbleShown = true
           const bubbleId = this.renderer.showMeeting(meetingIds, topic, dur)
-          // Share bubble ID with all meeting participants so returning clears them
           for (const mid of meetingIds) {
             const ms = this.workerStates.get(mid)
             if (ms) {
@@ -278,7 +354,7 @@ export class SimulationEngine {
       }
       case 'patrol-visit': {
         const dur = 2000
-        ws.state = 'at-watercooler'  // reuse timed-wait state
+        ws.state = 'at-watercooler'
         ws.timer = dur
         this.renderer.showSpeech(id, 'Checking in...', dur)
         break
@@ -289,6 +365,30 @@ export class SimulationEngine {
         ws.timer = dur
         this.renderer.showThought(id, pick(MEETING_TOPICS), dur)
         this._log(id, 'manager meeting')
+        break
+      }
+      case 'lunch': {
+        const dur = randBetween(6000, 10000)
+        ws.state = 'at-watercooler'
+        ws.timer = dur
+        this.renderer.showSpeech(id, '🍱 午餐時間', dur)
+        this._log(id, 'lunch break')
+        break
+      }
+      case 'tea-break': {
+        const dur = randBetween(3000, 5000)
+        ws.state = 'at-watercooler'
+        ws.timer = dur
+        this.renderer.showSpeech(id, '☕ 下午茶', dur)
+        this._log(id, 'tea break')
+        break
+      }
+      case 'coffee-habit': {
+        const dur = randBetween(2000, 4000)
+        ws.state = 'at-watercooler'
+        ws.timer = dur
+        this.renderer.showSpeech(id, '☕', dur)
+        this._log(id, 'coffee time')
         break
       }
     }
@@ -313,10 +413,38 @@ export class SimulationEngine {
   _autoTick() {
     if (!this._workers?.length) return
 
+    const phase = this.gameClock.getCurrentPhase()
+
+    // Phase-specific behaviors
+    switch (phase) {
+      case PHASES.MORNING_ARRIVAL:
+        this._handleArrivalPhase()
+        break
+      case PHASES.LUNCH:
+        this._handleLunchPhase()
+        break
+      case PHASES.TEA_BREAK:
+        this._handleTeaBreakPhase()
+        break
+      case PHASES.OVERTIME:
+        this._handleOvertimePhase()
+        break
+      case PHASES.NIGHT:
+        this._handleNightPhase()
+        break
+    }
+
+    // Check habits
+    this._checkHabits()
+
+    // Standard activity logic (for work phases)
     const idleWorkers    = this._workersWithState('at-desk', 'idle')
     const workingWorkers = this._workersWithState('at-desk', 'working')
     const managers       = this._workersWithState('at-desk', null, 'manager')
     const allAtDesk      = this._workersWithState('at-desk')
+
+    // Skip normal activities during non-work phases
+    if (phase === PHASES.MORNING_ARRIVAL || phase === PHASES.NIGHT) return
 
     // Random meetings: 5% when 3+ workers idle
     if (idleWorkers.length >= 3 && Math.random() < 0.05) {
@@ -342,18 +470,24 @@ export class SimulationEngine {
       }
     }
 
-    // Idle workers
+    // Idle workers — personality-driven activity selection
     for (const w of idleWorkers) {
       const ws = this.workerStates.get(w.id)
       if (ws.state !== 'at-desk') continue
-      const r = Math.random()
-      if (r < 0.15) {
-        this._startWatercooler(w.id)
-      } else if (r < 0.25) {
-        const partner = this._randomOther(idleWorkers, w.id)
-        if (partner) this._startDiscussion(w.id, partner.id)
-      } else if (r < 0.30) {
-        this._startThinking(w.id)
+      const activity = this._selectActivity(w)
+      switch (activity) {
+        case 'watercooler':
+          this._startWatercooler(w.id)
+          break
+        case 'discussion': {
+          const partner = this._randomOther(idleWorkers, w.id)
+          if (partner) this._startDiscussion(w.id, partner.id)
+          break
+        }
+        case 'thinking':
+          this._startThinking(w.id)
+          break
+        // 'stayAtDesk' — do nothing
       }
     }
 
@@ -380,7 +514,6 @@ export class SimulationEngine {
         if (!p1) continue
         for (let j = i + 1; j < idleWorkers.length; j++) {
           const w2 = idleWorkers[j]
-          // Check state is at-desk for both
           const s1 = this.workerStates.get(w1.id)
           const s2 = this.workerStates.get(w2.id)
           if (s1?.state === 'at-desk' && s2?.state === 'at-desk') {
@@ -407,6 +540,315 @@ export class SimulationEngine {
         }
       }
     }
+  }
+
+  // ── Phase handlers ────────────────────────────────────────────────────────
+
+  _handleArrivalPhase() {
+    const gameMins = this.gameClock.getGameMinutes()
+    for (const w of this._workers || []) {
+      if (this.arrivedWorkers.has(w.id)) continue
+      const ws = this.workerStates.get(w.id)
+      if (!ws || ws.state !== 'at-desk') continue
+
+      const arrivalMin = this._arrivalSchedule.get(w.id) || 540
+      if (gameMins >= arrivalMin) {
+        // Walk from door to desk
+        this.renderer.returnWorkerToDesk(w.id)
+        ws.state = 'arriving'
+        ws.data = { activity: 'arrive-at-desk' }
+        this._log(w.id, 'arriving at office')
+      }
+    }
+  }
+
+  _handleLunchPhase() {
+    if (this.lunchGroups.length > 0) return // already formed
+
+    const atDesk = this._workersWithState('at-desk')
+    if (!atDesk.length) return
+
+    // Form lunch groups based on social cliques
+    const ungrouped = new Set(atDesk.map(w => w.id))
+    const groups = []
+
+    // First, use social graph cliques
+    const cliques = this.socialGraph.getAllCliques()
+    for (const clique of cliques) {
+      const group = clique.filter(id => ungrouped.has(id))
+      if (group.length >= 2) {
+        for (const id of group) ungrouped.delete(id)
+        groups.push(group)
+      }
+    }
+
+    // Remaining workers: pair by best buddy or random
+    while (ungrouped.size >= 2) {
+      const leadId = ungrouped.values().next().value
+      ungrouped.delete(leadId)
+      const group = [leadId]
+
+      const buddy = this.socialGraph.getBestBuddy(leadId, [...ungrouped])
+      if (buddy) {
+        group.push(buddy)
+        ungrouped.delete(buddy)
+      } else {
+        // Random partner
+        const otherId = ungrouped.values().next().value
+        if (otherId) {
+          group.push(otherId)
+          ungrouped.delete(otherId)
+        }
+      }
+      groups.push(group)
+    }
+
+    // Send groups to break area
+    for (const group of groups) {
+      const tile = randomZoneTile('breakArea')
+      if (!tile) continue
+      for (const id of group) {
+        const ws = this.workerStates.get(id)
+        if (!ws || ws.state !== 'at-desk') continue
+        ws.state = 'walking-to-zone'
+        ws.data = { activity: 'lunch' }
+        this.renderer.moveWorkerTo(id, tile.col, tile.row)
+      }
+    }
+
+    // Solo lunchers (ungrouped)
+    for (const id of ungrouped) {
+      const ws = this.workerStates.get(id)
+      if (!ws || ws.state !== 'at-desk') continue
+      const tile = randomZoneTile('breakArea')
+      if (!tile) continue
+      ws.state = 'walking-to-zone'
+      ws.data = { activity: 'lunch' }
+      this.renderer.moveWorkerTo(id, tile.col, tile.row)
+    }
+
+    this.lunchGroups = groups
+    this._logActivity('午餐時間！')
+  }
+
+  _handleTeaBreakPhase() {
+    const atDesk = this._workersWithState('at-desk')
+
+    // Clique members go together
+    const sent = new Set()
+    const cliques = this.socialGraph.getAllCliques()
+    for (const clique of cliques) {
+      if (Math.random() < 0.6) { // 60% chance whole clique goes
+        const tile = randomZoneTile('breakArea')
+        if (!tile) continue
+        for (const id of clique) {
+          const ws = this.workerStates.get(id)
+          if (!ws || ws.state !== 'at-desk') continue
+          ws.state = 'walking-to-zone'
+          ws.data = { activity: 'tea-break' }
+          this.renderer.moveWorkerTo(id, tile.col, tile.row)
+          sent.add(id)
+        }
+      }
+    }
+
+    // Remaining workers individually
+    for (const w of atDesk) {
+      if (sent.has(w.id)) continue
+      if (Math.random() < 0.3) {
+        const ws = this.workerStates.get(w.id)
+        if (!ws || ws.state !== 'at-desk') continue
+        const tile = randomZoneTile('breakArea')
+        if (!tile) continue
+        ws.state = 'walking-to-zone'
+        ws.data = { activity: 'tea-break' }
+        this.renderer.moveWorkerTo(w.id, tile.col, tile.row)
+      }
+    }
+  }
+
+  _handleOvertimePhase() {
+    for (const w of this._workers || []) {
+      const ws = this.workerStates.get(w.id)
+      if (!ws || ws.state === 'gone' || ws.state === 'leaving') continue
+      if (this._departureSchedule.has(w.id)) continue
+
+      const profile = this.profiles?.get(w.id)
+      const ambition = profile?.traits?.ambition ?? 50
+
+      // Low ambition workers leave after 18:00
+      if (ambition < 65 && w.status !== 'working' && w.status !== 'busy') {
+        if (Math.random() < 0.3) {
+          this._workerLeave(w)
+        }
+      }
+    }
+  }
+
+  _handleNightPhase() {
+    for (const w of this._workers || []) {
+      const ws = this.workerStates.get(w.id)
+      if (!ws || ws.state === 'gone' || ws.state === 'leaving') continue
+      if (this._departureSchedule.has(w.id)) continue
+
+      // Only workers actively on a task stay
+      if (w.status !== 'working' && w.status !== 'busy') {
+        this._workerLeave(w)
+      }
+    }
+  }
+
+  _workerLeave(worker) {
+    const ws = this.workerStates.get(worker.id)
+    if (!ws || ws.state === 'gone' || ws.state === 'leaving') return
+    this._departureSchedule.set(worker.id, true)
+
+    this.renderer.clearWorkerBubbles(worker.id)
+    this.renderer.showSpeech(worker.id, pick(LEAVING_MESSAGES), 2000)
+
+    // Walk to door area then disappear
+    const doorTile = { col: 10, row: 0 } // approximate door location
+    this.renderer.moveWorkerTo(worker.id, doorTile.col, doorTile.row)
+    ws.state = 'leaving'
+    ws.data = {}
+    this._log(worker.id, 'leaving office')
+  }
+
+  _onDayStart() {
+    this.arrivedWorkers.clear()
+    this.lunchGroups = []
+    this._departureSchedule.clear()
+    this._habitsChecked.clear()
+
+    // Regenerate arrival schedule
+    for (const w of this._workers || []) {
+      this._arrivalSchedule.set(w.id, this._calcArrivalMinute(w))
+      // Reset gone workers
+      const ws = this.workerStates.get(w.id)
+      if (ws && ws.state === 'gone') {
+        ws.state = 'at-desk'
+        ws.data = {}
+        ws.timer = 0
+      }
+    }
+
+    this._logActivity('新的一天開始了！')
+  }
+
+  _calcArrivalMinute(worker) {
+    const profile = this.profiles?.get(worker.id)
+    const ambition = profile?.traits?.ambition ?? 50
+    // High ambition: arrive 530-540 (8:50-9:00), Low: 555-570 (9:15-9:30)
+    const base = 530 + (100 - ambition) * 0.4
+    return base + Math.random() * 10
+  }
+
+  // ── Personality-driven activity selection ──────────────────────────────────
+
+  _selectActivity(worker) {
+    // Newcomer behavior: mostly stay at desk
+    if (this._isNewcomer(worker)) {
+      const daysSinceJoin = this._getDaysSinceJoin(worker)
+      const integrationFactor = Math.min(1, daysSinceJoin / 3) // 0→1 over 3 days
+      const r = Math.random()
+      if (r > 0.15 * integrationFactor + 0.05) return 'stayAtDesk'
+      if (r < 0.05) return 'watercooler'
+      return 'thinking'
+    }
+
+    const profile = this.profiles?.get(worker.id)
+    const traits = profile?.traits
+
+    // Base weights
+    let weights = {
+      discussion: 25,
+      watercooler: 15,
+      thinking: 20,
+      stayAtDesk: 40,
+    }
+
+    if (traits) {
+      const sociability = traits.sociability ?? 50
+      const focus = traits.focus ?? 50
+      const energy = profile?.mood?.energy ?? 50
+
+      // High sociability: more social
+      if (sociability > 70) {
+        weights.discussion += 8
+        weights.watercooler += 5
+        weights.stayAtDesk -= 13
+      }
+      // Low sociability: more solitary
+      if (sociability < 30) {
+        weights.discussion -= 8
+        weights.thinking += 15
+        weights.stayAtDesk += 10
+      }
+      // High focus: stay put
+      if (focus > 70) {
+        weights.discussion -= 3
+        weights.stayAtDesk += 5
+      }
+      // Low energy: watercooler (need coffee)
+      if (energy < 20) {
+        weights.watercooler += 15
+      }
+    }
+
+    // Normalize and pick
+    const total = Object.values(weights).reduce((a, b) => a + Math.max(0, b), 0)
+    if (total <= 0) return 'stayAtDesk'
+
+    let r = Math.random() * total
+    for (const [activity, weight] of Object.entries(weights)) {
+      const w = Math.max(0, weight)
+      if (r < w) return activity
+      r -= w
+    }
+    return 'stayAtDesk'
+  }
+
+  // ── Habits system ─────────────────────────────────────────────────────────
+
+  _checkHabits() {
+    if (!this.profiles) return
+    const gameMins = this.gameClock.getGameMinutes()
+
+    for (const w of this._workers || []) {
+      const profile = this.profiles.get(w.id)
+      if (!profile?.habits) continue
+      const ws = this.workerStates.get(w.id)
+      if (!ws || ws.state !== 'at-desk') continue
+
+      const done = this._habitsChecked.get(w.id) || new Set()
+
+      // Coffee time habit
+      if (profile.habits.coffeeTime && !done.has('coffee')) {
+        const coffeeMin = this._parseTimeToMinutes(profile.habits.coffeeTime)
+        if (coffeeMin !== null && gameMins >= coffeeMin && gameMins < coffeeMin + 15) {
+          done.add('coffee')
+          this._habitsChecked.set(w.id, done)
+
+          const tile = randomZoneTile('breakArea')
+          if (tile) {
+            ws.state = 'walking-to-zone'
+            ws.data = { activity: 'coffee-habit' }
+            this.renderer.moveWorkerTo(w.id, tile.col, tile.row)
+            this._log(w.id, 'coffee habit')
+          }
+        }
+      }
+    }
+  }
+
+  _parseTimeToMinutes(timeStr) {
+    if (!timeStr) return null
+    const parts = timeStr.split(':')
+    if (parts.length !== 2) return null
+    const h = parseInt(parts[0], 10)
+    const m = parseInt(parts[1], 10)
+    if (isNaN(h) || isNaN(m)) return null
+    return h * 60 + m
   }
 
   // ── Personality-aware bubble content ─────────────────────────────────────
@@ -501,7 +943,6 @@ export class SimulationEngine {
       ws.data = { activity: 'meeting', meetingIds: ids, topic, bubbleShown: false }
       this.renderer.moveWorkerTo(w.id, tile.col, tile.row)
     }
-    // Mark first participant as responsible for showing bubble
     const first = this.workerStates.get(ids[0])
     if (first) first.data.bubbleShown = false
 
@@ -627,6 +1068,44 @@ export class SimulationEngine {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
+  _isNewcomer(worker) {
+    if (!worker.createdAt) return false
+    const created = new Date(worker.createdAt)
+    const now = new Date()
+    const daysDiff = (now - created) / (1000 * 60 * 60 * 24)
+    return daysDiff < 3
+  }
+
+  _getDaysSinceJoin(worker) {
+    if (!worker.createdAt) return 999
+    const created = new Date(worker.createdAt)
+    const now = new Date()
+    return (now - created) / (1000 * 60 * 60 * 24)
+  }
+
+  _triggerGroupActivity(clique, type) {
+    const tile = randomZoneTile(type === 'meeting' ? 'meeting' : 'breakArea')
+    if (!tile) return
+    const topic = type === 'meeting' ? pick(MEETING_TOPICS) : '☕ 團體活動'
+    const ids = clique.filter(id => {
+      const ws = this.workerStates.get(id)
+      return ws && ws.state === 'at-desk'
+    })
+    if (ids.length < 2) return
+
+    for (const id of ids) {
+      const ws = this.workerStates.get(id)
+      ws.state = 'walking-to-zone'
+      ws.data = { activity: type === 'meeting' ? 'meeting' : 'tea-break', meetingIds: ids, topic, bubbleShown: false }
+      this.renderer.moveWorkerTo(id, tile.col, tile.row)
+    }
+    this._logActivity(`小團體活動：${topic}`)
+  }
+
+  _findWorker(id) {
+    return (this._workers || []).find(w => w.id === id)
+  }
+
   _workersWithState(state, status = null, tier = null) {
     return (this._workers || []).filter(w => {
       const ws = this.workerStates.get(w.id)
@@ -662,7 +1141,6 @@ export class SimulationEngine {
     if (!ws) return
     this.renderer.clearWorkerBubbles(id)
     if (ws.state !== 'at-desk' && ws.state !== 'returning') {
-      // Best-effort: stop any in-progress activity
       ws.state = 'at-desk'
       ws.data = {}
       ws.timer = 0
@@ -684,5 +1162,14 @@ export class SimulationEngine {
   _logActivity(activity) {
     this.activityLog.push({ ts: Date.now(), name: 'system', activity })
     if (this.activityLog.length > 100) this.activityLog.shift()
+  }
+
+  _updateMoodSpeeds() {
+    if (!this.profiles || !this.renderer?.movement) return
+    for (const [workerId, profile] of this.profiles) {
+      const mood = profile?.mood?.current || 'neutral'
+      const mult = MOOD_SPEED[mood] ?? 1.0
+      this.renderer.movement.setSpeedMultiplier(workerId, mult)
+    }
   }
 }

@@ -29,9 +29,9 @@ export async function createWorker(name, avatar) {
   }
 }
 
-export async function createWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile) {
+export async function createWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile, gender) {
   if (!window.go?.gui?.CompanyApp) return
-  const w = await window.go.gui.CompanyApp.CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile)
+  const w = await window.go.gui.CompanyApp.CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile, gender || '')
   await loadWorkers()
   await loadHierarchy()
   return w

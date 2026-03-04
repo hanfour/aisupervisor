@@ -242,6 +242,47 @@ const translations = {
   'workerDetail.affinity': { en: 'Affinity', zh: '好感' },
   'workerDetail.trust': { en: 'Trust', zh: '信任' },
 
+  // --- Gender & Birthday ---
+  'workers.gender': { en: 'Gender', zh: '性別' },
+  'workerDetail.gender': { en: 'Gender', zh: '性別' },
+  'workerDetail.birthday': { en: 'Birthday', zh: '生日' },
+  'workerDetail.age': { en: 'Age', zh: '年齡' },
+  'gender.male': { en: 'Male', zh: '男性' },
+  'gender.female': { en: 'Female', zh: '女性' },
+
+  // --- Role ---
+  'workerDetail.role': { en: 'Role', zh: '職能' },
+  'role.coder': { en: 'Coder', zh: '程式員' },
+  'role.architect': { en: 'Architect', zh: '架構師' },
+  'role.qa': { en: 'QA', zh: '品質保證' },
+  'role.security': { en: 'Security', zh: '安全' },
+  'role.devops': { en: 'DevOps', zh: '維運' },
+  'role.designer': { en: 'Designer', zh: '設計師' },
+
+  // --- Habits ---
+  'workerDetail.habits': { en: 'Habits', zh: '日常習慣' },
+  'habit.coffeeTime': { en: 'Coffee Time', zh: '咖啡時間' },
+  'habit.favoriteSpot': { en: 'Favorite Spot', zh: '喜愛的位置' },
+  'habit.workStyle': { en: 'Work Style', zh: '工作風格' },
+  'habit.socialPreference': { en: 'Social Preference', zh: '社交偏好' },
+  'habit.quirks': { en: 'Quirks', zh: '小怪癖' },
+
+  // --- Skill Scores ---
+  'workerDetail.skillScores': { en: 'Skill Scores', zh: '技能分數' },
+  'skill.carefulness': { en: 'Carefulness', zh: '細心度' },
+  'skill.boundaryChecking': { en: 'Boundary Checking', zh: '邊界檢查' },
+  'skill.testCoverageAware': { en: 'Test Coverage', zh: '測試覆蓋' },
+  'skill.communicationClarity': { en: 'Communication', zh: '溝通清晰' },
+  'skill.codeQuality': { en: 'Code Quality', zh: '程式品質' },
+  'skill.securityAwareness': { en: 'Security', zh: '安全意識' },
+
+  // --- Backstory ---
+  'workerDetail.backstory': { en: 'Backstory', zh: '背景故事' },
+
+  // --- Growth Log ---
+  'workerDetail.growthLog': { en: 'Growth Log', zh: '成長紀錄' },
+  'workerDetail.tasksCompleted': { en: 'Tasks Completed', zh: '完成任務數' },
+
   // --- Trait labels ---
   'trait.sociability': { en: 'Sociability', zh: '社交性' },
   'trait.focus': { en: 'Focus', zh: '專注力' },

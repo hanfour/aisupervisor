@@ -310,7 +310,8 @@ export class OfficeRenderer {
         anim.setState(walkAnim)
       }
 
-      anim.update(delta)
+      const mood = this.profiles?.get(w.id)?.mood?.current || null
+      anim.update(delta, mood)
 
       // Occasional key clatter for working workers
       if (!clattered && anim.state === 'working' && Math.random() < 0.001) {

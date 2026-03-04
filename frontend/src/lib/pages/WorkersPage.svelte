@@ -14,6 +14,7 @@
   let newBackendID = ''
   let newCliTool = 'claude'
   let newSkillProfile = ''
+  let newGender = 'male'
   let selectedWorkerId = null
 
   const avatarOptions = [
@@ -55,7 +56,7 @@
   async function handleHire() {
     if (!newName) return
     try {
-      await createWorkerWithTier(newName, newAvatar, newTier, newParentID, newBackendID, newCliTool, newSkillProfile)
+      await createWorkerWithTier(newName, newAvatar, newTier, newParentID, newBackendID, newCliTool, newSkillProfile, newGender)
       newName = ''
       newAvatar = 'robot'
       newTier = 'engineer'
@@ -63,6 +64,7 @@
       newBackendID = ''
       newCliTool = 'claude'
       newSkillProfile = ''
+      newGender = 'male'
       showHire = false
     } catch (e) {
       addError('Failed to hire worker: ' + e.message)
@@ -158,6 +160,20 @@
                   <span>{opt.label}</span>
                 </label>
               {/each}
+            </div>
+          </div>
+
+          <div class="nes-field">
+            <label>{$t('workers.gender')}</label>
+            <div class="gender-grid">
+              <label class="avatar-option" class:selected={newGender === 'male'}>
+                <input type="radio" class="nes-radio is-dark" name="gender" value="male" bind:group={newGender} />
+                <span>♂ {$t('gender.male')}</span>
+              </label>
+              <label class="avatar-option" class:selected={newGender === 'female'}>
+                <input type="radio" class="nes-radio is-dark" name="gender" value="female" bind:group={newGender} />
+                <span>♀ {$t('gender.female')}</span>
+              </label>
             </div>
           </div>
 
@@ -332,7 +348,7 @@
     font-size: 10px;
   }
 
-  .avatar-grid {
+  .avatar-grid, .gender-grid {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;

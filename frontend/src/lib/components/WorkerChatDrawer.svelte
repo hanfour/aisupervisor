@@ -4,6 +4,7 @@
 
   let inputText = ''
   let messagesContainer
+  let composing = false
 
   $: if ($chatMessages && messagesContainer) {
     // Scroll to bottom on new messages
@@ -15,7 +16,7 @@
   }
 
   function handleKeydown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !composing && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault()
       handleSend()
     }
@@ -89,6 +90,8 @@
           placeholder={$t('chat.placeholder')}
           bind:value={inputText}
           on:keydown={handleKeydown}
+          on:compositionstart={() => composing = true}
+          on:compositionend={() => composing = false}
           disabled={$chatLoading}
         />
         <button class="nes-btn is-primary btn-sm" on:click={handleSend} disabled={$chatLoading || !inputText.trim()}>

@@ -10,6 +10,7 @@
   let userInput = ''
   let loading = false
   let projectReady = null
+  let composing = false
 
   function reset() {
     messages = []
@@ -79,7 +80,7 @@
   }
 
   function handleKeydown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !composing && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault()
       sendMessage()
     }
@@ -138,6 +139,8 @@
             class="nes-textarea is-dark"
             bind:value={userInput}
             on:keydown={handleKeydown}
+            on:compositionstart={() => composing = true}
+            on:compositionend={() => composing = false}
             placeholder={$t('aiChat.placeholder')}
             rows="2"
             disabled={loading}

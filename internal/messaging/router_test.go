@@ -15,7 +15,7 @@ func testCompanyMgr(t *testing.T) *company.Manager {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	mgr, err := company.New(store, nil, nil, nil, nil, dir)
+	mgr, err := company.New(store, nil, nil, nil, nil, dir, nil)
 	if err != nil {
 		t.Fatalf("company.New: %v", err)
 	}

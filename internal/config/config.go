@@ -25,7 +25,8 @@ type Config struct {
 	WorkerTiers    []WorkerTierConfig   `yaml:"worker_tiers,omitempty"`
 	SkillProfiles  []SkillProfile       `yaml:"skill_profiles,omitempty"`
 	Training       TrainingConfig       `yaml:"training,omitempty"`
-	Language       string               `yaml:"language,omitempty"` // "en" or "zh-TW", default "zh-TW"
+	ChatBackend    string               `yaml:"chat_backend,omitempty"` // name of backend to use for chat (e.g. "openai-chat")
+	Language       string               `yaml:"language,omitempty"`     // "en" or "zh-TW", default "zh-TW"
 	Verification   VerificationConfig   `yaml:"verification,omitempty"`
 	HumanGate      HumanGateConfig      `yaml:"human_gate,omitempty"`
 }
@@ -213,6 +214,12 @@ func DefaultConfig() *Config {
 				Type:      "anthropic_api",
 				APIKeyEnv: "ANTHROPIC_API_KEY",
 				Model:     "claude-sonnet-4-6-20260301",
+			},
+			{
+				Name:      "openai-chat",
+				Type:      "openai",
+				APIKeyEnv: "OPENAI_API_KEY",
+				Model:     "gpt-4.1",
 			},
 		},
 		AutoApprove: []AutoApproveRule{

@@ -143,7 +143,8 @@ func main() {
 	}
 	spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 	completionMon := worker.NewCompletionMonitor(tmuxClient)
-	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+	chatProvider := setupChatProvider(cfg)
+	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir, chatProvider)
 	if err != nil {
 		log.Fatalf("setting up company manager: %v", err)
 	}
@@ -305,6 +306,72 @@ func startMessaging(cfg *config.Config, companyMgr *company.Manager) {
 		}
 		ctx := context.Background()
 		notifier.Start(ctx)
+	}
+}
+
+func setupChatProvider(cfg *config.Config) ai.ChatProvider {
+	return buildChatProvider(cfg)
+}
+
+// buildChatProvider resolves a ChatProvider from config. If ChatBackend is set
+// and matches a backend, use that. Otherwise fall back to the first openai or
+// ollama backend found.
+func buildChatProvider(cfg *config.Config) ai.ChatProvider {
+	// Try to find explicit chat backend first
+	if cfg.ChatBackend != "" {
+		for _, bc := range cfg.Backends {
+			if bc.Name == cfg.ChatBackend {
+				if p := newChatProviderFromBackendConfig(bc); p != nil {
+					return p
+				}
+			}
+		}
+		log.Printf("WARNING: chat backend %q not found or unsupported, trying fallback", cfg.ChatBackend)
+	}
+
+	// Fallback: first compatible backend (prefer openai, then anthropic, then ollama)
+	preferOrder := []string{"openai", "anthropic_oauth", "anthropic_api", "ollama"}
+	for _, pref := range preferOrder {
+		for _, bc := range cfg.Backends {
+			if bc.Type == pref {
+				if p := newChatProviderFromBackendConfig(bc); p != nil {
+					log.Printf("Using %q as chat backend (fallback)", bc.Name)
+					return p
+				}
+			}
+		}
+	}
+	log.Printf("WARNING: no compatible chat backend found")
+	return nil
+}
+
+func newChatProviderFromBackendConfig(bc config.BackendConfig) ai.ChatProvider {
+	switch bc.Type {
+	case "openai":
+		apiKey := os.Getenv(bc.APIKeyEnv)
+		if apiKey == "" && bc.APIKeyEnv != "" {
+			log.Printf("WARNING: %s not set for chat backend %q", bc.APIKeyEnv, bc.Name)
+			return nil
+		}
+		return openaiBackend.NewBackend(bc.Name, apiKey, bc.Model)
+	case "ollama":
+		return ollamaBackend.NewBackend(bc.Name, bc.BaseURL, bc.Model)
+	case "anthropic_api":
+		apiKey := os.Getenv(bc.APIKeyEnv)
+		if apiKey == "" && bc.APIKeyEnv != "" {
+			log.Printf("WARNING: %s not set for chat backend %q", bc.APIKeyEnv, bc.Name)
+			return nil
+		}
+		return anthropicBackend.NewAPIBackend(bc.Name, apiKey, bc.Model)
+	case "anthropic_oauth":
+		b, err := anthropicBackend.NewOAuthBackend(bc.Name, bc.Model)
+		if err != nil {
+			log.Printf("WARNING: OAuth backend %q init failed: %v", bc.Name, err)
+			return nil
+		}
+		return b
+	default:
+		return nil
 	}
 }
 

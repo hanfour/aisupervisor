@@ -3,8 +3,13 @@ package gui
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/ai"
+	anthropicBackend "github.com/hanfourmini/aisupervisor/internal/ai/anthropic"
+	ollamaBackend "github.com/hanfourmini/aisupervisor/internal/ai/ollama"
+	openaiBackend "github.com/hanfourmini/aisupervisor/internal/ai/openai"
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
@@ -397,6 +402,81 @@ func (c *CompanyApp) ChatWithWorker(workerID string, messages []WorkerChatMessag
 	return &WorkerChatResponseDTO{
 		Content: resp.Content,
 	}, nil
+}
+
+// --- Chat Backend Settings ---
+
+// GetChatBackend returns the current chat backend name.
+func (c *CompanyApp) GetChatBackend() string {
+	cfg, err := config.Load("")
+	if err != nil {
+		return ""
+	}
+	return cfg.ChatBackend
+}
+
+// SetChatBackend changes the chat backend and persists to config.
+func (c *CompanyApp) SetChatBackend(name string) error {
+	cfg, err := config.Load("")
+	if err != nil {
+		return err
+	}
+
+	// Build new ChatProvider from the selected backend
+	var provider ai.ChatProvider
+	for _, bc := range cfg.Backends {
+		if bc.Name != name {
+			continue
+		}
+		var err2 error
+		switch bc.Type {
+		case "openai":
+			apiKey := os.Getenv(bc.APIKeyEnv)
+			if apiKey == "" && bc.APIKeyEnv != "" {
+				return fmt.Errorf("environment variable %s not set for backend %q", bc.APIKeyEnv, name)
+			}
+			provider = openaiBackend.NewBackend(bc.Name, apiKey, bc.Model)
+		case "ollama":
+			provider = ollamaBackend.NewBackend(bc.Name, bc.BaseURL, bc.Model)
+		case "anthropic_api":
+			apiKey := os.Getenv(bc.APIKeyEnv)
+			if apiKey == "" && bc.APIKeyEnv != "" {
+				return fmt.Errorf("environment variable %s not set for backend %q", bc.APIKeyEnv, name)
+			}
+			provider = anthropicBackend.NewAPIBackend(bc.Name, apiKey, bc.Model)
+		case "anthropic_oauth":
+			provider, err2 = anthropicBackend.NewOAuthBackend(bc.Name, bc.Model)
+			if err2 != nil {
+				return fmt.Errorf("OAuth backend init failed: %w", err2)
+			}
+		default:
+			return fmt.Errorf("backend type %q does not support chat", bc.Type)
+		}
+		break
+	}
+	if provider == nil {
+		return fmt.Errorf("chat backend %q not found", name)
+	}
+
+	c.company.SetChatProvider(provider)
+	cfg.ChatBackend = name
+	return cfg.Save("")
+}
+
+// GetAvailableChatBackends returns backend names that support chat.
+func (c *CompanyApp) GetAvailableChatBackends() []string {
+	cfg, err := config.Load("")
+	if err != nil {
+		return nil
+	}
+	chatTypes := map[string]bool{"openai": true, "ollama": true, "anthropic_api": true, "anthropic_oauth": true}
+	var result []string
+	for _, bc := range cfg.Backends {
+		if chatTypes[bc.Type] {
+			result = append(result, bc.Name)
+		}
+	}
+	return result
 }
 
 // --- Personality operations ---

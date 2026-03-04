@@ -1,14 +1,11 @@
 package company
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 
+	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 )
 
@@ -23,27 +20,13 @@ type WorkerChatResponse struct {
 	Content string `json:"content"`
 }
 
-// ollamaChatRequest is the request body for Ollama's /api/chat endpoint.
-type ollamaChatRequest struct {
-	Model    string              `json:"model"`
-	Messages []ollamaChatMessage `json:"messages"`
-	Stream   bool                `json:"stream"`
-}
-
-// ollamaChatMessage is a single message in the Ollama chat format.
-type ollamaChatMessage struct {
-	Role    string `json:"role"`    // "system", "user", or "assistant"
-	Content string `json:"content"`
-}
-
-// ollamaChatResponse is the response body from Ollama's /api/chat endpoint.
-type ollamaChatResponse struct {
-	Message ollamaChatMessage `json:"message"`
-}
-
-// ChatWithWorker sends a conversation to the Ollama chat API with a system prompt
+// ChatWithWorker sends a conversation to the chat provider with a system prompt
 // that reflects the worker's personality and knowledge (including research reports).
 func (m *Manager) ChatWithWorker(ctx context.Context, workerID string, messages []WorkerChatMessage) (*WorkerChatResponse, error) {
+	if m.chatProvider == nil {
+		return nil, fmt.Errorf("chat provider not configured")
+	}
+
 	w, ok := m.GetWorker(workerID)
 	if !ok {
 		return nil, fmt.Errorf("worker %q not found", workerID)
@@ -52,54 +35,24 @@ func (m *Manager) ChatWithWorker(ctx context.Context, workerID string, messages 
 	// Build system prompt from personality
 	systemPrompt := m.buildWorkerSystemPrompt(workerID, w.Name, string(w.EffectiveTier()))
 
-	// Build Ollama chat messages
-	chatMessages := make([]ollamaChatMessage, 0, len(messages)+1)
-	chatMessages = append(chatMessages, ollamaChatMessage{Role: "system", Content: systemPrompt})
+	// Build chat messages
+	chatMessages := make([]ai.ChatMessage, 0, len(messages)+1)
+	chatMessages = append(chatMessages, ai.ChatMessage{Role: "system", Content: systemPrompt})
 	for _, msg := range messages {
-		chatMessages = append(chatMessages, ollamaChatMessage{Role: msg.Role, Content: msg.Content})
+		chatMessages = append(chatMessages, ai.ChatMessage{Role: msg.Role, Content: msg.Content})
 	}
 
-	reqBody, err := json.Marshal(ollamaChatRequest{
-		Model:    m.ollamaModel,
-		Messages: chatMessages,
-		Stream:   false,
-	})
+	content, err := m.chatProvider.Chat(ctx, chatMessages)
 	if err != nil {
-		return nil, fmt.Errorf("marshalling request: %w", err)
+		return nil, fmt.Errorf("chat request failed: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", m.ollamaEndpoint+"/api/chat", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("ollama chat request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var chatResp ollamaChatResponse
-	if err := json.Unmarshal(body, &chatResp); err != nil {
-		return nil, fmt.Errorf("parsing ollama response: %w", err)
-	}
-
-	if chatResp.Message.Content == "" {
-		return nil, fmt.Errorf("empty response from Ollama")
+	if content == "" {
+		return nil, fmt.Errorf("empty response from chat provider")
 	}
 
 	return &WorkerChatResponse{
-		Content: chatResp.Message.Content,
+		Content: content,
 	}, nil
 }
 

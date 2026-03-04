@@ -124,6 +124,7 @@ const translations = {
   'settings.backends': { en: 'Backends', zh: '後端' },
   'settings.noBackends': { en: 'No backends configured', zh: '尚未設定後端' },
   'settings.autoApprove': { en: 'Auto-Approve Rules', zh: '自動核准規則' },
+  'settings.chatBackend': { en: 'Chat Backend', zh: '聊天後端' },
   'settings.noAutoApprove': { en: 'No auto-approve rules', zh: '沒有自動核准規則' },
   'settings.nameCol': { en: 'Name', zh: '名稱' },
   'settings.typeCol': { en: 'Type', zh: '類型' },

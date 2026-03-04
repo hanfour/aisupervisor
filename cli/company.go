@@ -497,7 +497,7 @@ func buildCompanyManager() (*company.Manager, error) {
 	}
 	git := gitops.New()
 	// No tmux/spawner/monitor for offline commands
-	return company.New(projectStore, nil, git, nil, nil, companyDataDir)
+	return company.New(projectStore, nil, git, nil, nil, companyDataDir, nil)
 }
 
 func buildCompanyManagerWithTmux() (*company.Manager, error) {
@@ -528,7 +528,8 @@ func buildCompanyManagerWithTmux() (*company.Manager, error) {
 	spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 
 	completionMon := worker.NewCompletionMonitor(tmuxClient)
-	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+	chatProvider := setupChatProviderCLI(cfg)
+	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir, chatProvider)
 	if err != nil {
 		return nil, err
 	}

@@ -163,7 +163,7 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 		}
 		spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 		completionMon := worker.NewCompletionMonitor(tmuxClient)
-		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir, setupChatProviderCLI(cfg))
 
 		// Load per-tier MaxWorkers
 		if len(cfg.WorkerTiers) > 0 {
@@ -240,7 +240,7 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 		}
 		spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 		completionMon := worker.NewCompletionMonitor(tmuxClient)
-		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir)
+		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir, setupChatProviderCLI(cfg))
 		if companyMgr != nil {
 			if len(cfg.WorkerTiers) > 0 {
 				companyMgr.LoadMaxWorkers(cfg.WorkerTiers)
@@ -412,6 +412,60 @@ func splitComma(s string) []string {
 		result = append(result, current)
 	}
 	return result
+}
+
+func setupChatProviderCLI(cfg *config.Config) ai.ChatProvider {
+	// Try explicit chat backend first
+	if cfg.ChatBackend != "" {
+		for _, bc := range cfg.Backends {
+			if bc.Name == cfg.ChatBackend {
+				if p := newChatProviderFromConfig(bc); p != nil {
+					return p
+				}
+			}
+		}
+		log.Printf("WARNING: chat backend %q not found or unsupported, trying fallback", cfg.ChatBackend)
+	}
+
+	// Fallback: first compatible backend (prefer openai, then anthropic, then ollama)
+	preferOrder := []string{"openai", "anthropic_oauth", "anthropic_api", "ollama"}
+	for _, pref := range preferOrder {
+		for _, bc := range cfg.Backends {
+			if bc.Type == pref {
+				if p := newChatProviderFromConfig(bc); p != nil {
+					return p
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func newChatProviderFromConfig(bc config.BackendConfig) ai.ChatProvider {
+	switch bc.Type {
+	case "openai":
+		apiKey := os.Getenv(bc.APIKeyEnv)
+		if apiKey == "" && bc.APIKeyEnv != "" {
+			return nil
+		}
+		return openaiBackend.NewBackend(bc.Name, apiKey, bc.Model)
+	case "ollama":
+		return ollamaBackend.NewBackend(bc.Name, bc.BaseURL, bc.Model)
+	case "anthropic_api":
+		apiKey := os.Getenv(bc.APIKeyEnv)
+		if apiKey == "" && bc.APIKeyEnv != "" {
+			return nil
+		}
+		return anthropicBackend.NewAPIBackend(bc.Name, apiKey, bc.Model)
+	case "anthropic_oauth":
+		b, err := anthropicBackend.NewOAuthBackend(bc.Name, bc.Model)
+		if err != nil {
+			return nil
+		}
+		return b
+	default:
+		return nil
+	}
 }
 
 func setupBackend(cfg *config.Config) (ai.Backend, error) {

@@ -1,12 +1,57 @@
 <script>
+  import { onMount } from 'svelte'
+  import { t } from '../stores/i18n.js'
+
   export let config = {}
 
   $: polling = config?.polling || {}
   $: decision = config?.decision || {}
   $: context = config?.context || {}
+
+  let chatBackend = ''
+  let availableChatBackends = []
+
+  onMount(async () => {
+    if (window.go?.gui?.CompanyApp) {
+      try {
+        chatBackend = await window.go.gui.CompanyApp.GetChatBackend()
+        availableChatBackends = await window.go.gui.CompanyApp.GetAvailableChatBackends()
+      } catch {
+        // ignore
+      }
+    }
+  })
+
+  async function onChatBackendChange(e) {
+    const name = e.target.value
+    if (window.go?.gui?.CompanyApp) {
+      try {
+        await window.go.gui.CompanyApp.SetChatBackend(name)
+        chatBackend = name
+      } catch (err) {
+        console.error('Failed to set chat backend:', err)
+      }
+    }
+  }
 </script>
 
 <div class="settings-panel">
+  <div class="setting-group nes-container with-title is-dark">
+    <p class="title">{$t('settings.chatBackend')}</p>
+    <div class="field">
+      <label>{$t('settings.chatBackend')}:</label>
+      {#if availableChatBackends.length > 0}
+        <select class="nes-select is-dark chat-select" value={chatBackend} on:change={onChatBackendChange}>
+          {#each availableChatBackends as backend}
+            <option value={backend}>{backend}</option>
+          {/each}
+        </select>
+      {:else}
+        <span class="value">{chatBackend || 'N/A'}</span>
+      {/if}
+    </div>
+  </div>
+
   <div class="setting-group nes-container with-title is-dark">
     <p class="title">Polling</p>
     <div class="field">
@@ -62,6 +107,7 @@
   .field {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     padding: 4px 0;
     border-bottom: 1px solid var(--border-color);
   }
@@ -72,5 +118,10 @@
 
   .value {
     color: var(--accent-green);
+  }
+
+  .chat-select {
+    font-size: 10px;
+    max-width: 160px;
   }
 </style>

@@ -1,13 +1,12 @@
 package company
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
+
+	"github.com/hanfourmini/aisupervisor/internal/ai"
 )
 
 // ChatMessage represents a single message in the chat conversation.
@@ -83,51 +82,24 @@ func chatProjectSystemPrompt(lang string) string {
 // ChatCreateProject processes a chat conversation and returns either
 // the extracted project information or follow-up questions.
 func (m *Manager) ChatCreateProject(ctx context.Context, messages []ChatMessage) (*ChatProjectResponse, error) {
-	// Build Ollama chat messages
-	chatMessages := make([]ollamaChatMessage, 0, len(messages)+1)
-	chatMessages = append(chatMessages, ollamaChatMessage{Role: "system", Content: chatProjectSystemPrompt(m.GetLanguage())})
+	if m.chatProvider == nil {
+		return nil, fmt.Errorf("chat provider not configured")
+	}
+
+	// Build chat messages
+	chatMessages := make([]ai.ChatMessage, 0, len(messages)+1)
+	chatMessages = append(chatMessages, ai.ChatMessage{Role: "system", Content: chatProjectSystemPrompt(m.GetLanguage())})
 	for _, msg := range messages {
-		chatMessages = append(chatMessages, ollamaChatMessage{Role: msg.Role, Content: msg.Content})
+		chatMessages = append(chatMessages, ai.ChatMessage{Role: msg.Role, Content: msg.Content})
 	}
 
-	reqBody, err := json.Marshal(ollamaChatRequest{
-		Model:    m.ollamaModel,
-		Messages: chatMessages,
-		Stream:   false,
-	})
+	text, err := m.chatProvider.Chat(ctx, chatMessages)
 	if err != nil {
-		return nil, fmt.Errorf("marshalling request: %w", err)
+		return nil, fmt.Errorf("chat request failed: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", m.ollamaEndpoint+"/api/chat", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("ollama chat request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var chatResp ollamaChatResponse
-	if err := json.Unmarshal(body, &chatResp); err != nil {
-		return nil, fmt.Errorf("parsing ollama response: %w", err)
-	}
-
-	text := chatResp.Message.Content
 	if text == "" {
-		return nil, fmt.Errorf("empty response from Ollama")
+		return nil, fmt.Errorf("empty response from chat provider")
 	}
 
 	// Parse the JSON response

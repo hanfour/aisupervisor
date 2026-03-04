@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
@@ -47,8 +48,9 @@ type Manager struct {
 	shutdownCancel context.CancelFunc
 	language       string // "en" or "zh-TW"
 	langMu         sync.RWMutex
-	ollamaEndpoint string
-	ollamaModel    string
+	chatProvider   ai.ChatProvider
+	ollamaEndpoint string // kept for personality narrator
+	ollamaModel    string // kept for personality narrator
 	modelStrategy  *ModelStrategy
 	circuitBreaker *CircuitBreaker
 	humanGate      *HumanGate
@@ -75,6 +77,7 @@ func New(
 	monitor *worker.CompletionMonitor,
 	tmuxClient tmux.TmuxClient,
 	dataDir string,
+	chatProvider ai.ChatProvider,
 ) (*Manager, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
@@ -110,6 +113,7 @@ func New(
 		maxWorkers:       make(map[worker.WorkerTier]int),
 		personalityStore: personalityStore,
 		narrator:         narrator,
+		chatProvider:     chatProvider,
 		ollamaEndpoint:   ollamaEndpoint,
 		ollamaModel:      ollamaModel,
 	}
@@ -1326,6 +1330,13 @@ func (m *Manager) GetHumanGate() *HumanGate {
 // GetCommunicationMatrix returns the communication matrix.
 func (m *Manager) GetCommunicationMatrix() *CommunicationMatrix {
 	return m.commMatrix
+}
+
+// SetChatProvider replaces the current chat provider (used for runtime backend switching).
+func (m *Manager) SetChatProvider(cp ai.ChatProvider) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.chatProvider = cp
 }
 
 // Shutdown cancels all active workers and waits for goroutines to exit.

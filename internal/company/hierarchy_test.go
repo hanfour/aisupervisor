@@ -200,7 +200,7 @@ func TestWorkerTierPersistence(t *testing.T) {
 	storeDir := t.TempDir()
 
 	store1, _ := testStoreWithDir(storeDir)
-	m1, _ := New(store1, nil, nil, nil, nil, dir)
+	m1, _ := New(store1, nil, nil, nil, nil, dir, nil)
 	m1.CreateWorker("TierWorker", "star",
 		WithTier(worker.TierManager),
 		WithCLITool("claude"),
@@ -208,7 +208,7 @@ func TestWorkerTierPersistence(t *testing.T) {
 
 	// Reload
 	store2, _ := testStoreWithDir(storeDir)
-	m2, err := New(store2, nil, nil, nil, nil, dir)
+	m2, err := New(store2, nil, nil, nil, nil, dir, nil)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}

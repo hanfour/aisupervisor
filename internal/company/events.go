@@ -40,6 +40,9 @@ const (
 	EventTaskEscalated       EventType = "task_escalated"
 	EventTaskDeployed        EventType = "task_deployed"
 	EventHumanInterventionRequired EventType = "human_intervention_required"
+	EventProjectCompleted          EventType = "project_completed"
+	EventRetroStarted              EventType = "retro_started"
+	EventRetroCompleted            EventType = "retro_completed"
 )
 
 type Event struct {

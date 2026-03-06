@@ -526,6 +526,9 @@ func buildCompanyManagerWithTmux() (*company.Manager, error) {
 		spawner.LoadTierConfigs(cfg.WorkerTiers)
 	}
 	spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
+	if len(cfg.WorkerSkillOverrides) > 0 {
+		spawner.LoadSkillOverrides(cfg.WorkerSkillOverrides)
+	}
 
 	completionMon := worker.NewCompletionMonitor(tmuxClient)
 	chatProvider := setupChatProviderCLI(cfg)

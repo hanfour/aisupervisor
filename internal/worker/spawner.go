@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -30,7 +31,8 @@ type Spawner struct {
 	sup           *supervisor.Supervisor
 	sessionMgr    *session.Manager
 	tierConfigs   map[WorkerTier]TierSpawnConfig
-	skillProfiles map[string]config.SkillProfile
+	skillProfiles    map[string]config.SkillProfile
+	skillOverrides   map[string]config.SkillProfileOverride // keyed by workerID
 	projectStore     projectStoreReader
 	language         string // "en" or "zh-TW"
 	personalityStore *personality.Store
@@ -52,8 +54,9 @@ func NewSpawner(
 		gitOps:        gitOps,
 		sup:           sup,
 		sessionMgr:    sessionMgr,
-		tierConfigs:   make(map[WorkerTier]TierSpawnConfig),
-		skillProfiles: make(map[string]config.SkillProfile),
+		tierConfigs:    make(map[WorkerTier]TierSpawnConfig),
+		skillProfiles:  make(map[string]config.SkillProfile),
+		skillOverrides: make(map[string]config.SkillProfileOverride),
 	}
 }
 
@@ -96,20 +99,63 @@ func (s *Spawner) LoadSkillProfiles(profiles []config.SkillProfile) {
 	}
 }
 
+// LoadSkillOverrides populates per-worker skill profile overrides from config.
+func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOverride) {
+	for k, v := range overrides {
+		s.skillOverrides[k] = v
+	}
+}
+
 // buildSkillArgs converts a worker's skill profile into CLI flags.
+// Per-worker overrides (from retro results) are applied on top of the base profile.
 func (s *Spawner) buildSkillArgs(w *Worker) string {
 	sp, ok := s.skillProfiles[w.SkillProfile]
 	if !ok {
 		return ""
 	}
-	var parts []string
-	if sp.SystemPrompt != "" {
-		parts = append(parts, "--append-system-prompt", shellEscape(sp.SystemPrompt))
+
+	// Apply per-worker overrides
+	override, hasOverride := s.skillOverrides[w.ID]
+
+	systemPrompt := sp.SystemPrompt
+	if hasOverride && override.ExtraPrompt != "" {
+		systemPrompt += "\n\n" + override.ExtraPrompt
 	}
-	if len(sp.AllowedTools) > 0 {
+
+	model := sp.Model
+	if hasOverride && override.ModelOverride != "" {
+		model = override.ModelOverride
+	}
+
+	// Build allowed tools with override additions/removals
+	allowedTools := append([]string{}, sp.AllowedTools...)
+	if hasOverride {
+		for _, tool := range override.AddTools {
+			allowedTools = append(allowedTools, tool)
+		}
+		if len(override.RemoveTools) > 0 {
+			removeSet := make(map[string]bool, len(override.RemoveTools))
+			for _, t := range override.RemoveTools {
+				removeSet[t] = true
+			}
+			filtered := allowedTools[:0]
+			for _, t := range allowedTools {
+				if !removeSet[t] {
+					filtered = append(filtered, t)
+				}
+			}
+			allowedTools = filtered
+		}
+	}
+
+	var parts []string
+	if systemPrompt != "" {
+		parts = append(parts, "--append-system-prompt", shellEscape(systemPrompt))
+	}
+	if len(allowedTools) > 0 {
 		// Each tool is a separate argument: --allowedTools "Bash" "Edit" "Read"
 		parts = append(parts, "--allowedTools")
-		for _, tool := range sp.AllowedTools {
+		for _, tool := range allowedTools {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
@@ -119,11 +165,16 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
-	if sp.Model != "" {
-		parts = append(parts, "--model", sp.Model)
+	if model != "" {
+		parts = append(parts, "--model", model)
 	}
 	if sp.PermissionMode != "" {
-		parts = append(parts, "--permission-mode", sp.PermissionMode)
+		if sp.PermissionMode == "bypassPermissions" {
+			// Use --dangerously-skip-permissions to avoid the interactive confirmation prompt
+			parts = append(parts, "--dangerously-skip-permissions")
+		} else {
+			parts = append(parts, "--permission-mode", sp.PermissionMode)
+		}
 	}
 	if sp.ExtraCLIArgs != "" {
 		parts = append(parts, sp.ExtraCLIArgs)
@@ -167,6 +218,11 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	}
 
 	// 5. Launch CLI tool (claude or aider)
+	// Unset CLAUDECODE to avoid "nested session" detection when the supervisor
+	// itself is running inside a Claude Code session (e.g. during development).
+	s.tmuxClient.SendKeys(tmuxName, 0, 0, "unset CLAUDECODE"+" Enter")
+	s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 3*time.Second)
+
 	cliTool, cliArgs, readyRe := s.resolveCLI(w)
 	if cliArgs != "" {
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("%s %s", cliTool, cliArgs)+" Enter")
@@ -175,8 +231,9 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	}
 
 	// 6. Wait for CLI to be ready
-	if err := s.waitForReady(ctx, tmuxName, 30*time.Second, readyRe); err != nil {
-		s.tmuxClient.KillSession(tmuxName)
+	if err := s.waitForReady(ctx, tmuxName, 120*time.Second, readyRe); err != nil {
+		// Don't kill session on failure to allow debugging
+		log.Printf("WARNING: CLI ready timeout for %s in tmux session %s", cliTool, tmuxName)
 		return fmt.Errorf("waiting for %s ready: %w", cliTool, err)
 	}
 
@@ -318,22 +375,53 @@ func isShellPromptReady(content string) bool {
 
 // waitForReady polls the pane content until the CLI shows its prompt indicator.
 // If readyRe is provided, it is used instead of default Claude Code detection.
+// It also auto-accepts the --dangerously-skip-permissions confirmation dialog.
 func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout time.Duration, readyRe *regexp.Regexp) error {
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 
+	pollCount := 0
+	bypassAccepted := false
+	bypassAcceptedAt := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
-			return fmt.Errorf("timeout waiting for CLI ready")
+			return fmt.Errorf("timeout waiting for CLI ready (polled %d times)", pollCount)
 		case <-ticker.C:
+			pollCount++
 			content, err := s.tmuxClient.CapturePane(tmuxSession, 0, 0, 10)
 			if err != nil {
 				continue
 			}
+
+			// Auto-accept --dangerously-skip-permissions confirmation dialog.
+			// The dialog shows "No, exit" and "Yes, I accept the risks" options.
+			// We press Down to select "Yes" then Enter to confirm.
+			if !bypassAccepted && (strings.Contains(content, "No, exit") || strings.Contains(content, "I accept")) {
+				log.Printf("waitForReady[%s] bypass permissions dialog detected, auto-accepting", tmuxSession)
+				s.tmuxClient.SendKeys(tmuxSession, 0, 0, "Down")
+				time.Sleep(300 * time.Millisecond)
+				s.tmuxClient.SendKeys(tmuxSession, 0, 0, "Enter")
+				bypassAccepted = true
+				bypassAcceptedAt = pollCount
+				continue
+			}
+
+			// Skip ready detection while the bypass confirmation dialog is showing
+			// or shortly after accepting it (give CLI time to initialize).
+			if strings.Contains(content, "No, exit") || strings.Contains(content, "I accept") {
+				if !bypassAccepted {
+					continue // will be handled by the auto-accept block above on next poll
+				}
+				// Already accepted but dialog text still in pane buffer — wait for it to clear
+				if pollCount-bypassAcceptedAt < 10 {
+					continue
+				}
+			}
+
 			lines := strings.Split(content, "\n")
 			for _, line := range lines {
 				trimmed := strings.TrimSpace(line)
@@ -342,8 +430,13 @@ func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout 
 						return nil
 					}
 				} else {
-					// Default Claude Code detection
-					if trimmed == ">" || strings.HasPrefix(trimmed, "> ") || strings.Contains(line, "What can I help") {
+					// Default Claude Code detection.
+					// Claude Code v2+ uses "❯" (U+276F) as its prompt character.
+					if trimmed == ">" || strings.HasPrefix(trimmed, "> ") ||
+						trimmed == "\u276f" || strings.HasPrefix(trimmed, "\u276f ") ||
+						strings.Contains(line, "What can I help") ||
+						strings.Contains(line, "Welcome back") {
+						log.Printf("waitForReady[%s] CLI ready", tmuxSession)
 						return nil
 					}
 				}

@@ -318,3 +318,78 @@ type RelationshipDTO struct {
 	InteractionCount int      `json:"interactionCount"`
 	Tags             []string `json:"tags"`
 }
+
+// --- Retro DTOs ---
+
+type RetroReportDTO struct {
+	ID          string         `json:"id"`
+	ProjectID   string         `json:"projectId"`
+	ProjectName string         `json:"projectName"`
+	Result      RetroResultDTO `json:"result"`
+	AppliedAt   string         `json:"appliedAt"`
+}
+
+type RetroResultDTO struct {
+	Summary          string                       `json:"summary"`
+	WorkerFeedback   []WorkerFeedbackDTO          `json:"workerFeedback"`
+	SkillAdjustments []SkillProfileAdjustmentDTO  `json:"skillAdjustments"`
+}
+
+type WorkerFeedbackDTO struct {
+	WorkerID    string   `json:"workerId"`
+	Strengths   []string `json:"strengths"`
+	Weaknesses  []string `json:"weaknesses"`
+	Suggestions []string `json:"suggestions"`
+}
+
+type SkillProfileAdjustmentDTO struct {
+	WorkerID        string   `json:"workerId"`
+	ProfileID       string   `json:"profileId"`
+	PromptAdditions []string `json:"promptAdditions,omitempty"`
+	PromptRemovals  []string `json:"promptRemovals,omitempty"`
+	AddTools        []string `json:"addTools,omitempty"`
+	RemoveTools     []string `json:"removeTools,omitempty"`
+	ModelChange     string   `json:"modelChange,omitempty"`
+}
+
+type SkillProfileOverrideDTO struct {
+	ExtraPrompt   string   `json:"extraPrompt,omitempty"`
+	AddTools      []string `json:"addTools,omitempty"`
+	RemoveTools   []string `json:"removeTools,omitempty"`
+	ModelOverride string   `json:"modelOverride,omitempty"`
+}
+
+func RetroReportToDTO(r company.RetroReport) RetroReportDTO {
+	fb := make([]WorkerFeedbackDTO, len(r.Result.WorkerFeedback))
+	for i, f := range r.Result.WorkerFeedback {
+		fb[i] = WorkerFeedbackDTO{
+			WorkerID:    f.WorkerID,
+			Strengths:   f.Strengths,
+			Weaknesses:  f.Weaknesses,
+			Suggestions: f.Suggestions,
+		}
+	}
+	adj := make([]SkillProfileAdjustmentDTO, len(r.Result.SkillAdjustments))
+	for i, a := range r.Result.SkillAdjustments {
+		adj[i] = SkillProfileAdjustmentDTO{
+			WorkerID:        a.WorkerID,
+			ProfileID:       a.ProfileID,
+			PromptAdditions: a.PromptAdditions,
+			PromptRemovals:  a.PromptRemovals,
+			AddTools:        a.AddTools,
+			RemoveTools:     a.RemoveTools,
+			ModelChange:     a.ModelChange,
+		}
+	}
+	return RetroReportDTO{
+		ID:          r.ID,
+		ProjectID:   r.ProjectID,
+		ProjectName: r.ProjectName,
+		Result: RetroResultDTO{
+			Summary:          r.Result.Summary,
+			WorkerFeedback:   fb,
+			SkillAdjustments: adj,
+		},
+		AppliedAt: r.AppliedAt.Format(time.RFC3339),
+	}
+}

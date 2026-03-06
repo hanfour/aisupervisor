@@ -35,6 +35,7 @@
   let ProjectBoardPage = null
   let HierarchyPage = null
   let OfficePage = null
+  let RetroPage = null
 
   onMount(async () => {
     window.addEventListener('hashchange', onHashChange)
@@ -97,6 +98,11 @@
       const officeModule = await import('./lib/pages/OfficePage.svelte')
       OfficePage = officeModule.default
     } catch {}
+    // Retro page
+    try {
+      const retroModule = await import('./lib/pages/RetroPage.svelte')
+      RetroPage = retroModule.default
+    } catch {}
   })
 
   function navigate(page, id) {
@@ -138,6 +144,8 @@
       <svelte:component this={RolesPage} />
     {:else if currentPage === 'groups' && GroupsPage}
       <svelte:component this={GroupsPage} />
+    {:else if currentPage === 'retro' && RetroPage}
+      <svelte:component this={RetroPage} />
     {:else if currentPage === 'office' && OfficePage}
       <svelte:component this={OfficePage} />
     {:else if currentPage === 'settings' && SettingsPage}

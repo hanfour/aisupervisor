@@ -162,6 +162,9 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 			spawner.LoadTierConfigs(cfg.WorkerTiers)
 		}
 		spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
+		if len(cfg.WorkerSkillOverrides) > 0 {
+			spawner.LoadSkillOverrides(cfg.WorkerSkillOverrides)
+		}
 		completionMon := worker.NewCompletionMonitor(tmuxClient)
 		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir, setupChatProviderCLI(cfg))
 
@@ -239,6 +242,9 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 			spawner.LoadTierConfigs(cfg.WorkerTiers)
 		}
 		spawner.LoadSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
+		if len(cfg.WorkerSkillOverrides) > 0 {
+			spawner.LoadSkillOverrides(cfg.WorkerSkillOverrides)
+		}
 		completionMon := worker.NewCompletionMonitor(tmuxClient)
 		companyMgr, _ := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir, setupChatProviderCLI(cfg))
 		if companyMgr != nil {
@@ -427,9 +433,8 @@ func setupChatProviderCLI(cfg *config.Config) ai.ChatProvider {
 		log.Printf("WARNING: chat backend %q not found or unsupported, trying fallback", cfg.ChatBackend)
 	}
 
-	// Fallback: first compatible backend (prefer openai, then anthropic_api, then ollama)
-	// NOTE: anthropic_oauth is excluded — Anthropic restricts OAuth tokens to Claude Code only.
-	preferOrder := []string{"openai", "anthropic_api", "ollama"}
+	// Fallback: first compatible backend in priority order
+	preferOrder := []string{"openai", "anthropic_api", "ollama", "anthropic_oauth"}
 	for _, pref := range preferOrder {
 		for _, bc := range cfg.Backends {
 			if bc.Type == pref {

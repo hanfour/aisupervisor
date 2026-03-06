@@ -20,6 +20,7 @@
     { id: 'roles', key: 'nav.roles', icon: '★' },
     { id: 'groups', key: 'nav.groups', icon: '♦' },
     { id: 'office', key: 'nav.office', icon: '▣' },
+    { id: 'retro', key: 'nav.retro', icon: '↻' },
     { id: 'settings', key: 'nav.settings', icon: '⚙' },
   ]
 </script>

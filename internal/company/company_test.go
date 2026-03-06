@@ -22,7 +22,7 @@ func testManager(t *testing.T) (*Manager, <-chan Event) {
 	dir := t.TempDir()
 	store := testStore(t)
 
-	m, err := New(store, nil, nil, nil, nil, dir)
+	m, err := New(store, nil, nil, nil, nil, dir, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -167,10 +167,10 @@ func TestWorkerPersistence(t *testing.T) {
 	storeDir := t.TempDir()
 	store, _ := project.NewStore(storeDir)
 
-	m1, _ := New(store, nil, nil, nil, nil, dir)
+	m1, _ := New(store, nil, nil, nil, nil, dir, nil)
 	m1.CreateWorker("Persist", "mario")
 
-	m2, err := New(store, nil, nil, nil, nil, dir)
+	m2, err := New(store, nil, nil, nil, nil, dir, nil)
 	if err != nil {
 		t.Fatalf("reload manager: %v", err)
 	}

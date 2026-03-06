@@ -225,6 +225,18 @@ func (m *Manager) CreateProject(name, description, repoPath, baseBranch string, 
 		ProjectID: p.ID,
 		Message:   m.msgf("Project created: %s", "專案已建立：%s", name),
 	})
+
+	// Auto-decompose goals into tasks in the background
+	if len(goals) > 0 && m.chatProvider != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if err := m.DecomposeGoals(ctx, p.ID); err != nil {
+				log.Printf("WARNING: auto-decompose goals failed: %v", err)
+			}
+		}()
+	}
+
 	return p, nil
 }
 
@@ -633,8 +645,8 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	}
 
 	if result.Success {
-		// Check if this is a review task completed by a manager
-		if t.ParentTaskID != "" && w.EffectiveTier() == worker.TierManager {
+		// Check if this is a review task (has a parent task)
+		if t.ParentTaskID != "" {
 			// Reset manager to idle
 			w.Status = worker.WorkerIdle
 			w.CurrentTaskID = ""
@@ -668,7 +680,8 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		}
 
 		// Check if engineer with a parent → route to manager review
-		if w.EffectiveTier() == worker.TierEngineer && w.ParentID != "" {
+		// Guard: skip review for tasks that are themselves review sub-tasks (have ParentTaskID)
+		if w.EffectiveTier() == worker.TierEngineer && w.ParentID != "" && t.ParentTaskID == "" {
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskCodeReview)
 
 			m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
@@ -791,6 +804,9 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	if len(promoted) > 0 {
 		go m.engageIdleManagers(context.Background(), projectID)
 	}
+
+	// Check if project is fully completed
+	go m.checkProjectCompletion(projectID)
 }
 
 // handleResearchCompletion processes a completed research task: extracts the JSON
@@ -874,6 +890,9 @@ func (m *Manager) handleResearchCompletion(w *worker.Worker, t *project.Task, p 
 	if len(promoted) > 0 {
 		go m.engageIdleManagers(context.Background(), projectID)
 	}
+
+	// Check if project is fully completed
+	go m.checkProjectCompletion(projectID)
 }
 
 // parseResearchReport attempts to extract a structured research report from raw output.
@@ -1157,6 +1176,45 @@ func (m *Manager) ProjectProgress(projectID string) ProgressDTO {
 		dto.Percent = float64(dto.Done) / float64(dto.Total) * 100
 	}
 	return dto
+}
+
+// checkProjectCompletion checks if all tasks in a project are done/failed and triggers retro.
+func (m *Manager) checkProjectCompletion(projectID string) {
+	progress := m.ProjectProgress(projectID)
+	if progress.Total == 0 {
+		return
+	}
+	// Project is complete when all tasks are either done or failed
+	if progress.Done+progress.Failed < progress.Total {
+		return
+	}
+
+	p, ok := m.projectStore.GetProject(projectID)
+	if !ok {
+		return
+	}
+	// Avoid re-triggering if already completed
+	if p.Status == project.ProjectCompleted {
+		return
+	}
+
+	p.Status = project.ProjectCompleted
+	m.projectStore.SaveProject(p)
+
+	m.emit(Event{
+		Type:      EventProjectCompleted,
+		ProjectID: projectID,
+		Message:   m.msgf("Project %q completed (%d done, %d failed)", "專案「%s」已完成（%d 完成、%d 失敗）", p.Name, progress.Done, progress.Failed),
+	})
+
+	// Trigger retro automatically
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		if err := m.RunRetro(ctx, projectID); err != nil {
+			log.Printf("WARNING: auto-retro for project %s failed: %v", projectID, err)
+		}
+	}()
 }
 
 // Subscribe creates a new event channel that receives all future events.

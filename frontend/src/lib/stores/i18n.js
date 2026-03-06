@@ -13,6 +13,7 @@ const translations = {
   'nav.roles': { en: 'Roles', zh: '角色' },
   'nav.groups': { en: 'Groups', zh: '群組' },
   'nav.office': { en: 'Office', zh: '辦公室' },
+  'nav.retro': { en: 'Retro', zh: '回顧' },
   'nav.settings': { en: 'Settings', zh: '設定' },
   'nav.skills': { en: 'Skills', zh: '技能' },
   'theme.light': { en: '☀ Light', zh: '☀ 亮色' },
@@ -322,6 +323,24 @@ const translations = {
   'roles.perTerminal': { en: 'Per-Terminal Assignment', zh: '終端分配' },
   'roles.session': { en: 'Session:', zh: '工作階段：' },
   'roles.noSessions': { en: 'No sessions available', zh: '沒有可用的工作階段' },
+
+  // --- Retro ---
+  'retro.title': { en: 'Project Retro', zh: '專案回顧' },
+  'retro.summary': { en: 'Summary', zh: '摘要' },
+  'retro.workerFeedback': { en: 'Worker Feedback', zh: '員工回饋' },
+  'retro.skillAdjustments': { en: 'Skill Adjustments', zh: '技能調整' },
+  'retro.triggerRetro': { en: 'Run Retro', zh: '執行回顧' },
+  'retro.noReports': { en: 'No retro reports yet', zh: '尚無回顧報告' },
+  'retro.strengths': { en: 'Strengths', zh: '優勢' },
+  'retro.weaknesses': { en: 'Weaknesses', zh: '待改善' },
+  'retro.suggestions': { en: 'Suggestions', zh: '建議' },
+  'retro.promptAdditions': { en: 'Prompt Additions', zh: '提示詞新增' },
+  'retro.addTools': { en: 'Add Tools', zh: '新增工具' },
+  'retro.removeTools': { en: 'Remove Tools', zh: '移除工具' },
+  'retro.modelChange': { en: 'Model Change', zh: '模型變更' },
+  'retro.appliedAt': { en: 'Applied', zh: '套用時間' },
+  'retro.running': { en: 'Running retro...', zh: '執行回顧中...' },
+  'retro.skillOverride': { en: 'Skill Override', zh: '技能覆蓋' },
 
   // --- Terminal ---
   'terminal.info': { en: 'Info', zh: '資訊' },

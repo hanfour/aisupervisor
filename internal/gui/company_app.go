@@ -165,6 +165,11 @@ func (c *CompanyApp) CreateTask(projectID, title, description, prompt string, de
 	return &dto, nil
 }
 
+// DecomposeGoals uses AI to break project goals into tasks.
+func (c *CompanyApp) DecomposeGoals(projectID string) error {
+	return c.company.DecomposeGoals(c.ctx, projectID)
+}
+
 func (c *CompanyApp) ListTasks(projectID string) []TaskDTO {
 	tasks := c.company.ListTasks(projectID)
 	dtos := make([]TaskDTO, len(tasks))
@@ -469,8 +474,7 @@ func (c *CompanyApp) GetAvailableChatBackends() []string {
 	if err != nil {
 		return nil
 	}
-	// anthropic_oauth is excluded — Anthropic restricts OAuth tokens to Claude Code only.
-	chatTypes := map[string]bool{"openai": true, "ollama": true, "anthropic_api": true}
+	chatTypes := map[string]bool{"openai": true, "ollama": true, "anthropic_api": true, "anthropic_oauth": true}
 	var result []string
 	for _, bc := range cfg.Backends {
 		if chatTypes[bc.Type] {
@@ -591,6 +595,47 @@ func (c *CompanyApp) GenerateNarrative(workerID string) error {
 		p.Narrative = *narrative
 	})
 	return nil
+}
+
+// --- Retro operations ---
+
+// GetRetroReports returns all retro reports.
+func (c *CompanyApp) GetRetroReports() []RetroReportDTO {
+	reports := c.company.LoadRetroReports()
+	dtos := make([]RetroReportDTO, len(reports))
+	for i, r := range reports {
+		dtos[i] = RetroReportToDTO(r)
+	}
+	return dtos
+}
+
+// GetRetroReport returns a single retro report by ID.
+func (c *CompanyApp) GetRetroReport(id string) *RetroReportDTO {
+	r := c.company.GetRetroReport(id)
+	if r == nil {
+		return nil
+	}
+	dto := RetroReportToDTO(*r)
+	return &dto
+}
+
+// TriggerRetro manually triggers a retrospective for a project.
+func (c *CompanyApp) TriggerRetro(projectID string) error {
+	return c.company.RunRetro(c.ctx, projectID)
+}
+
+// GetWorkerSkillOverrides returns the skill profile override for a worker.
+func (c *CompanyApp) GetWorkerSkillOverrides(workerID string) *SkillProfileOverrideDTO {
+	override := c.company.GetWorkerSkillOverride(workerID)
+	if override == nil {
+		return nil
+	}
+	return &SkillProfileOverrideDTO{
+		ExtraPrompt:   override.ExtraPrompt,
+		AddTools:      override.AddTools,
+		RemoveTools:   override.RemoveTools,
+		ModelOverride: override.ModelOverride,
+	}
 }
 
 // UpdateWorkerBirthday updates a worker's birthday (ISO date string, e.g. "1998-03-15").

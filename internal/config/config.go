@@ -28,7 +28,16 @@ type Config struct {
 	ChatBackend    string               `yaml:"chat_backend,omitempty"` // name of backend to use for chat (e.g. "openai-chat")
 	Language       string               `yaml:"language,omitempty"`     // "en" or "zh-TW", default "zh-TW"
 	Verification   VerificationConfig   `yaml:"verification,omitempty"`
-	HumanGate      HumanGateConfig      `yaml:"human_gate,omitempty"`
+	HumanGate            HumanGateConfig                `yaml:"human_gate,omitempty"`
+	WorkerSkillOverrides map[string]SkillProfileOverride `yaml:"worker_skill_overrides,omitempty"`
+}
+
+// SkillProfileOverride holds per-worker customizations layered on top of the base SkillProfile.
+type SkillProfileOverride struct {
+	ExtraPrompt   string   `yaml:"extra_prompt,omitempty" json:"extraPrompt,omitempty"`
+	AddTools      []string `yaml:"add_tools,omitempty" json:"addTools,omitempty"`
+	RemoveTools   []string `yaml:"remove_tools,omitempty" json:"removeTools,omitempty"`
+	ModelOverride string   `yaml:"model_override,omitempty" json:"modelOverride,omitempty"`
 }
 
 type WorkerTierConfig struct {

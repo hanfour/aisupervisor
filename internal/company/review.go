@@ -3,6 +3,7 @@ package company
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -184,6 +185,13 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 	// Read manager's output to determine verdict
 	output := rp.captureManagerOutput(managerWorker)
 	approved := parseReviewVerdict(output)
+	log.Printf("HandleReviewResult: reviewTask=%s originalTask=%s approved=%v outputLen=%d output_tail=%q",
+		reviewTask.ID, originalTask.ID, approved, len(output), func() string {
+			if len(output) > 300 {
+				return output[len(output)-300:]
+			}
+			return output
+		}())
 
 	// Capture training data via collector
 	rp.captureTrainingData(originalTask, managerWorker, p, output, approved)
@@ -240,13 +248,16 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 		if len(promoted) > 0 {
 			go rp.mgr.engageIdleManagers(context.Background(), p.ID)
 		}
+
+		// Check if project is fully completed
+		go rp.mgr.checkProjectCompletion(p.ID)
 	} else {
 		// Record rejection
 		originalTask.RejectionCount++
 		originalTask.RejectionHistory = append(originalTask.RejectionHistory, project.Rejection{
 			Stage:      originalTask.Status,
 			RejectorID: managerWorker.ID,
-			Reason:     output,
+			Reason:     sanitizeForYAML(output),
 			Timestamp:  time.Now(),
 		})
 
@@ -259,7 +270,7 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			return
 		}
 
-		cb.RecordBounce(originalTask, managerWorker.ID, originalTask.AssigneeID, originalTask.Status, output)
+		cb.RecordBounce(originalTask, managerWorker.ID, originalTask.AssigneeID, originalTask.Status, sanitizeForYAML(output))
 
 		_ = rp.mgr.projectStore.UpdateTaskStatus(originalTask.ID, project.TaskRevision)
 		rp.mgr.emit(Event{
@@ -386,11 +397,43 @@ func (rp *ReviewPipeline) captureManagerOutput(w *worker.Worker) string {
 	if w.TmuxSession == "" {
 		return ""
 	}
-	content, err := rp.mgr.tmuxClient.CapturePane(w.TmuxSession, w.Window, w.Pane, 100)
+	content, err := rp.mgr.tmuxClient.CapturePane(w.TmuxSession, w.Window, w.Pane, 500)
 	if err != nil {
 		return ""
 	}
 	return content
+}
+
+// sanitizeForYAML cleans tmux output so it can be safely stored in YAML.
+// Removes box-drawing characters, excessive whitespace, and non-printable chars
+// that can break YAML block scalars.
+func sanitizeForYAML(s string) string {
+	// Replace common box-drawing characters with dashes
+	replacer := strings.NewReplacer(
+		"─", "-", "━", "-", "│", "|", "┃", "|",
+		"┌", "+", "┐", "+", "└", "+", "┘", "+",
+		"├", "+", "┤", "+", "┬", "+", "┴", "+", "┼", "+",
+		"╔", "+", "╗", "+", "╚", "+", "╝", "+",
+		"║", "|", "═", "=",
+		"❯", ">",
+	)
+	s = replacer.Replace(s)
+
+	// Collapse runs of 3+ dashes/equals to just 3
+	for _, ch := range []string{"-", "="} {
+		long := strings.Repeat(ch, 4)
+		short := strings.Repeat(ch, 3)
+		for strings.Contains(s, long) {
+			s = strings.ReplaceAll(s, long, short)
+		}
+	}
+
+	// Limit length to avoid bloating YAML
+	if len(s) > 2000 {
+		s = s[len(s)-2000:]
+	}
+
+	return s
 }
 
 func (rp *ReviewPipeline) buildReviewPrompt(t *project.Task, p *project.Project) string {
@@ -430,9 +473,12 @@ func (rp *ReviewPipeline) buildReviewPrompt(t *project.Task, p *project.Project)
 // parseReviewVerdict determines if a review output indicates approval.
 func parseReviewVerdict(output string) bool {
 	lower := strings.ToLower(output)
-	// Check last 500 chars for the verdict
-	if len(lower) > 500 {
-		lower = lower[len(lower)-500:]
+	// Check last 5000 bytes for the verdict.
+	// Must be large enough to account for UTF-8 multi-byte chars
+	// (CJK = 3 bytes each, box-drawing ─ = 3 bytes each)
+	// and scrollback content from Claude Code's verbose output.
+	if len(lower) > 5000 {
+		lower = lower[len(lower)-5000:]
 	}
 	if strings.Contains(lower, "approved") {
 		// Make sure it's not "not approved"

@@ -44,13 +44,13 @@
 
       if (resp.status === 'ready') {
         projectReady = resp
-        const summary = `I have all the information needed to create your project:\n- Name: ${resp.name}\n- Description: ${resp.description}\n- Repo: ${resp.repoPath}\n- Branch: ${resp.baseBranch}${resp.goals && resp.goals.length > 0 ? '\n- Goals: ' + resp.goals.join(', ') : ''}`
+        const summary = resp.message || `${resp.name} — ${resp.description}`
         messages = [...messages, { role: 'assistant', content: summary }]
       } else {
-        const questionText = resp.questions && resp.questions.length > 0
-          ? resp.questions.join('\n')
-          : 'Could you provide more details?'
-        messages = [...messages, { role: 'assistant', content: questionText }]
+        const replyText = resp.message
+          || (resp.questions && resp.questions.length > 0 ? resp.questions.join('\n') : '')
+          || 'Could you provide more details?'
+        messages = [...messages, { role: 'assistant', content: replyText }]
       }
     } catch (e) {
       const errMsg = typeof e === 'string' ? e : (e.message || String(e))

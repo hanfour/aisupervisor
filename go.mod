@@ -3,7 +3,6 @@ module github.com/hanfourmini/aisupervisor
 go 1.25.0
 
 require (
-	github.com/GianlucaP106/gotmux v0.5.0
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10

@@ -3,9 +3,8 @@ package tmux
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
-
-	"github.com/GianlucaP106/gotmux/gotmux"
 )
 
 type SessionInfo struct {
@@ -32,140 +31,131 @@ type TmuxClient interface {
 	HasSession(name string) (bool, error)
 }
 
-type gotmuxClient struct {
-	tmux *gotmux.Tmux
-}
+// execClient implements TmuxClient using only exec.Command calls to tmux binary.
+// This avoids gotmux library socket/connection issues where sessions created via
+// exec.Command are not visible to gotmux's internal connection.
+type execClient struct{}
 
 func NewClient() (TmuxClient, error) {
-	t, err := gotmux.DefaultTmux()
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to tmux: %w", err)
-	}
-	return &gotmuxClient{tmux: t}, nil
+	return &execClient{}, nil
 }
 
-func (c *gotmuxClient) ListSessions() ([]SessionInfo, error) {
-	sessions, err := c.tmux.ListSessions()
+func (c *execClient) target(session string, window, pane int) string {
+	return fmt.Sprintf("%s:%d.%d", session, window, pane)
+}
+
+func (c *execClient) ListSessions() ([]SessionInfo, error) {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{session_windows}").Output()
 	if err != nil {
+		// No server running is not an error — just no sessions
+		if strings.Contains(string(out)+err.Error(), "no server running") {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var result []SessionInfo
-	for _, s := range sessions {
-		result = append(result, SessionInfo{
-			Name:    s.Name,
-			Windows: s.Windows,
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		wins, _ := strconv.Atoi(parts[1])
+		result = append(result, SessionInfo{Name: parts[0], Windows: wins})
+	}
+	return result, nil
+}
+
+func (c *execClient) ListPanes(session string) ([]PaneInfo, error) {
+	out, err := exec.Command("tmux", "list-panes", "-t", session, "-a", "-F",
+		"#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_active}").Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing panes for %q: %w", session, err)
+	}
+	var result []PaneInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		wIdx, _ := strconv.Atoi(parts[1])
+		pIdx, _ := strconv.Atoi(parts[2])
+		result = append(result, PaneInfo{
+			SessionName: parts[0],
+			WindowIndex: wIdx,
+			PaneIndex:   pIdx,
+			Active:      parts[3] == "1",
 		})
 	}
 	return result, nil
 }
 
-func (c *gotmuxClient) ListPanes(session string) ([]PaneInfo, error) {
-	s, err := c.tmux.GetSessionByName(session)
+func (c *execClient) CapturePane(session string, window, pane, lines int) (string, error) {
+	target := c.target(session, window, pane)
+	args := []string{"capture-pane", "-t", target, "-p"}
+	if lines > 0 {
+		args = append(args, "-S", fmt.Sprintf("-%d", lines))
+	}
+	out, err := exec.Command("tmux", args...).Output()
 	if err != nil {
-		return nil, fmt.Errorf("session %q not found: %w", session, err)
+		return "", fmt.Errorf("capture-pane %q: %w", target, err)
 	}
-
-	windows, err := s.ListWindows()
-	if err != nil {
-		return nil, err
-	}
-
-	var result []PaneInfo
-	for _, w := range windows {
-		panes, err := w.ListPanes()
-		if err != nil {
-			return nil, err
-		}
-		for _, p := range panes {
-			result = append(result, PaneInfo{
-				SessionName: session,
-				WindowIndex: w.Index,
-				PaneIndex:   p.Index,
-				Active:      p.Active,
-			})
-		}
-	}
-	return result, nil
+	return string(out), nil
 }
 
-func (c *gotmuxClient) CapturePane(session string, window, pane, lines int) (string, error) {
-	s, err := c.tmux.GetSessionByName(session)
-	if err != nil {
-		return "", fmt.Errorf("session %q not found: %w", session, err)
-	}
+func (c *execClient) SendKeys(session string, window, pane int, keys string) error {
+	target := c.target(session, window, pane)
+	// Split keys into parts so special key names like "Enter" are separate args.
+	// e.g. "cd /path Enter" → ["cd /path", "Enter"]
+	args := []string{"send-keys", "-t", target}
+	parts := strings.Split(keys, " ")
+	// Rebuild: merge all parts except trailing special keys (Enter, Escape, etc.)
+	// Convention: callers append " Enter" at the end of the keys string.
+	var textParts []string
+	var trailingSpecials []string
+	specialKeys := map[string]bool{"Enter": true, "Escape": true, "Tab": true, "Space": true, "BSpace": true, "Up": true, "Down": true, "Left": true, "Right": true, "C-c": true}
 
-	w, err := s.GetWindowByIndex(window)
-	if err != nil {
-		return "", fmt.Errorf("window %d not found: %w", window, err)
-	}
-
-	panes, err := w.ListPanes()
-	if err != nil {
-		return "", err
-	}
-
-	for _, p := range panes {
-		if p.Index == pane {
-			content, err := p.Capture()
-			if err != nil {
-				return "", err
-			}
-			if lines > 0 {
-				allLines := strings.Split(content, "\n")
-				if len(allLines) > lines {
-					allLines = allLines[len(allLines)-lines:]
-				}
-				return strings.Join(allLines, "\n"), nil
-			}
-			return content, nil
+	// Scan from the end to find trailing special keys
+	for i := len(parts) - 1; i >= 0; i-- {
+		if specialKeys[parts[i]] {
+			trailingSpecials = append([]string{parts[i]}, trailingSpecials...)
+		} else {
+			textParts = parts[:i+1]
+			break
 		}
 	}
-	return "", fmt.Errorf("pane %d not found in window %d", pane, window)
-}
-
-func (c *gotmuxClient) SendKeys(session string, window, pane int, keys string) error {
-	s, err := c.tmux.GetSessionByName(session)
-	if err != nil {
-		return fmt.Errorf("session %q not found: %w", session, err)
-	}
-
-	w, err := s.GetWindowByIndex(window)
-	if err != nil {
-		return fmt.Errorf("window %d not found: %w", window, err)
-	}
-
-	panes, err := w.ListPanes()
-	if err != nil {
-		return err
-	}
-
-	for _, p := range panes {
-		if p.Index == pane {
-			return p.SendKeys(keys)
+	if len(textParts) == 0 && len(trailingSpecials) > 0 {
+		// All parts are special keys
+		args = append(args, trailingSpecials...)
+	} else {
+		if len(textParts) > 0 {
+			args = append(args, strings.Join(textParts, " "))
 		}
+		args = append(args, trailingSpecials...)
 	}
-	return fmt.Errorf("pane %d not found in window %d", pane, window)
+	return exec.Command("tmux", args...).Run()
 }
 
-func (c *gotmuxClient) SendLiteralKeys(session string, window, pane int, text string) error {
-	target := fmt.Sprintf("%s:%d.%d", session, window, pane)
-	cmd := exec.Command("tmux", "send-keys", "-t", target, "-l", "--", text)
-	return cmd.Run()
+func (c *execClient) SendLiteralKeys(session string, window, pane int, text string) error {
+	target := c.target(session, window, pane)
+	return exec.Command("tmux", "send-keys", "-t", target, "-l", "--", text).Run()
 }
 
-func (c *gotmuxClient) CreateSession(name string) error {
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", name)
-	return cmd.Run()
+func (c *execClient) CreateSession(name string) error {
+	return exec.Command("tmux", "new-session", "-d", "-s", name).Run()
 }
 
-func (c *gotmuxClient) KillSession(name string) error {
-	cmd := exec.Command("tmux", "kill-session", "-t", name)
-	return cmd.Run()
+func (c *execClient) KillSession(name string) error {
+	return exec.Command("tmux", "kill-session", "-t", name).Run()
 }
 
-func (c *gotmuxClient) HasSession(name string) (bool, error) {
-	cmd := exec.Command("tmux", "has-session", "-t", name)
-	err := cmd.Run()
+func (c *execClient) HasSession(name string) (bool, error) {
+	err := exec.Command("tmux", "has-session", "-t", name).Run()
 	if err == nil {
 		return true, nil
 	}

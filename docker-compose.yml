@@ -1,0 +1,14 @@
+services:
+  aisupervisor:
+    build: .
+    container_name: aisupervisor-dev
+    volumes:
+      - ~/.claude:/root/.claude:ro
+      - ~/.config/aisupervisor:/root/.config/aisupervisor
+      - ~/.local/share/aisupervisor:/root/.local/share/aisupervisor
+      - ~/Projects:/workspace
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    stdin_open: true
+    tty: true
+    working_dir: /workspace

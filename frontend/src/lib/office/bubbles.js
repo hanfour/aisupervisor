@@ -200,13 +200,13 @@ export class BubbleManager {
       { dx: -contentW * 0.20, dy:  contentH * 0.14,  r: contentW * 0.22 },
     ]
 
-    ctx.fillStyle = '#e8e8ff'
+    ctx.fillStyle = '#fff8e0'
     for (const b of blobs) {
       ctx.beginPath()
       ctx.arc(cloudCx + b.dx, cloudCy + b.dy, b.r, 0, Math.PI * 2)
       ctx.fill()
     }
-    ctx.strokeStyle = '#9999cc'
+    ctx.strokeStyle = '#c9a868'
     ctx.lineWidth = 1.5
     for (const b of blobs) {
       ctx.beginPath()
@@ -224,8 +224,8 @@ export class BubbleManager {
       { x: startX + (cloudCx - startX) * 0.75, y: startY + (endY - startY) * 0.75, r: 4 },
     ]
 
-    ctx.fillStyle = '#e8e8ff'
-    ctx.strokeStyle = '#9999cc'
+    ctx.fillStyle = '#fff8e0'
+    ctx.strokeStyle = '#c9a868'
     ctx.lineWidth = 1
     for (const c of chain) {
       ctx.beginPath()
@@ -279,15 +279,15 @@ export class BubbleManager {
     const by = pos.pixelY - bh - 10
     const bx = cx - bw / 2
 
-    ctx.fillStyle = '#e8ffe8'
+    ctx.fillStyle = '#f0ffe8'
     ctx.fillRect(bx, by, bw, bh)
 
-    ctx.strokeStyle = '#224422'
+    ctx.strokeStyle = '#446622'
     ctx.lineWidth = bold ? 2.5 : 1.5
     ctx.strokeRect(bx, by, bw, bh)
 
     // Triangle pointer
-    ctx.fillStyle = '#e8ffe8'
+    ctx.fillStyle = '#f0ffe8'
     ctx.beginPath()
     ctx.moveTo(cx - 4, by + bh)
     ctx.lineTo(cx + 4, by + bh)
@@ -295,7 +295,7 @@ export class BubbleManager {
     ctx.closePath()
     ctx.fill()
 
-    ctx.strokeStyle = '#224422'
+    ctx.strokeStyle = '#446622'
     ctx.lineWidth = bold ? 2.5 : 1.5
     ctx.beginPath()
     ctx.moveTo(cx - 4, by + bh - 1)

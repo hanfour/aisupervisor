@@ -63,8 +63,8 @@ export function startAmbient() {
   if (ambientInterval) return
   ambientInterval = setInterval(() => {
     if (!enabled) return
-    // Subtle low hum tick
-    playTone(110, 0.04, 'sine', 0)
+    // Warm ambient tone
+    playTone(220, 0.04, 'sine', 0)
   }, 4000)
 }
 

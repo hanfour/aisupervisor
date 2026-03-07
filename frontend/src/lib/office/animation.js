@@ -100,11 +100,9 @@ export class AnimationState {
 }
 
 export const ENV_ANIM = {
-  neonPulseSpeed: 500,
-  particleSpawnRate: 0.02,
-  particleMaxCount: 30,
-  dataStreamSpeed: 2000,
-  screenGlowPulse: 3000,
+  dustMoteSpawnRate: 0.01,
+  dustMoteMaxCount: 15,
+  ambientLightPulse: 5000,
 }
 
 export { ANIM_CONFIG }

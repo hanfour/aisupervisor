@@ -319,6 +319,22 @@ export class SimulationEngine {
         this._log(id, 'at watercooler')
         break
       }
+      case 'coffeeBreak': {
+        const dur = randBetween(3000, 5000)
+        ws.state = 'at-watercooler'
+        ws.timer = dur
+        this.renderer.showSpeech(id, '☕ 來杯咖啡', dur)
+        this._log(id, 'coffee break')
+        break
+      }
+      case 'rest': {
+        const dur = randBetween(4000, 7000)
+        ws.state = 'at-watercooler'
+        ws.timer = dur
+        this.renderer.showSpeech(id, '😌 休息一下', dur)
+        this._log(id, 'resting')
+        break
+      }
       case 'discussion': {
         const { partnerId, topic } = ws.data
         const dur = randBetween(4000, 6000)
@@ -389,6 +405,14 @@ export class SimulationEngine {
         ws.timer = dur
         this.renderer.showSpeech(id, '☕', dur)
         this._log(id, 'coffee time')
+        break
+      }
+      case 'celebration': {
+        const dur = randBetween(4000, 6000)
+        ws.state = 'at-watercooler'
+        ws.timer = dur
+        this.renderer.showSpeech(id, this._getBubbleContent(this._findWorker(id), 'celebration') || '🎉', dur)
+        this._log(id, 'celebrating')
         break
       }
     }
@@ -478,6 +502,12 @@ export class SimulationEngine {
       switch (activity) {
         case 'watercooler':
           this._startWatercooler(w.id)
+          break
+        case 'coffeeBreak':
+          this._startCoffeeBreak(w.id)
+          break
+        case 'rest':
+          this._startRest(w.id)
           break
         case 'discussion': {
           const partner = this._randomOther(idleWorkers, w.id)
@@ -707,7 +737,7 @@ export class SimulationEngine {
     this.renderer.showSpeech(worker.id, pick(LEAVING_MESSAGES), 2000)
 
     // Walk to door area then disappear
-    const doorTile = { col: 10, row: 0 } // approximate door location
+    const doorTile = { col: 4, row: 15 } // bottom entrance door
     this.renderer.moveWorkerTo(worker.id, doorTile.col, doorTile.row)
     ws.state = 'leaving'
     ws.data = {}
@@ -762,9 +792,11 @@ export class SimulationEngine {
     // Base weights
     let weights = {
       discussion: 25,
-      watercooler: 15,
+      watercooler: 12,
+      coffeeBreak: 10,
+      rest: 5,
       thinking: 20,
-      stayAtDesk: 40,
+      stayAtDesk: 28,
     }
 
     if (traits) {
@@ -789,9 +821,10 @@ export class SimulationEngine {
         weights.discussion -= 3
         weights.stayAtDesk += 5
       }
-      // Low energy: watercooler (need coffee)
+      // Low energy: coffee and rest more likely
       if (energy < 20) {
-        weights.watercooler += 15
+        weights.coffeeBreak += 15
+        weights.rest += 10
       }
     }
 
@@ -892,6 +925,26 @@ export class SimulationEngine {
     this._log(workerId, 'walking to watercooler')
   }
 
+  _startCoffeeBreak(workerId) {
+    const tile = randomZoneTile('coffeeBar')
+    if (!tile) return
+    const ws = this.workerStates.get(workerId)
+    ws.state = 'walking-to-zone'
+    ws.data = { activity: 'coffeeBreak' }
+    this.renderer.moveWorkerTo(workerId, tile.col, tile.row)
+    this._log(workerId, 'walking to coffee bar')
+  }
+
+  _startRest(workerId) {
+    const tile = randomZoneTile('restArea')
+    if (!tile) return
+    const ws = this.workerStates.get(workerId)
+    ws.state = 'walking-to-zone'
+    ws.data = { activity: 'rest' }
+    this.renderer.moveWorkerTo(workerId, tile.col, tile.row)
+    this._log(workerId, 'walking to rest area')
+  }
+
   _startDiscussion(workerId, partnerId) {
     const partnerWs = this.workerStates.get(partnerId)
     if (!partnerWs || partnerWs.state !== 'at-desk') return
@@ -970,12 +1023,10 @@ export class SimulationEngine {
   }
 
   _startPairProgramming(worker1, worker2) {
-    const desk = this.deskMap?.get(worker1.id)
-    if (!desk) return
-
     this.workerStates.set(worker1.id, { state: 'at-desk', data: { activity: 'pair_programming' }, timer: 8000 })
     this.workerStates.set(worker2.id, { state: 'walking-to-person', data: { targetId: worker1.id, activity: 'pair_programming' }, timer: 8000 })
 
+    this.renderer.moveWorkerToWorker(worker2.id, worker1.id)
     this._addBubble(worker1.id, this._getBubbleContent(worker1, 'pair_programming') || '一起寫 code')
     this._logActivity(`${worker1.name || worker1.id} 和 ${worker2.name || worker2.id} 開始結對編程`)
   }
@@ -983,6 +1034,7 @@ export class SimulationEngine {
   _startComforting(comforter, target) {
     this.workerStates.set(comforter.id, { state: 'walking-to-person', data: { targetId: target.id, activity: 'comforting' }, timer: 5000 })
 
+    this.renderer.moveWorkerToWorker(comforter.id, target.id)
     setTimeout(() => {
       this._addBubble(comforter.id, this._getBubbleContent(comforter, 'comforting') || '沒關係的')
     }, 2000)
@@ -990,9 +1042,11 @@ export class SimulationEngine {
   }
 
   _startCelebration(workers) {
-    const zone = 'breakArea'
+    const tile = randomZoneTile('breakArea')
+    if (!tile) return
     for (const w of workers) {
-      this.workerStates.set(w.id, { state: 'walking-to-zone', data: { zone, activity: 'celebration' }, timer: 6000 })
+      this.workerStates.set(w.id, { state: 'walking-to-zone', data: { activity: 'celebration' }, timer: 6000 })
+      this.renderer.moveWorkerTo(w.id, tile.col, tile.row)
     }
     setTimeout(() => {
       for (const w of workers) {

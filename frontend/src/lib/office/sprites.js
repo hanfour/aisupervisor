@@ -231,14 +231,14 @@ export function getCharacterType(worker) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const FURNITURE_PALETTE = {
-  '7': '#2a2a3a',  // metal frame
-  '8': '#1a1a2e',  // dark surface
-  '9': '#00ff41',  // LED green
-  'b': '#00ddff',  // cyan glow
-  '1': '#44eeff',  // screen
-  '3': '#ff4444',  // LED red
-  'c': '#00ff41',  // neon green
-  'd': '#ff00ff',  // neon pink
+  '7': '#c8a878',  // light wood frame
+  '8': '#f0e6d3',  // light panel surface
+  '9': '#4a9e5c',  // plant green
+  'b': '#5bbad5',  // soft blue
+  '1': '#87ceeb',  // sky blue screen
+  '3': '#e8a855',  // warm orange
+  'c': '#6bb87b',  // warm green
+  'd': '#c97b5e',  // terracotta
   'e': '#e8e8f0',  // whiteboard face (off-white)
 }
 
@@ -369,19 +369,73 @@ const FURNITURE_SPRITES = {
     '7700000000000077',
     '7777777777777777',
   ],
+  coffeeBar: [
+    '7777777777777777',
+    '7888888888888877',
+    '7833333333333877',
+    '7888888888888877',
+    '7777777777777777',
+    '7888dd8dd8888877',
+    '78883388338dd877',
+    '78888888888dd877',
+    '7888888888888877',
+    '7777777777777777',
+    '7800000000008077',
+    '7800000000008077',
+    '7800000000008077',
+    '7800000000008077',
+    '7777777777777777',
+    '0000000000000000',
+  ],
+  sofa: [
+    '0000000000000000',
+    '0077777777777700',
+    '0078888888887700',
+    '007ddddddddd7700',
+    '007ddddddddd7700',
+    '007ddddddddd7700',
+    '0078888888887700',
+    '0077777777777700',
+    '0077000000007700',
+    '0077000000007700',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+  ],
+  largePlant: [
+    '0000009990000000',
+    '0000999999000000',
+    '0009999999900000',
+    '0099999999990000',
+    '0099999999990000',
+    '0009999999900000',
+    '0000999999000000',
+    '0000099990000000',
+    '0000007700000000',
+    '0000007700000000',
+    '0000077770000000',
+    '0007777777700000',
+    '0078888888870000',
+    '0078888888870000',
+    '0077777777770000',
+    '0000000000000000',
+  ],
 }
 
 const ENV_SPRITES = {
-  glowStrip: [
+  baseboard: [
     '0000000000000000',
     '0000000000000000',
     '0000000000000000',
     '0000000000000000',
     '0000000000000000',
     '0000000000000000',
-    'cccccccccccccccc',
-    'bbbbbbbbbbbbbbbb',
-    'cccccccccccccccc',
+    '7777777777777777',
+    '3333333333333333',
+    '7777777777777777',
     '0000000000000000',
     '0000000000000000',
     '0000000000000000',
@@ -390,7 +444,7 @@ const ENV_SPRITES = {
     '0000000000000000',
     '0000000000000000',
   ],
-  cableFloor: [
+  rugPattern: [
     '0000000000000000',
     '0000000000000000',
     '0000000070000000',
@@ -418,7 +472,7 @@ function renderSpriteToCanvas(ctx, rows, palette, x, y, scale) {
       if (ch === '0') continue
       let color
       if (palette && ch === '7') {
-        color = '#3a3a4e'
+        color = '#b89860'
       } else if (FURNITURE_PALETTE[ch]) {
         color = FURNITURE_PALETTE[ch]
       } else {
@@ -457,14 +511,14 @@ export function prerenderEnvSprite(name) {
 
 // ── Skill profile rendering data ─────────────────────────────────────────────
 export const SKILL_PROFILE_COLORS = {
-  coder:      '#ff4444',
-  hacker:     '#00ff41',
-  designer:   '#ff44ff',
-  analyst:    '#88ccff',
-  architect:  '#cc88ff',
-  devops:     '#ffaa00',
-  researcher: '#44ddff',
-  reviewer:   '#44ff88',
+  coder:      '#e07050',
+  hacker:     '#6bb87b',
+  designer:   '#d4a0d4',
+  analyst:    '#5bbad5',
+  architect:  '#b088d0',
+  devops:     '#e8a855',
+  researcher: '#60c0d0',
+  reviewer:   '#80c888',
 }
 
 export const SKILL_PROFILE_ICONS = {

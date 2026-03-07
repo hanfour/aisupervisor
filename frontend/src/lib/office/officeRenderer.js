@@ -1,7 +1,7 @@
-// Canvas 2D rendering engine for Pixel Office — Hacker Base Edition
+// Canvas 2D rendering engine for Pixel Office — Warm Bright Edition
 
 import { TILE_SIZE, SCALE, COLS, ROWS, CANVAS_W, CANVAS_H, getFloorMap, getDesks, buildWorkerDeskMap } from './layout.js'
-import { prerenderCharacter, prerenderFurniture, prerenderEnvSprite, getCharacterType } from './sprites.js'
+import { prerenderCharacter, prerenderFurniture, prerenderEnvSprite, getCharacterType, SKILL_PROFILE_COLORS } from './sprites.js'
 import { AnimationState, statusToAnim, ENV_ANIM } from './animation.js'
 import { startAmbient, stopAmbient, playKeyClatter } from './sounds.js'
 import { MovementController } from './movement.js'
@@ -9,20 +9,24 @@ import { BubbleManager } from './bubbles.js'
 
 const TILE_PX = TILE_SIZE * SCALE  // 48
 
-// ── Dark hacker-base floor/wall palette ─────────────────────────────────────
+// ── Warm bright floor/wall palette ───────────────────────────────────────────
 const FLOOR_COLORS = {
-  0: '#1a1a2e',  // deep indigo floor
-  1: '#0f0f1a',  // ultra-dark wall
-  2: '#1a1a2e',  // desk (drawn as furniture)
-  3: '#1a1a2e',  // plant/serverRack (drawn as furniture)
-  4: '#1a1a2e',  // computer/holoDisplay (drawn as furniture)
-  5: '#1a1a2e',  // watercooler/vendingMachine (drawn as furniture)
-  6: '#1a1a2e',  // bookshelf/wallOfScreens (drawn as furniture)
-  7: '#222233',  // door
-  8: '#1a1a2e',  // glowStrip (drawn as env sprite)
-  9: '#1a1a2e',  // cableFloor (drawn as env sprite)
-  10: '#141430', // meetingFloor — deep indigo-purple, distinct from regular floor
+  0: '#e8d5b7',  // warm wood floor
+  1: '#d4c4a8',  // beige wall
+  2: '#e8d5b7',  // desk (drawn as furniture)
+  3: '#e8d5b7',  // plant (drawn as furniture)
+  4: '#e8d5b7',  // computer (drawn as furniture)
+  5: '#e8d5b7',  // watercooler (drawn as furniture)
+  6: '#e8d5b7',  // bookshelf (drawn as furniture)
+  7: '#f0e6d3',  // door — light cream
+  8: '#e8d5b7',  // baseboard (drawn as env sprite)
+  9: '#d4a76a',  // rugPattern — warm brown
+  10: '#f5efe6', // meetingFloor — clean cream
   11: '#e8e8f0', // whiteboard — off-white face color
+  12: '#e8d5b7', // coffeeBar (drawn as furniture)
+  13: '#e8d5b7', // sofa (drawn as furniture)
+  14: '#e8d5b7', // largePlant (drawn as furniture)
+  15: '#f0e0c8', // coffeeFloor — warm peach
 }
 
 const TILE_TO_FURNITURE = {
@@ -33,34 +37,37 @@ const TILE_TO_FURNITURE = {
   6: 'bookshelf',
   10: 'meetingTable',
   11: 'whiteboard',
+  12: 'coffeeBar',
+  13: 'sofa',
+  14: 'largePlant',
 }
 
 const TILE_TO_ENV = {
-  8: 'glowStrip',
-  9: 'cableFloor',
+  8: 'baseboard',
+  9: 'rugPattern',
 }
 
 const BUBBLE_MAP = {
   waiting: { text: '?', bg: '#ffdd57', fg: '#333' },
-  working: { text: '...', bg: '#48f', fg: '#fff' },
-  error:   { text: '!', bg: '#ff3860', fg: '#fff' },
-  finished:{ text: '\u2605', bg: '#00ff41', fg: '#000' },
+  working: { text: '...', bg: '#5bbad5', fg: '#fff' },
+  error:   { text: '!', bg: '#e07050', fg: '#fff' },
+  finished:{ text: '\u2605', bg: '#6bb87b', fg: '#000' },
 }
 
-// ── Floating binary particle ────────────────────────────────────────────────
-class BinaryParticle {
-  constructor(x, y) {
-    this.x = x + (Math.random() - 0.5) * TILE_PX
-    this.y = y
-    this.char = Math.random() > 0.5 ? '1' : '0'
+// ── Warm dust mote particle ─────────────────────────────────────────────────
+class DustMote {
+  constructor(canvasW, canvasH) {
+    this.x = Math.random() * canvasW
+    this.y = Math.random() * canvasH
     this.life = 1.0
-    this.speed = 0.3 + Math.random() * 0.5
-    this.drift = (Math.random() - 0.5) * 0.3
+    this.speed = 0.1 + Math.random() * 0.2
+    this.drift = (Math.random() - 0.5) * 0.15
+    this.size = 1 + Math.random() * 2
   }
   update(delta) {
     this.y -= this.speed * (delta / 16)
     this.x += this.drift * (delta / 16)
-    this.life -= delta / 3000
+    this.life -= delta / 5000
   }
   get dead() { return this.life <= 0 }
 }
@@ -81,13 +88,13 @@ export class OfficeRenderer {
 
     // Prerender furniture
     this.furnitureCache = {}
-    for (const name of ['desk', 'computer', 'plant', 'watercooler', 'bookshelf', 'meetingTable', 'whiteboard']) {
+    for (const name of ['desk', 'computer', 'plant', 'watercooler', 'bookshelf', 'meetingTable', 'whiteboard', 'coffeeBar', 'sofa', 'largePlant']) {
       this.furnitureCache[name] = prerenderFurniture(name)
     }
 
     // Prerender env sprites
     this.envCache = {}
-    for (const name of ['glowStrip', 'cableFloor']) {
+    for (const name of ['baseboard', 'rugPattern']) {
       this.envCache[name] = prerenderEnvSprite(name)
     }
 
@@ -105,14 +112,8 @@ export class OfficeRenderer {
     this.animStates = {}
     this.hoveredWorkerId = null
 
-    // Screen tile positions (for glow effect)
-    this.screenTiles = []
-
-    // Floating particles
+    // Floating dust mote particles
     this.particles = []
-
-    // Data stream animation phase
-    this.dataStreamPhase = 0
 
     // Global time for pulsing effects
     this.globalTime = 0
@@ -120,26 +121,7 @@ export class OfficeRenderer {
     this.lastTime = 0
     this.running = false
 
-    // Pre-rendered scanline overlay (static, drawn once)
-    this.scanlineCanvas = document.createElement('canvas')
-    this.scanlineCanvas.width = CANVAS_W
-    this.scanlineCanvas.height = CANVAS_H
-
     this._drawBackground()
-    this._findScreenTiles()
-    this._prerenderScanlines()
-  }
-
-  _findScreenTiles() {
-    this.screenTiles = []
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
-        const tile = this.floorMap[row][col]
-        if (tile === 4 || tile === 6) {  // computer/holoDisplay or bookshelf/wallOfScreens
-          this.screenTiles.push({ x: col * TILE_PX, y: row * TILE_PX })
-        }
-      }
-    }
   }
 
   _drawBackground() {
@@ -151,26 +133,27 @@ export class OfficeRenderer {
         ctx.fillStyle = FLOOR_COLORS[tile] || FLOOR_COLORS[0]
         ctx.fillRect(col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX)
 
-        // Subtle cyan grid lines for floor tiles
+        // Subtle warm grid lines for floor tiles
         if (tile === 0 || tile === 7 || tile === 8 || tile === 9 ||
-            (tile >= 2 && tile <= 6) || tile === 10 || tile === 11) {
-          ctx.strokeStyle = 'rgba(0,221,255,0.04)'
+            (tile >= 2 && tile <= 6) || tile === 10 || tile === 11 ||
+            tile === 12 || tile === 13 || tile === 14 || tile === 15) {
+          ctx.strokeStyle = 'rgba(160,130,90,0.06)'
           ctx.strokeRect(col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX)
         }
 
-        // Wall: horizontal metal highlight lines
+        // Wall: warm wood highlight lines
         if (tile === 1) {
-          ctx.fillStyle = '#1a1a30'
+          ctx.fillStyle = '#c9b896'
           ctx.fillRect(col * TILE_PX, row * TILE_PX, TILE_PX, 2)
-          ctx.fillStyle = '#181828'
+          ctx.fillStyle = '#bfad88'
           ctx.fillRect(col * TILE_PX, row * TILE_PX + TILE_PX / 2, TILE_PX, 1)
         }
 
-        // Door: neon accent strip
+        // Door: warm wood accent
         if (tile === 7) {
-          ctx.fillStyle = '#2a2a44'
+          ctx.fillStyle = '#dcc8a0'
           ctx.fillRect(col * TILE_PX + 4, row * TILE_PX, TILE_PX - 8, TILE_PX)
-          ctx.fillStyle = '#00ff41'
+          ctx.fillStyle = '#c9b896'
           ctx.fillRect(col * TILE_PX + 4, row * TILE_PX, TILE_PX - 8, 2)
           ctx.fillRect(col * TILE_PX + 4, row * TILE_PX + TILE_PX - 2, TILE_PX - 8, 2)
         }
@@ -193,12 +176,13 @@ export class OfficeRenderer {
 
     // Zone labels
     ctx.font = '10px "Press Start 2P", monospace'
-    ctx.fillStyle = 'rgba(0,255,65,0.12)'
+    ctx.fillStyle = 'rgba(140,110,70,0.15)'
     ctx.fillText('OPEN OFFICE', 2 * TILE_PX, 5.5 * TILE_PX)
     ctx.fillText('MGR', 1 * TILE_PX, 11.5 * TILE_PX)
     ctx.fillText('MEETING', 11 * TILE_PX, 10.5 * TILE_PX)
-    ctx.fillText('BREAK', 17 * TILE_PX, 11.5 * TILE_PX)
-    ctx.fillText('REC', 12 * TILE_PX, 13 * TILE_PX)
+    ctx.fillText('COFFEE', 19 * TILE_PX, 10.5 * TILE_PX)
+    ctx.fillText('REST', 19 * TILE_PX, 12 * TILE_PX)
+    ctx.fillText('REC', 12 * TILE_PX, 14 * TILE_PX)
   }
 
   // ── Profile data (mood indicators) ───────────────────────────────────────
@@ -291,7 +275,6 @@ export class OfficeRenderer {
 
   _update(delta) {
     this.globalTime += delta
-    this.dataStreamPhase = (this.globalTime % ENV_ANIM.dataStreamSpeed) / ENV_ANIM.dataStreamSpeed
 
     // Update subsystems
     this.movement.update(delta)
@@ -320,12 +303,9 @@ export class OfficeRenderer {
       }
     }
 
-    // Spawn binary particles near screen tiles
-    if (this.particles.length < ENV_ANIM.particleMaxCount && Math.random() < ENV_ANIM.particleSpawnRate) {
-      const tile = this.screenTiles[Math.floor(Math.random() * this.screenTiles.length)]
-      if (tile) {
-        this.particles.push(new BinaryParticle(tile.x + TILE_PX / 2, tile.y))
-      }
+    // Spawn warm dust motes
+    if (this.particles.length < ENV_ANIM.dustMoteMaxCount && Math.random() < ENV_ANIM.dustMoteSpawnRate) {
+      this.particles.push(new DustMote(CANVAS_W, CANVAS_H))
     }
 
     // Update particles
@@ -342,10 +322,7 @@ export class OfficeRenderer {
     // 1. Background
     ctx.drawImage(this.bgCanvas, 0, 0)
 
-    // 2. Screen glow halos (pulsing)
-    this._drawScreenGlow(ctx)
-
-    // 3. Characters (shadow + sprite + name + bubble)
+    // 2. Characters (shadow + sprite + skill color band + name + bubble)
     const positionMap = {}
     for (const w of this.workers) {
       const desk = this.workerDeskMap[w.id]
@@ -377,12 +354,23 @@ export class OfficeRenderer {
 
       // Shadow ellipse under character
       ctx.save()
-      ctx.globalAlpha = 0.3
-      ctx.fillStyle = '#000'
+      ctx.globalAlpha = 0.2
+      ctx.fillStyle = '#8b7355'
       ctx.beginPath()
       ctx.ellipse(px + TILE_PX / 2, py + TILE_PX + 2, TILE_PX * 0.35, 4, 0, 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
+
+      // Personalized skill color band at desk edge
+      if (!this.movement.isMoving(w.id)) {
+        const skillProfile = w.skillProfile || w.avatar || ''
+        const bandColor = SKILL_PROFILE_COLORS[skillProfile]
+        if (bandColor) {
+          const deskTile = desk.tile
+          ctx.fillStyle = bandColor
+          ctx.fillRect(deskTile[0] * TILE_PX, deskTile[1] * TILE_PX, TILE_PX, 3)
+        }
+      }
 
       // Character sprite
       ctx.drawImage(frame, px, py, TILE_PX, TILE_PX)
@@ -392,10 +380,10 @@ export class OfficeRenderer {
       ctx.font = '7px "Press Start 2P", monospace'
       ctx.textAlign = 'center'
       const nameX = px + TILE_PX / 2
-      ctx.fillStyle = 'rgba(0,0,0,0.7)'
+      ctx.fillStyle = 'rgba(60,40,20,0.7)'
       const nameW = ctx.measureText(w.name).width
       ctx.fillRect(nameX - nameW / 2 - 2, py + TILE_PX + 2, nameW + 4, 10)
-      ctx.fillStyle = '#ddd'
+      ctx.fillStyle = '#f5efe6'
       ctx.fillText(w.name, nameX, py + TILE_PX + 10)
       ctx.restore()
 
@@ -409,7 +397,7 @@ export class OfficeRenderer {
 
       // Hover highlight
       if (this.hoveredWorkerId === w.id) {
-        ctx.strokeStyle = '#00ff41'
+        ctx.strokeStyle = '#e8a855'
         ctx.lineWidth = 2
         ctx.strokeRect(px - 2, py - 2, TILE_PX + 4, TILE_PX + 4)
       }
@@ -421,31 +409,11 @@ export class OfficeRenderer {
       }
     }
 
-    // 4. BubbleManager overlay (speech/thought/discussion/meeting bubbles)
+    // 3. BubbleManager overlay (speech/thought/discussion/meeting bubbles)
     this.bubbles.draw(ctx, positionMap)
 
-    // 5. Floating binary particles
+    // 4. Floating warm dust motes
     this._drawParticles(ctx)
-
-    // 7. CRT scanline overlay
-    this._drawScanlines(ctx)
-  }
-
-  _drawScreenGlow(ctx) {
-    const pulse = Math.sin(this.globalTime / ENV_ANIM.screenGlowPulse * Math.PI * 2) * 0.5 + 0.5
-    const alpha = 0.08 + pulse * 0.07
-
-    ctx.save()
-    for (const tile of this.screenTiles) {
-      const cx = tile.x + TILE_PX / 2
-      const cy = tile.y + TILE_PX / 2
-      const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, TILE_PX * 1.5)
-      gradient.addColorStop(0, `rgba(0,221,255,${alpha})`)
-      gradient.addColorStop(1, 'rgba(0,221,255,0)')
-      ctx.fillStyle = gradient
-      ctx.fillRect(tile.x - TILE_PX, tile.y - TILE_PX, TILE_PX * 3, TILE_PX * 3)
-    }
-    ctx.restore()
   }
 
   _drawMoodIndicator(ctx, x, y, mood) {
@@ -478,15 +446,15 @@ export class OfficeRenderer {
     ctx.fillStyle = bubble.bg
     ctx.fillRect(x, y, bw, bh)
 
-    // 1px white outline
-    ctx.strokeStyle = '#fff'
+    // 1px warm outline
+    ctx.strokeStyle = '#c9a868'
     ctx.lineWidth = 1
     ctx.strokeRect(x - 0.5, y - 0.5, bw + 1, bh + 1)
 
     // Tail (2px triangle pointing down-left)
     ctx.fillStyle = bubble.bg
     ctx.fillRect(x + 2, y + bh, 3, 3)
-    ctx.fillStyle = '#fff'
+    ctx.fillStyle = '#c9a868'
     ctx.fillRect(x + 1, y + bh, 1, 3)
     ctx.fillRect(x + 2, y + bh + 2, 3, 1)
 
@@ -498,25 +466,14 @@ export class OfficeRenderer {
 
   _drawParticles(ctx) {
     ctx.save()
-    ctx.font = '8px monospace'
     for (const p of this.particles) {
-      ctx.globalAlpha = p.life * 0.7
-      ctx.fillStyle = '#00ff41'
-      ctx.fillText(p.char, p.x, p.y)
+      ctx.globalAlpha = p.life * 0.4
+      ctx.fillStyle = '#d4a76a'
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+      ctx.fill()
     }
     ctx.restore()
-  }
-
-  _prerenderScanlines() {
-    const ctx = this.scanlineCanvas.getContext('2d')
-    ctx.fillStyle = 'rgba(0,0,0,0.06)'
-    for (let y = 0; y < CANVAS_H; y += 3) {
-      ctx.fillRect(0, y, CANVAS_W, 1)
-    }
-  }
-
-  _drawScanlines(ctx) {
-    ctx.drawImage(this.scanlineCanvas, 0, 0)
   }
 
   getWorkerAtPixel(x, y) {

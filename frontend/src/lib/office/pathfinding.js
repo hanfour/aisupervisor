@@ -1,7 +1,7 @@
 // A* pathfinding engine for the Pixel Office tile grid
 import { getFloorMap, COLS, ROWS } from './layout.js'
 
-const WALKABLE_TILES = new Set([0, 7, 9, 10, 11]) // floor, door, cableFloor, meetingRoomFloor, whiteboard
+const WALKABLE_TILES = new Set([0, 7, 9, 10, 11, 15]) // floor, door, rugPattern, meetingRoomFloor, whiteboard, coffeeFloor
 
 let grid = null // cached walkability grid (ROWS × COLS booleans)
 
@@ -92,7 +92,7 @@ export function findPath(startCol, startRow, endCol, endRow) {
   gScore.set(startKey, 0)
   fScore.set(startKey, Math.abs(endCol - startCol) + Math.abs(endRow - startRow))
 
-  // Min-heap via sorted insertion (sufficient for a 20×14 grid)
+  // Min-heap via sorted insertion (sufficient for a 24×16 grid)
   const open = [{ key: startKey, col: startCol, row: startRow }]
   const inOpen = new Set([startKey])
   const closed = new Set()

@@ -1,5 +1,6 @@
 # Build output
 /build/
+cmd/aisupervisor-gui/build/bin/
 /cmd/aisupervisor-gui/frontend/dist/
 /aisupervisor
 /aisupervisor-gui
@@ -24,3 +25,10 @@ vendor/
 
 # Wails
 wails.dev.json
+cmd/aisupervisor-gui/frontend/wailsjs/
+
+# Python
+__pycache__/
+
+# One-off tools
+cmd/fixyaml/

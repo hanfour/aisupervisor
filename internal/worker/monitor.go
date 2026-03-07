@@ -32,9 +32,11 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 
 	var lastContent string
 	noChangeCount := 0
-	const noChangeThreshold = 30 // 30 seconds of no change after initial activity
+	const noChangeThreshold = 90 // 90 seconds of no change after meaningful activity
 	hadActivity := false
 	useAider := w.CLITool == "aider"
+	changeCount := 0              // total number of content changes observed
+	const minChanges = 3          // require at least 3 content changes before no_change can trigger
 
 	for {
 		select {
@@ -51,27 +53,32 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 				return CompletionResult{Success: true, Reason: "shell_exit"}, nil
 			}
 
-			// Check for idle prompt based on CLI tool
-			if useAider {
-				if isAiderIdle(content) && hadActivity {
-					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
-				}
-			} else {
-				if isClaudeIdle(content) && hadActivity {
-					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
-				}
-			}
-
-			// Track content changes
+			// Track content changes (must happen before idle checks so
+			// changeCount is up-to-date when we evaluate idle_prompt)
 			if content == lastContent {
 				noChangeCount++
 			} else {
 				noChangeCount = 0
 				hadActivity = true
+				changeCount++
 			}
 			lastContent = content
 
-			if noChangeCount >= noChangeThreshold && hadActivity {
+			// Check for idle prompt based on CLI tool.
+			// Require changeCount >= minChanges to avoid triggering on the initial
+			// idle prompt before the worker has done any meaningful work.
+			if useAider {
+				if isAiderIdle(content) && hadActivity && changeCount >= minChanges {
+					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
+				}
+			} else {
+				if isClaudeIdle(content) && hadActivity && changeCount >= minChanges {
+					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
+				}
+			}
+
+			// Only trigger no_change after enough meaningful activity
+			if noChangeCount >= noChangeThreshold && hadActivity && changeCount >= minChanges {
 				return CompletionResult{Success: true, Reason: "no_change"}, nil
 			}
 		}
@@ -82,7 +89,8 @@ func isClaudeIdle(content string) bool {
 	lines := strings.Split(content, "\n")
 	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
 		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == ">" || trimmed == "> " {
+		// Claude Code uses ❯ (U+276F) as its prompt character
+		if trimmed == ">" || trimmed == "> " || trimmed == "❯" || trimmed == "❯ " {
 			return true
 		}
 	}

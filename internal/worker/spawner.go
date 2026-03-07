@@ -202,7 +202,10 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 		}
 	}
 
-	// 2. Create tmux session
+	// 2. Create tmux session (kill stale session if it exists)
+	if exists, _ := s.tmuxClient.HasSession(tmuxName); exists {
+		s.tmuxClient.KillSession(tmuxName)
+	}
 	if err := s.tmuxClient.CreateSession(tmuxName); err != nil {
 		return fmt.Errorf("creating tmux session: %w", err)
 	}

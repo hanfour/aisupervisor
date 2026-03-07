@@ -133,6 +133,12 @@ const translations = {
   'settings.labelCol': { en: 'Label', zh: '標籤' },
   'settings.patternCol': { en: 'Pattern', zh: '模式' },
   'settings.responseCol': { en: 'Response', zh: '回應' },
+  'settings.dangerZone': { en: 'Danger Zone', zh: '危險區域' },
+  'settings.clearAllProjects': { en: 'Clear All Projects', zh: '清除全部專案' },
+  'settings.clearAllProjectsDesc': { en: 'Delete all projects, tasks, and stop active workers.', zh: '刪除所有專案、任務，並停止正在工作的員工。' },
+  'settings.clearConfirm': { en: 'Are you sure? This cannot be undone.', zh: '確定要清除嗎？此操作無法復原。' },
+  'settings.clearForceConfirm': { en: '{count} worker(s) currently active. Force stop and clear all?', zh: '目前有 {count} 位員工正在工作中，要強制中斷並清除全部嗎？' },
+  'settings.clearSuccess': { en: 'All projects cleared.', zh: '已清除全部專案。' },
 
   // --- Hierarchy ---
   'hierarchy.title': { en: 'Hierarchy', zh: '組織架構' },
@@ -183,6 +189,7 @@ const translations = {
 
   // --- Common ---
   'common.cancel': { en: 'Cancel', zh: '取消' },
+  'common.confirm': { en: 'Confirm', zh: '確認' },
   'common.save': { en: 'Save', zh: '儲存' },
   'common.close': { en: 'Close', zh: '關閉' },
   'common.loading': { en: 'Loading...', zh: '載入中...' },

@@ -77,7 +77,7 @@
       await loadWorkers()
       progress = await window.go.gui.CompanyApp.GetProjectProgress(projectId)
     } catch (e) {
-      addError('Failed to assign task: ' + e.message)
+      addError('Failed to assign task: ' + (e.message || e))
     }
     assignDialog = null
   }

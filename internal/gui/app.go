@@ -65,6 +65,11 @@ func (a *App) GetSessions() []SessionDTO {
 	return dtos
 }
 
+// ClearSessions removes all tracked sessions (used after clearing all projects).
+func (a *App) ClearSessions() {
+	a.sessions = nil
+}
+
 // GetRoles returns all configured roles.
 func (a *App) GetRoles() []RoleDTO {
 	roles := a.sup.RoleManager().List()

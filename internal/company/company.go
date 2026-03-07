@@ -269,6 +269,98 @@ func (m *Manager) DeleteProject(projectID string) error {
 	return nil
 }
 
+// ActiveWorkerCount returns the number of workers currently working on tasks.
+func (m *Manager) ActiveWorkerCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for _, w := range m.workers {
+		if w.Status == worker.WorkerWorking || w.Status == worker.WorkerWaiting {
+			count++
+		}
+	}
+	return count
+}
+
+// ClearAllProjects deletes all projects and their tasks.
+// If force is true, it also stops any workers currently working on tasks.
+func (m *Manager) ClearAllProjects(force bool) error {
+	m.mu.Lock()
+
+	// Collect active workers
+	activeWorkers := make([]*worker.Worker, 0)
+	for _, w := range m.workers {
+		if w.Status == worker.WorkerWorking || w.Status == worker.WorkerWaiting {
+			activeWorkers = append(activeWorkers, w)
+		}
+	}
+
+	if !force && len(activeWorkers) > 0 {
+		m.mu.Unlock()
+		return fmt.Errorf("%d workers are currently active", len(activeWorkers))
+	}
+
+	// Stop active workers: cancel monitoring, kill tmux sessions, reset state
+	for _, w := range activeWorkers {
+		if cancel, ok := m.cancels[w.ID]; ok {
+			cancel()
+			delete(m.cancels, w.ID)
+		}
+	}
+
+	// Clean up ALL workers: kill any tmux sessions and reset state
+	dirty := false
+	for _, w := range m.workers {
+		if w.TmuxSession != "" {
+			m.tmuxClient.KillSession(w.TmuxSession)
+			w.TmuxSession = ""
+			dirty = true
+		}
+		if w.SessionID != "" {
+			w.SessionID = ""
+			dirty = true
+		}
+		if w.CurrentTaskID != "" {
+			w.CurrentTaskID = ""
+			dirty = true
+		}
+		if w.Status != worker.WorkerIdle {
+			w.Status = worker.WorkerIdle
+			dirty = true
+		}
+	}
+	if dirty {
+		m.saveWorkers()
+		m.emit(Event{
+			Type:    EventWorkerIdle,
+			Message: m.msgf("All workers reset to idle", "所有員工已重設為閒置"),
+		})
+	}
+
+	// Delete all projects
+	projects := m.projectStore.ListProjects()
+	m.mu.Unlock()
+
+	for _, p := range projects {
+		// Force-delete: update any non-idle tasks to ready first so DeleteProject won't reject
+		tasks := m.projectStore.TasksForProject(p.ID)
+		for _, t := range tasks {
+			if t.Status == project.TaskInProgress || t.Status == project.TaskAssigned {
+				m.projectStore.UpdateTaskStatus(t.ID, project.TaskReady)
+			}
+		}
+		if err := m.DeleteProject(p.ID); err != nil {
+			return fmt.Errorf("deleting project %q: %w", p.ID, err)
+		}
+	}
+
+	m.emit(Event{
+		Type:    EventProjectDeleted,
+		Message: m.msgf("All projects cleared", "已清除全部專案"),
+	})
+	return nil
+}
+
 func (m *Manager) ListProjects() []*project.Project {
 	return m.projectStore.ListProjects()
 }

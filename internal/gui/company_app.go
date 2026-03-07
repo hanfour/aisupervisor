@@ -127,6 +127,16 @@ func (c *CompanyApp) DeleteProject(projectID string) error {
 	return c.company.DeleteProject(projectID)
 }
 
+// ActiveWorkerCount returns the number of workers currently working on tasks.
+func (c *CompanyApp) ActiveWorkerCount() int {
+	return c.company.ActiveWorkerCount()
+}
+
+// ClearAllProjects deletes all projects and tasks. If force is true, stops active workers first.
+func (c *CompanyApp) ClearAllProjects(force bool) error {
+	return c.company.ClearAllProjects(force)
+}
+
 // ChatCreateProject uses AI to extract project information from a chat conversation.
 func (c *CompanyApp) ChatCreateProject(messages []ChatMessageDTO) (*ChatProjectResponseDTO, error) {
 	// Convert DTOs to domain types

@@ -2,9 +2,13 @@
   import { onMount } from 'svelte'
   import SettingsPanel from '../components/SettingsPanel.svelte'
   import { t, setLanguage as setI18nLanguage } from '../stores/i18n.js'
+  import { loadSessions } from '../stores/sessions.js'
 
   let config = {}
   let language = 'zh-TW'
+  let clearStatus = '' // '', 'confirming', 'force-confirming'
+  let activeCount = 0
+  let clearMessage = ''
 
   onMount(async () => {
     if (window.go?.gui?.App) {
@@ -17,6 +21,33 @@
 
   async function handleLanguageChange() {
     await setI18nLanguage(language)
+  }
+
+  async function handleClearAll() {
+    clearMessage = ''
+    if (!window.go?.gui?.CompanyApp) return
+    activeCount = await window.go.gui.CompanyApp.ActiveWorkerCount()
+    clearStatus = activeCount > 0 ? 'force-confirming' : 'confirming'
+  }
+
+  async function confirmClear(force) {
+    try {
+      await window.go.gui.CompanyApp.ClearAllProjects(force)
+      if (window.go?.gui?.App?.ClearSessions) {
+        await window.go.gui.App.ClearSessions()
+      }
+      await loadSessions()
+      clearMessage = $t('settings.clearSuccess')
+      clearStatus = ''
+    } catch (e) {
+      clearMessage = 'Error: ' + (e.message || e)
+      clearStatus = ''
+    }
+  }
+
+  function cancelClear() {
+    clearStatus = ''
+    clearMessage = ''
   }
 </script>
 
@@ -93,6 +124,42 @@
       <p class="empty">{$t('settings.noAutoApprove')}</p>
     {/if}
   </section>
+
+  <section class="nes-container with-title is-dark danger-zone">
+    <p class="title">{$t('settings.dangerZone')}</p>
+    <div class="danger-row">
+      <div class="danger-info">
+        <strong>{$t('settings.clearAllProjects')}</strong>
+        <p class="danger-desc">{$t('settings.clearAllProjectsDesc')}</p>
+      </div>
+      {#if clearStatus === ''}
+        <button class="nes-btn is-error btn-danger" on:click={handleClearAll}>
+          {$t('settings.clearAllProjects')}
+        </button>
+      {:else if clearStatus === 'confirming'}
+        <div class="confirm-group">
+          <p class="confirm-msg">{$t('settings.clearConfirm')}</p>
+          <div class="confirm-actions">
+            <button class="nes-btn is-error" on:click={() => confirmClear(false)}>{$t('common.confirm')}</button>
+            <button class="nes-btn" on:click={cancelClear}>{$t('common.cancel')}</button>
+          </div>
+        </div>
+      {:else if clearStatus === 'force-confirming'}
+        <div class="confirm-group">
+          <p class="confirm-msg warning-text">
+            {$t('settings.clearForceConfirm').replace('{count}', activeCount)}
+          </p>
+          <div class="confirm-actions">
+            <button class="nes-btn is-error" on:click={() => confirmClear(true)}>{$t('common.confirm')}</button>
+            <button class="nes-btn" on:click={cancelClear}>{$t('common.cancel')}</button>
+          </div>
+        </div>
+      {/if}
+    </div>
+    {#if clearMessage}
+      <p class="clear-msg" class:error={clearMessage.startsWith('Error')}>{clearMessage}</p>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -129,5 +196,66 @@
     gap: 8px;
     cursor: pointer;
     font-size: 12px;
+  }
+
+  .danger-zone {
+    border-color: #e74c3c !important;
+  }
+
+  .danger-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .danger-info {
+    flex: 1;
+    font-size: 10px;
+  }
+
+  .danger-desc {
+    color: var(--text-secondary);
+    font-size: 9px;
+    margin-top: 4px;
+  }
+
+  .btn-danger {
+    white-space: nowrap;
+    font-size: 9px !important;
+  }
+
+  .confirm-group {
+    text-align: right;
+  }
+
+  .confirm-msg {
+    font-size: 9px;
+    margin-bottom: 8px;
+  }
+
+  .warning-text {
+    color: #e74c3c;
+    font-weight: bold;
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .confirm-actions button {
+    font-size: 9px !important;
+  }
+
+  .clear-msg {
+    font-size: 9px;
+    margin-top: 8px;
+    color: #2ecc71;
+  }
+
+  .clear-msg.error {
+    color: #e74c3c;
   }
 </style>

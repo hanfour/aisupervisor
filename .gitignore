@@ -32,3 +32,6 @@ __pycache__/
 
 # One-off tools
 cmd/fixyaml/
+
+# Design drafts
+docs/plans/

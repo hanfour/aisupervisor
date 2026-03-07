@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store'
+import { loadSessions } from './sessions.js'
 
 export const companyEvents = writable([])
 export const companyStats = writable({ projects: 0, inProgress: 0, idleWorkers: 0, reviewsPending: 0, trainingPairs: 0 })
@@ -13,10 +14,11 @@ export function initCompanyStore() {
         const updated = [event, ...list]
         return updated.slice(0, MAX_EVENTS)
       })
-      // Auto-refresh stats on any company event
+      // Auto-refresh all data on any company event
       loadCompanyStats()
       loadReviewQueue()
       loadTrainingStats()
+      loadSessions()
     })
   }
 }

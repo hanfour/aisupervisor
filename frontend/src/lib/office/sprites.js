@@ -31,39 +31,57 @@ const BODY_ROWS = 6
 
 // ── Character type → spritesheet combination ─────────────────────────────────
 // Maps each character type to a body row, outfit file, and hair file
+// outfit1=casual, outfit2=hoodie/hacker, outfit3=creative/fashionable,
+// outfit4=smart-casual/analytical, outfit5=executive/architect, outfit6=technical/devops
 const CHARACTER_CONFIGS = {
-  coder:      { bodyRow: 0, outfit: 'outfit1', hair: 'hair1' },
-  hacker:     { bodyRow: 1, outfit: 'outfit2', hair: 'hair2' },
-  designer:   { bodyRow: 2, outfit: 'outfit3', hair: 'hair3' },
-  analyst:    { bodyRow: 3, outfit: 'outfit4', hair: 'hair4' },
-  architect:  { bodyRow: 4, outfit: 'outfit5', hair: 'hair5' },
-  devops:     { bodyRow: 5, outfit: 'outfit6', hair: 'hair6' },
-  researcher: { bodyRow: 0, outfit: 'outfit1', hair: 'hair7' },
-  reviewer:   { bodyRow: 2, outfit: 'outfit3', hair: 'hair5' },
+  coder:      { bodyRow: 0, outfit: 'outfit1', hair: 'hair1' },  // casual tee
+  hacker:     { bodyRow: 1, outfit: 'outfit2', hair: 'hair2' },  // hoodie
+  designer:   { bodyRow: 2, outfit: 'outfit3', hair: 'hair3' },  // fashionable
+  analyst:    { bodyRow: 3, outfit: 'outfit4', hair: 'hair4' },  // smart-casual
+  architect:  { bodyRow: 4, outfit: 'outfit5', hair: 'hair5' },  // executive
+  devops:     { bodyRow: 5, outfit: 'outfit6', hair: 'hair6' },  // technical
+  researcher: { bodyRow: 0, outfit: 'outfit1', hair: 'hair7' },  // academic casual
+  reviewer:   { bodyRow: 2, outfit: 'outfit3', hair: 'hair5' },  // professional
 }
 
 // ── Per-worker unique appearance ─────────────────────────────────────────────
-// Each worker gets a unique body/outfit/hair combination (252 possible combos)
+// Each worker gets a unique body/outfit/hair combination reflecting their role and personality.
+// bodyRow = skin tone (0=lightest … 5=darkest), outfit = style, hair = hairstyle
 const WORKER_CONFIGS = {
-  'Hanfour':           { bodyRow: 4, outfit: 'outfit5', hair: 'hair5' },
-  'Ken Norton':        { bodyRow: 1, outfit: 'outfit2', hair: 'hair3' },
-  'Sundar Pichai':     { bodyRow: 3, outfit: 'outfit3', hair: 'hair2' },
-  'Steve':             { bodyRow: 0, outfit: 'outfit4', hair: 'hair4' },
-  'Joe':               { bodyRow: 5, outfit: 'outfit1', hair: 'hair6' },
-  'Ryan':              { bodyRow: 2, outfit: 'outfit6', hair: 'hair1' },
-  'Jamie':             { bodyRow: 1, outfit: 'outfit5', hair: 'hair7' },
-  'Mario':             { bodyRow: 0, outfit: 'outfit3', hair: 'hair3' },
-  'Lastor':            { bodyRow: 3, outfit: 'outfit6', hair: 'hair1' },
-  'Rocco':             { bodyRow: 5, outfit: 'outfit4', hair: 'hair4' },
-  'Kirt':              { bodyRow: 2, outfit: 'outfit2', hair: 'hair6' },
-  'Bruce Tognazinni':  { bodyRow: 4, outfit: 'outfit1', hair: 'hair2' },
-  'Jakob Nielsen':     { bodyRow: 1, outfit: 'outfit4', hair: 'hair5' },
-  'Luke Wroblewski':   { bodyRow: 0, outfit: 'outfit6', hair: 'hair7' },
-  'Alice':             { bodyRow: 2, outfit: 'outfit2', hair: 'hair3' },
-  'Elain':             { bodyRow: 0, outfit: 'outfit3', hair: 'hair5' },
-  'Edwina':            { bodyRow: 4, outfit: 'outfit5', hair: 'hair1' },
-  'Niko':              { bodyRow: 3, outfit: 'outfit6', hair: 'hair7' },
-  'Shan':              { bodyRow: 5, outfit: 'outfit2', hair: 'hair4' },
+  // ── Top executive (architect/consultant) ──────────────────────────────────
+  'Hanfour':           { bodyRow: 4, outfit: 'outfit5', hair: 'hair5' }, // distinguished exec, dark skin
+
+  // ── Managers (business casual to formal) ─────────────────────────────────
+  'Sundar Pichai':     { bodyRow: 3, outfit: 'outfit4', hair: 'hair2' }, // South Asian, polished
+  'Joe':               { bodyRow: 1, outfit: 'outfit4', hair: 'hair3' }, // business casual, lighter
+  'Steve':             { bodyRow: 0, outfit: 'outfit3', hair: 'hair1' }, // creative-manager, fair
+  'Ken Norton':        { bodyRow: 2, outfit: 'outfit5', hair: 'hair4' }, // formal manager, medium
+
+  // ── Coders (casual tech wear) ─────────────────────────────────────────────
+  'Niko':              { bodyRow: 5, outfit: 'outfit1', hair: 'hair6' }, // casual coder, dark
+  'Ryan':              { bodyRow: 1, outfit: 'outfit2', hair: 'hair3' }, // hoodie coder
+  'Edwina':            { bodyRow: 0, outfit: 'outfit1', hair: 'hair7' }, // female coder, fair, long hair
+  'Shan':              { bodyRow: 3, outfit: 'outfit1', hair: 'hair4' }, // casual, medium-dark
+  'Rocco':             { bodyRow: 2, outfit: 'outfit2', hair: 'hair6' }, // hoodie, medium
+  'Jamie':             { bodyRow: 4, outfit: 'outfit2', hair: 'hair2' }, // gender-neutral, hoodie
+
+  // ── DevOps (technical, rugged) ────────────────────────────────────────────
+  'Kirt':              { bodyRow: 0, outfit: 'outfit6', hair: 'hair2' }, // technical, fair
+  'Mario':             { bodyRow: 5, outfit: 'outfit6', hair: 'hair3' }, // technical, dark skin
+
+  // ── Designers (creative, fashionable) ────────────────────────────────────
+  'Bruce Tognazinni':  { bodyRow: 2, outfit: 'outfit3', hair: 'hair5' }, // seasoned designer, medium
+  'Elain':             { bodyRow: 1, outfit: 'outfit3', hair: 'hair7' }, // female designer, long hair
+  'Luke Wroblewski':   { bodyRow: 3, outfit: 'outfit3', hair: 'hair1' }, // UX designer, medium-dark
+
+  // ── Analyst ───────────────────────────────────────────────────────────────
+  'Jakob Nielsen':     { bodyRow: 4, outfit: 'outfit4', hair: 'hair4' }, // analytical, smart-casual
+
+  // ── Hacker (hoodie, distinctive) ─────────────────────────────────────────
+  'Lastor':            { bodyRow: 5, outfit: 'outfit2', hair: 'hair1' }, // hacker, dark, cropped
+
+  // ── Researcher (academic, thoughtful) ────────────────────────────────────
+  'Alice':             { bodyRow: 0, outfit: 'outfit1', hair: 'hair5' }, // researcher, fair, medium hair
 }
 
 const CHARACTER_NAMES = Object.keys(CHARACTER_CONFIGS)

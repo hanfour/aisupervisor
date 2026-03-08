@@ -1,20 +1,9 @@
 <script>
   import { openChat } from '../stores/workerChat.js'
+  import CharacterPortrait from './CharacterPortrait.svelte'
 
   export let worker = {}
   export let onClick = null
-
-  const avatars = {
-    'robot': 'i.nes-octocat',
-    'cat': 'i.nes-octocat',
-    'kirby': 'i.nes-kirby',
-    'mario': 'i.nes-mario',
-    'ash': 'i.nes-ash',
-    'bulbasaur': 'i.nes-bulbasaur',
-    'charmander': 'i.nes-charmander',
-    'squirtle': 'i.nes-squirtle',
-    'pokeball': 'i.nes-pokeball',
-  }
 
   function statusClass(status) {
     switch (status) {
@@ -30,7 +19,7 @@
 
 <div class="nes-container is-rounded worker-card" class:clickable={!!onClick} on:click={() => onClick && onClick(worker)} on:keydown={(e) => e.key === 'Enter' && onClick && onClick(worker)} role="button" tabindex="0">
   <div class="card-avatar">
-    <i class={avatars[worker.avatar] || 'nes-octocat'}></i>
+    <CharacterPortrait {worker} scale={3} size={64} />
   </div>
   <div class="card-info">
     <span class="worker-name">{worker.name}</span>
@@ -65,10 +54,11 @@
     border-color: var(--accent-green);
   }
 
-  .card-avatar i {
-    transform: scale(1.5);
-    display: inline-block;
-    margin: 8px 0;
+  .card-avatar {
+    margin: 4px 0;
+    line-height: 0;
+    border: 2px solid var(--border-color, #333);
+    image-rendering: pixelated;
   }
 
   .card-info {

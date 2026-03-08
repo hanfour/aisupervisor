@@ -3,6 +3,7 @@
   import { getWorker, getManager, getSubordinates, skillProfiles, loadSkillProfiles, loadWorkers, loadHierarchy } from '../stores/workers.js'
   import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import WorkerLogPanel from './WorkerLogPanel.svelte'
+  import CharacterPortrait from './CharacterPortrait.svelte'
   import { t } from '../stores/i18n.js'
   import { calcAge, genderIcon } from '../utils/worker.js'
 
@@ -122,7 +123,7 @@
       <div class="drawer-body">
         <!-- Identity -->
         <div class="identity-section">
-          <span class="avatar-large">{avatarMap[worker.avatar] || '🤖'}</span>
+          <CharacterPortrait {worker} scale={4} size={80} />
           <div class="identity-info">
             <span class="worker-name">{worker.name}</span>
             <span class="tier-badge" style="color: {tierColors[worker.tier] || 'var(--text-primary)'}">

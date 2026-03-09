@@ -338,6 +338,130 @@ func TestAutoScheduleDisabled(t *testing.T) {
 	}
 }
 
+func TestDrainReadyQueue(t *testing.T) {
+	m, ch := testManager(t)
+
+	p, _ := m.CreateProject("proj", "", "/tmp", "main", nil)
+	drainCh(ch)
+
+	// Create 3 ready tasks (no deps)
+	t1, _ := m.AddTask(p.ID, "task-a", "", "prompt-a", nil, 3, "", "")
+	t2, _ := m.AddTask(p.ID, "task-b", "", "prompt-b", nil, 2, "", "")
+	t3, _ := m.AddTask(p.ID, "task-c", "", "prompt-c", nil, 1, "", "")
+	drainCh(ch)
+
+	// All should be ready
+	for _, tk := range []*project.Task{t1, t2, t3} {
+		got, _ := m.projectStore.GetTask(tk.ID)
+		if got.Status != project.TaskReady {
+			t.Fatalf("expected task %s to be ready, got %s", tk.ID, got.Status)
+		}
+	}
+
+	// Create 2 idle workers
+	w1, _ := m.CreateWorker("W1", "robot")
+	w2, _ := m.CreateWorker("W2", "kirby")
+	drainCh(ch)
+
+	// drainReadyQueue should assign 2 tasks to 2 workers
+	// (AssignTask requires spawner, so it will fail — but we can verify the attempt)
+	// Since spawner is nil, AssignTask will proceed until it hits spawner call.
+	// Let's test with the method directly and check that it doesn't panic.
+	m.drainReadyQueue(t.Context())
+
+	// Without a spawner the assignments fail, tasks revert to ready.
+	// Verify the method is safe to call, doesn't deadlock, and tasks stay ready.
+	workers := m.ListWorkers()
+	if len(workers) != 2 {
+		t.Fatalf("expected 2 workers, got %d", len(workers))
+	}
+
+	// All tasks should still be ready (spawner=nil causes assign to revert)
+	for _, tk := range m.ListTasks(p.ID) {
+		if tk.Status != project.TaskReady {
+			t.Fatalf("expected task %s to be ready after failed assign, got %s", tk.ID, tk.Status)
+		}
+	}
+
+	_ = w1
+	_ = w2
+	_ = t3
+}
+
+func TestDrainReadyQueueNoTasks(t *testing.T) {
+	m, ch := testManager(t)
+	m.CreateProject("proj", "", "/tmp", "main", nil)
+	drainCh(ch)
+
+	// Should be safe with no ready tasks
+	m.drainReadyQueue(t.Context())
+}
+
+func TestDrainReadyQueueNoIdleWorkers(t *testing.T) {
+	m, ch := testManager(t)
+	p, _ := m.CreateProject("proj", "", "/tmp", "main", nil)
+	m.AddTask(p.ID, "task-a", "", "prompt", nil, 1, "", "")
+	drainCh(ch)
+
+	// No workers at all — should not panic
+	m.drainReadyQueue(t.Context())
+}
+
+func TestAddTaskAutoScheduleTrigger(t *testing.T) {
+	m, ch := testManager(t)
+	// Enable autoSchedule
+	m.autoSchedule = true
+
+	p, _ := m.CreateProject("proj", "", "/tmp", "main", nil)
+	drainCh(ch)
+
+	// Create a task with deps — should NOT trigger drainReadyQueue (status=backlog)
+	t1, _ := m.AddTask(p.ID, "dep-task", "", "prompt", nil, 1, "", "")
+	drainCh(ch)
+
+	// Create task depending on t1 — status should be backlog
+	t2, _ := m.AddTask(p.ID, "blocked", "", "prompt", []string{t1.ID}, 1, "", "")
+	if t2.Status != project.TaskBacklog {
+		t.Fatalf("expected backlog, got %s", t2.Status)
+	}
+	drainCh(ch)
+
+	// Create a no-dep task — status should be ready (triggers drainReadyQueue in goroutine)
+	t3, _ := m.AddTask(p.ID, "ready-task", "", "prompt", nil, 1, "", "")
+	if t3.Status != project.TaskReady {
+		t.Fatalf("expected ready, got %s", t3.Status)
+	}
+	drainCh(ch)
+}
+
+func TestUpdateTaskStatusDirectDrain(t *testing.T) {
+	m, ch := testManager(t)
+	m.autoSchedule = true
+
+	p, _ := m.CreateProject("proj", "", "/tmp", "main", nil)
+	// Create task with dep so it starts as backlog
+	t1, _ := m.AddTask(p.ID, "first", "", "p", nil, 1, "", "")
+	t2, _ := m.AddTask(p.ID, "second", "", "p", []string{t1.ID}, 1, "", "")
+	drainCh(ch)
+
+	if t2.Status != project.TaskBacklog {
+		t.Fatalf("expected backlog, got %s", t2.Status)
+	}
+
+	// Manually drag to ready via UpdateTaskStatusDirect
+	err := m.UpdateTaskStatusDirect(t2.ID, string(project.TaskReady))
+	if err != nil {
+		t.Fatalf("UpdateTaskStatusDirect: %v", err)
+	}
+
+	// Verify task is now ready
+	got, _ := m.projectStore.GetTask(t2.ID)
+	if got.Status != project.TaskReady {
+		t.Fatalf("expected ready after direct update, got %s", got.Status)
+	}
+	drainCh(ch)
+}
+
 func drainCh(ch <-chan Event) {
 	for {
 		select {

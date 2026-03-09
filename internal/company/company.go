@@ -680,6 +680,10 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 	m.mu.Unlock()
 
 	// Spawn worker (this creates tmux session, git branch, launches Claude Code)
+	if m.spawner == nil {
+		m.projectStore.UpdateTaskStatus(taskID, project.TaskReady)
+		return fmt.Errorf("spawner not configured")
+	}
 	if err := m.spawner.SpawnForTask(ctx, w, t, p); err != nil {
 		m.projectStore.UpdateTaskStatus(taskID, project.TaskReady)
 		return fmt.Errorf("spawning worker: %w", err)

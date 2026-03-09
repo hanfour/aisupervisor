@@ -10,6 +10,14 @@ const (
 	ProjectArchived  ProjectStatus = "archived"
 )
 
+type ProjectPhase string
+
+const (
+	PhasePRD         ProjectPhase = "prd"
+	PhaseDevelopment ProjectPhase = "development"
+	PhaseCompleted   ProjectPhase = "completed"
+)
+
 type Project struct {
 	ID          string        `yaml:"id" json:"id"`
 	Name        string        `yaml:"name" json:"name"`
@@ -17,6 +25,7 @@ type Project struct {
 	RepoPath    string        `yaml:"repo_path" json:"repoPath"`
 	BaseBranch  string        `yaml:"base_branch" json:"baseBranch"`
 	Goals       []string      `yaml:"goals,omitempty" json:"goals,omitempty"`
+	Phase       ProjectPhase  `yaml:"phase,omitempty" json:"phase,omitempty"`
 	Status      ProjectStatus `yaml:"status" json:"status"`
 	CreatedAt   time.Time     `yaml:"created_at" json:"createdAt"`
 	UpdatedAt   time.Time     `yaml:"updated_at" json:"updatedAt"`

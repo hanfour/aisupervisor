@@ -38,6 +38,12 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 	changeCount := 0              // total number of content changes observed
 	const minChanges = 3          // require at least 3 content changes before no_change can trigger
 
+	// Grace period: ignore idle prompts for the first N seconds after monitoring starts.
+	// This prevents false completion when the CLI briefly shows an idle prompt between
+	// receiving the prompt text and starting to process it.
+	startTime := time.Now()
+	const gracePeriod = 30 * time.Second
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -67,12 +73,15 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 			// Check for idle prompt based on CLI tool.
 			// Require changeCount >= minChanges to avoid triggering on the initial
 			// idle prompt before the worker has done any meaningful work.
+			// Also skip during grace period to avoid false completion when CLI
+			// briefly shows idle prompt between receiving and processing the prompt.
+			pastGrace := time.Since(startTime) > gracePeriod
 			if useAider {
-				if isAiderIdle(content) && hadActivity && changeCount >= minChanges {
+				if isAiderIdle(content) && hadActivity && changeCount >= minChanges && pastGrace {
 					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
 				}
 			} else {
-				if isClaudeIdle(content) && hadActivity && changeCount >= minChanges {
+				if isClaudeIdle(content) && hadActivity && changeCount >= minChanges && pastGrace {
 					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
 				}
 			}
@@ -87,12 +96,17 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 
 func isClaudeIdle(content string) bool {
 	lines := strings.Split(content, "\n")
-	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
+	// Find the last non-empty line. The idle prompt ❯ must be the very last
+	// non-empty content — not just appearing anywhere in the last 5 lines.
+	// This prevents false positives from ❯ in interactive selection menus
+	// or in the prompt input display (e.g. "❯ some user input").
+	for i := len(lines) - 1; i >= 0; i-- {
 		trimmed := strings.TrimSpace(lines[i])
-		// Claude Code uses ❯ (U+276F) as its prompt character
-		if trimmed == ">" || trimmed == "> " || trimmed == "❯" || trimmed == "❯ " {
-			return true
+		if trimmed == "" {
+			continue
 		}
+		// Claude Code uses ❯ (U+276F) as its prompt character
+		return trimmed == ">" || trimmed == "> " || trimmed == "❯" || trimmed == "❯ "
 	}
 	return false
 }

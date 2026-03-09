@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { tasks, loadTasks, assignTask, completeTask, updateTaskStatus } from '../stores/tasks.js'
+  import { tasks, loadTasks, assignTask, completeTask, updateTaskStatus, reassignTask } from '../stores/tasks.js'
   import { workers, loadWorkers } from '../stores/workers.js'
   import TaskCard from '../components/TaskCard.svelte'
   import TaskForm from '../components/TaskForm.svelte'
@@ -27,6 +27,7 @@
     { key: 'ready', i18nKey: 'board.ready', statuses: ['ready'], dropStatus: 'ready' },
     { key: 'progress', i18nKey: 'board.inProgress', statuses: ['assigned', 'in_progress'], dropStatus: 'in_progress' },
     { key: 'review', i18nKey: 'board.review', statuses: ['review'], dropStatus: 'review' },
+    { key: 'escalation', i18nKey: 'board.escalation', statuses: ['escalation'], dropStatus: 'escalation' },
     { key: 'done', i18nKey: 'board.done', statuses: ['done', 'failed'], dropStatus: 'done' },
   ]
 
@@ -73,7 +74,11 @@
   async function confirmAssign() {
     if (!selectedWorker || !assignDialog) return
     try {
-      await assignTask(selectedWorker, assignDialog.id, projectId)
+      if (assignDialog._reassign) {
+        await reassignTask(assignDialog.id, selectedWorker, projectId)
+      } else {
+        await assignTask(selectedWorker, assignDialog.id, projectId)
+      }
       await loadWorkers()
       progress = await window.go.gui.CompanyApp.GetProjectProgress(projectId)
     } catch (e) {
@@ -103,6 +108,44 @@
       }
     } catch (e) {
       addError('Failed to load report: ' + e.message)
+    }
+  }
+
+  function handleReassign(task) {
+    assignDialog = task
+    assignDialog._reassign = true
+    selectedWorker = ''
+  }
+
+  async function confirmReassign() {
+    if (!selectedWorker || !assignDialog) return
+    try {
+      await reassignTask(assignDialog.id, selectedWorker, projectId)
+      await loadWorkers()
+      progress = await window.go.gui.CompanyApp.GetProjectProgress(projectId)
+    } catch (e) {
+      addError('Failed to reassign task: ' + (e.message || e))
+    }
+    assignDialog = null
+  }
+
+  async function handleEscalate(task) {
+    if (!confirm($t('task.escalateConfirm'))) return
+    try {
+      await updateTaskStatus(task.id, 'escalation', projectId)
+      progress = await window.go.gui.CompanyApp.GetProjectProgress(projectId)
+    } catch (e) {
+      addError('Failed to escalate task: ' + (e.message || e))
+    }
+  }
+
+  async function handleMarkFailed(task) {
+    if (!confirm($t('task.markFailedConfirm'))) return
+    try {
+      await updateTaskStatus(task.id, 'failed', projectId)
+      progress = await window.go.gui.CompanyApp.GetProjectProgress(projectId)
+    } catch (e) {
+      addError('Failed to mark task as failed: ' + (e.message || e))
     }
   }
 
@@ -189,6 +232,9 @@
                 onAssign={handleAssign}
                 onComplete={handleComplete}
                 onViewReport={handleViewReport}
+                onReassign={handleReassign}
+                onEscalate={handleEscalate}
+                onMarkFailed={handleMarkFailed}
               />
             </div>
           {/each}
@@ -213,12 +259,12 @@
   {#if assignDialog}
     <div class="dialog-overlay" on:click={() => assignDialog = null} on:keydown={(e) => e.key === 'Escape' && (assignDialog = null)} role="presentation">
       <div class="nes-dialog is-dark is-rounded" on:click|stopPropagation role="presentation">
-        <p class="title">Assign: {assignDialog.title}</p>
-        {#if idleWorkers.length === 0}
+        <p class="title">{assignDialog._reassign ? 'Reassign' : 'Assign'}: {assignDialog.title}</p>
+        {#if (assignDialog._reassign ? $workers : idleWorkers).length === 0}
           <p class="empty-msg">{$t('workers.noWorkers')}</p>
         {:else}
           <div class="worker-list">
-            {#each idleWorkers as w}
+            {#each (assignDialog._reassign ? $workers : idleWorkers) as w}
               <label class="worker-option" class:selected={selectedWorker === w.id}>
                 <input type="radio" class="nes-radio is-dark" name="worker" value={w.id} bind:group={selectedWorker} />
                 <span>{w.name}</span>

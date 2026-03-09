@@ -7,6 +7,8 @@ type TaskType string
 const (
 	TaskTypeCode     TaskType = "code"
 	TaskTypeResearch TaskType = "research"
+	TaskTypePRD      TaskType = "prd"
+	TaskTypeDesign   TaskType = "design"
 )
 
 type TaskStatus string
@@ -40,6 +42,7 @@ type Task struct {
 	ReviewCount      int            `yaml:"review_count,omitempty" json:"reviewCount,omitempty"`
 	RejectionCount   int            `yaml:"rejection_count,omitempty" json:"rejectionCount,omitempty"`
 	RejectionHistory []Rejection    `yaml:"rejection_history,omitempty" json:"rejectionHistory,omitempty"`
+	GateRequestID    string         `yaml:"gate_request_id,omitempty" json:"gateRequestId,omitempty"`
 	BounceHistory    []BounceRecord `yaml:"bounce_history,omitempty" json:"bounceHistory,omitempty"`
 	TokensConsumed   int64          `yaml:"tokens_consumed,omitempty" json:"tokensConsumed,omitempty"`
 	BudgetLimit      int64          `yaml:"budget_limit,omitempty" json:"budgetLimit,omitempty"`

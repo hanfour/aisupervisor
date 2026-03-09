@@ -130,6 +130,12 @@ func (hg *HumanGate) RespondToRequest(requestID, status string) error {
 	}
 
 	req.Status = status
+
+	// When PRD is approved, trigger phase advancement
+	if req.Reason == "prd_approval" && status == "approved" {
+		go hg.mgr.advanceFromPRD(req.TaskID)
+	}
+
 	return nil
 }
 
@@ -153,6 +159,17 @@ func (hg *HumanGate) IsApproved(requestID string) bool {
 	defer hg.mu.Unlock()
 	req, ok := hg.requests[requestID]
 	return ok && req.Status == "approved"
+}
+
+// CreatePRDApproval creates a PRD approval gate request (used by pipeline and testing).
+func (hg *HumanGate) CreatePRDApproval(taskID, workerID string) *HumanGateRequest {
+	return hg.createRequest(HumanGateRequest{
+		Reason:   "prd_approval",
+		TaskID:   taskID,
+		WorkerID: workerID,
+		Message:  "PRD document ready for review",
+		Blocking: true,
+	})
 }
 
 func (hg *HumanGate) createRequest(req HumanGateRequest) *HumanGateRequest {

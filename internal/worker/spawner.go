@@ -187,10 +187,11 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, p *project.Project) error {
 	tmuxName := fmt.Sprintf("aiworker-%s", w.ID)
 
-	isResearch := t.Type == project.TaskTypeResearch
+	isNonCodeTask := t.Type == project.TaskTypeResearch ||
+		t.Type == project.TaskTypePRD || t.Type == project.TaskTypeDesign
 
-	// 1. Create git branch if it doesn't exist (skip for research tasks)
-	if !isResearch && t.BranchName != "" {
+	// 1. Create git branch if it doesn't exist (skip for non-code tasks)
+	if !isNonCodeTask && t.BranchName != "" {
 		exists, err := s.gitOps.BranchExists(p.RepoPath, t.BranchName)
 		if err != nil {
 			return fmt.Errorf("checking branch: %w", err)
@@ -214,8 +215,8 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(p.RepoPath))+" Enter")
 	s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 
-	// 4. Checkout task branch (skip for research tasks)
-	if !isResearch && t.BranchName != "" {
+	// 4. Checkout task branch (skip for non-code tasks)
+	if !isNonCodeTask && t.BranchName != "" {
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("git checkout %s", t.BranchName)+" Enter")
 		s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 	}
@@ -227,6 +228,13 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 3*time.Second)
 
 	cliTool, cliArgs, readyRe := s.resolveCLI(w)
+
+	// For autonomous tasks (PRD, design), force bypass permissions so the CLI
+	// can run bash commands without interactive confirmation prompts.
+	if isNonCodeTask && !strings.Contains(cliArgs, "--dangerously-skip-permissions") {
+		cliArgs = strings.TrimSpace(cliArgs + " --dangerously-skip-permissions")
+	}
+
 	if cliArgs != "" {
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("%s %s", cliTool, cliArgs)+" Enter")
 	} else {
@@ -255,6 +263,10 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	}
 
 	s.tmuxClient.SendLiteralKeys(tmuxName, 0, 0, prompt)
+	// Wait for the CLI to finish rendering the pasted text before pressing Enter.
+	// Without this delay, Enter can be lost or misinterpreted, especially for
+	// large multi-line prompts (e.g. PRD prompts).
+	time.Sleep(1 * time.Second)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
 	// 8. Update worker state
@@ -400,14 +412,22 @@ func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout 
 				continue
 			}
 
-			// Auto-accept --dangerously-skip-permissions confirmation dialog.
-			// The dialog shows "No, exit" and "Yes, I accept the risks" options.
-			// We press Down to select "Yes" then Enter to confirm.
+			// Auto-accept CLI confirmation dialogs.
+			// There are two types:
+			// 1. Trust folder dialog: "Yes, I trust this folder" is option 1 (top) → just Enter
+			// 2. Skip-permissions dialog: "No, exit" is on top, "Yes, I accept" is below → Down + Enter
 			if !bypassAccepted && (strings.Contains(content, "No, exit") || strings.Contains(content, "I accept")) {
-				log.Printf("waitForReady[%s] bypass permissions dialog detected, auto-accepting", tmuxSession)
-				s.tmuxClient.SendKeys(tmuxSession, 0, 0, "Down")
-				time.Sleep(300 * time.Millisecond)
-				s.tmuxClient.SendKeys(tmuxSession, 0, 0, "Enter")
+				if strings.Contains(content, "I trust this folder") {
+					// Trust folder dialog: "Yes, I trust" is already selected (option 1)
+					log.Printf("waitForReady[%s] trust folder dialog detected, auto-accepting", tmuxSession)
+					s.tmuxClient.SendKeys(tmuxSession, 0, 0, "Enter")
+				} else {
+					// Skip-permissions dialog: need Down to select "Yes, I accept"
+					log.Printf("waitForReady[%s] bypass permissions dialog detected, auto-accepting", tmuxSession)
+					s.tmuxClient.SendKeys(tmuxSession, 0, 0, "Down")
+					time.Sleep(300 * time.Millisecond)
+					s.tmuxClient.SendKeys(tmuxSession, 0, 0, "Enter")
+				}
 				bypassAccepted = true
 				bypassAcceptedAt = pollCount
 				continue
@@ -452,6 +472,23 @@ func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout 
 func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier WorkerTier, deps []depContext) string {
 	if t.Type == project.TaskTypeResearch {
 		return s.buildResearchPrompt(t, deps)
+	}
+
+	// PRD and design tasks use their pre-built prompt directly
+	if t.Type == project.TaskTypePRD || t.Type == project.TaskTypeDesign {
+		prompt := t.Prompt
+		if t.Type == project.TaskTypeDesign {
+			lang := s.language
+			if lang == "" {
+				lang = "zh-TW"
+			}
+			if lang == "en" {
+				prompt += "\n\nOutput design documents to the docs/design/ directory. Create the directory if it doesn't exist.\nWhen done, commit your changes and type /stop to signal completion."
+			} else {
+				prompt += "\n\n將設計文件輸出到 docs/design/ 目錄。如果目錄不存在，請建立它。\n完成時，提交變更並輸入 /stop 表示完成。"
+			}
+		}
+		return prompt
 	}
 
 	lang := s.language

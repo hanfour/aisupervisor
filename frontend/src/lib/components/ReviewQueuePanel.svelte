@@ -1,7 +1,21 @@
 <script>
-  import { reviewQueue, loadReviewQueue } from '../stores/company.js'
+  import { reviewQueue, loadReviewQueue, drainReviewQueue } from '../stores/company.js'
   import { onMount } from 'svelte'
   import { t } from '../stores/i18n.js'
+  import { addError } from '../stores/errors.js'
+
+  let draining = false
+
+  async function handleDrain() {
+    if (!confirm($t('reviewQueue.drainConfirm'))) return
+    draining = true
+    try {
+      await drainReviewQueue()
+    } catch (e) {
+      addError('Drain failed: ' + (e.message || e))
+    }
+    draining = false
+  }
 
   onMount(() => {
     loadReviewQueue()
@@ -15,6 +29,13 @@
 </script>
 
 <div class="review-queue">
+  {#if $reviewQueue.length > 0}
+    <div class="drain-bar">
+      <button class="nes-btn is-warning btn-drain" on:click={handleDrain} disabled={draining}>
+        {draining ? '...' : $t('reviewQueue.drain')}
+      </button>
+    </div>
+  {/if}
   {#if $reviewQueue.length === 0}
     <p class="empty-msg">{$t('reviewQueue.noReviews')}</p>
   {:else}
@@ -75,5 +96,15 @@
     font-size: 10px;
     text-align: center;
     padding: 12px;
+  }
+
+  .drain-bar {
+    margin-bottom: 8px;
+    text-align: right;
+  }
+
+  .btn-drain {
+    font-size: 8px !important;
+    padding: 4px 8px !important;
   }
 </style>

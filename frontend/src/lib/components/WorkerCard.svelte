@@ -1,9 +1,21 @@
 <script>
   import { openChat } from '../stores/workerChat.js'
+  import { resetWorker } from '../stores/company.js'
+  import { t } from '../stores/i18n.js'
+  import { addError } from '../stores/errors.js'
   import CharacterPortrait from './CharacterPortrait.svelte'
 
   export let worker = {}
   export let onClick = null
+
+  async function handleReset() {
+    if (!confirm($t('workers.resetConfirm').replace('{name}', worker.name))) return
+    try {
+      await resetWorker(worker.id)
+    } catch (e) {
+      addError('Reset failed: ' + (e.message || e))
+    }
+  }
 
   function statusClass(status) {
     switch (status) {
@@ -30,9 +42,16 @@
       <span class="label">Task:</span> {worker.currentTaskId}
     </div>
   {/if}
-  <button class="nes-btn is-primary chat-btn" on:click|stopPropagation={() => openChat(worker.id, worker.name, worker.avatar)}>
-    Chat
-  </button>
+  <div class="card-btns">
+    <button class="nes-btn is-primary chat-btn" on:click|stopPropagation={() => openChat(worker.id, worker.name, worker.avatar)}>
+      Chat
+    </button>
+    {#if worker.status !== 'idle'}
+      <button class="nes-btn is-error chat-btn" on:click|stopPropagation={handleReset}>
+        Reset
+      </button>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -82,9 +101,14 @@
     color: var(--text-secondary);
   }
 
+  .card-btns {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+  }
+
   .chat-btn {
     font-size: 7px !important;
     padding: 2px 8px !important;
-    margin-top: 4px;
   }
 </style>

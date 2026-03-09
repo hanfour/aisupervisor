@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import { addError } from '../stores/errors.js'
   import { getWorker, getManager, getSubordinates, skillProfiles, loadSkillProfiles, loadWorkers, loadHierarchy } from '../stores/workers.js'
   import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import WorkerLogPanel from './WorkerLogPanel.svelte'
@@ -103,6 +104,19 @@
       profile = await loadCharacterProfile(workerId)
     } catch (e) {
       console.error(e)
+    }
+  }
+
+  async function handleDeleteWorker() {
+    if (!worker) return
+    if (!confirm($t('workerDetail.deleteConfirm').replace('{name}', worker.name))) return
+    try {
+      await window.go.gui.CompanyApp.DeleteWorker(worker.id)
+      await loadWorkers()
+      await loadHierarchy()
+      onClose()
+    } catch (e) {
+      addError('Delete failed: ' + (e.message || e))
     }
   }
 
@@ -271,6 +285,12 @@
         {#if worker.tmuxSession}
           <button class="nes-btn is-warning logs-btn" on:click={() => showLogs = true}>
             {$t('workerDetail.viewLogs')}
+          </button>
+        {/if}
+
+        {#if worker.status === 'idle'}
+          <button class="nes-btn is-error logs-btn" on:click={handleDeleteWorker}>
+            {$t('workerDetail.delete')}
           </button>
         {/if}
 

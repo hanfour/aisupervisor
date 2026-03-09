@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
@@ -665,4 +666,102 @@ func (c *CompanyApp) UpdateWorkerBirthday(workerID, birthday string) error {
 		return fmt.Errorf("profile not found: %s", workerID)
 	}
 	return nil
+}
+
+// --- Operations Management Bindings ---
+
+// ResetWorker forces a worker back to idle, killing its tmux session.
+func (c *CompanyApp) ResetWorker(workerID string) error {
+	return c.company.ResetWorker(workerID)
+}
+
+// GetPendingGateRequests returns all pending human gate approval requests.
+func (c *CompanyApp) GetPendingGateRequests() []HumanGateRequestDTO {
+	reqs := c.company.GetHumanGate().PendingRequests()
+	result := make([]HumanGateRequestDTO, len(reqs))
+	for i, r := range reqs {
+		result[i] = HumanGateRequestDTO{
+			ID:        r.ID,
+			Reason:    r.Reason,
+			TaskID:    r.TaskID,
+			WorkerID:  r.WorkerID,
+			Message:   r.Message,
+			Blocking:  r.Blocking,
+			Status:    r.Status,
+			CreatedAt: r.CreatedAt.Format(time.RFC3339),
+		}
+	}
+	return result
+}
+
+// RespondToGateRequest approves or denies a human gate request.
+func (c *CompanyApp) RespondToGateRequest(requestID, status string) error {
+	return c.company.GetHumanGate().RespondToRequest(requestID, status)
+}
+
+// GetPRDContent returns the PRD document content for a project.
+func (c *CompanyApp) GetPRDContent(projectID string) (string, error) {
+	p, ok := c.company.GetProject(projectID)
+	if !ok {
+		return "", fmt.Errorf("project not found")
+	}
+	data, err := os.ReadFile(filepath.Join(p.RepoPath, "docs", "prd.md"))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// GetPRDContentByTask returns the PRD document content by looking up the task's project.
+func (c *CompanyApp) GetPRDContentByTask(taskID string) (string, error) {
+	t, ok := c.company.GetTask(taskID)
+	if !ok {
+		return "", fmt.Errorf("task not found")
+	}
+	return c.GetPRDContent(t.ProjectID)
+}
+
+// ReassignTask reassigns a task from its current worker to a new one.
+func (c *CompanyApp) ReassignTask(taskID, newWorkerID string) error {
+	return c.company.ReassignTask(c.ctx, taskID, newWorkerID)
+}
+
+// DrainReviewQueue forces processing of all pending review requests.
+func (c *CompanyApp) DrainReviewQueue() {
+	c.company.DrainReviewQueue(c.ctx)
+}
+
+// GetDashboardAlerts returns counts of stuck workers, escalated tasks, and pending approvals.
+func (c *CompanyApp) GetDashboardAlerts() DashboardAlertsDTO {
+	// Count stuck workers (working but no tmux session)
+	stuckCount := 0
+	for _, w := range c.company.ListWorkers() {
+		if (w.Status == worker.WorkerWorking || w.Status == worker.WorkerWaiting) && w.TmuxSession != "" {
+			if c.tmuxClient != nil {
+				has, err := c.tmuxClient.HasSession(w.TmuxSession)
+				if err != nil || !has {
+					stuckCount++
+				}
+			}
+		}
+	}
+
+	// Count escalated tasks
+	escalatedCount := 0
+	for _, p := range c.company.ListProjects() {
+		for _, t := range c.company.ListTasks(p.ID) {
+			if string(t.Status) == "escalation" {
+				escalatedCount++
+			}
+		}
+	}
+
+	// Count pending gate requests
+	pendingCount := len(c.company.GetHumanGate().PendingRequests())
+
+	return DashboardAlertsDTO{
+		StuckWorkers:     stuckCount,
+		EscalatedTasks:   escalatedCount,
+		PendingApprovals: pendingCount,
+	}
 }

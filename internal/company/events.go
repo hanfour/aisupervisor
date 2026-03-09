@@ -43,6 +43,9 @@ const (
 	EventProjectCompleted          EventType = "project_completed"
 	EventRetroStarted              EventType = "retro_started"
 	EventRetroCompleted            EventType = "retro_completed"
+	EventPRDCompleted              EventType = "prd_completed"
+	EventPRDApproved               EventType = "prd_approved"
+	EventDesignCompleted           EventType = "design_completed"
 )
 
 type Event struct {

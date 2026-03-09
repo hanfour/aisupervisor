@@ -217,6 +217,7 @@ func (m *Manager) CreateProject(name, description, repoPath, baseBranch string, 
 		RepoPath:    repoPath,
 		BaseBranch:  baseBranch,
 		Goals:       goals,
+		Phase:       project.PhasePRD,
 	}
 	if err := m.projectStore.SaveProject(p); err != nil {
 		return nil, err
@@ -228,15 +229,9 @@ func (m *Manager) CreateProject(name, description, repoPath, baseBranch string, 
 		Message:   m.msgf("Project created: %s", "專案已建立：%s", name),
 	})
 
-	// Auto-decompose goals into tasks in the background
-	if len(goals) > 0 && m.chatProvider != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			if err := m.DecomposeGoals(ctx, p.ID); err != nil {
-				log.Printf("WARNING: auto-decompose goals failed: %v", err)
-			}
-		}()
+	// Start PRD pipeline: create a PRD task instead of directly decomposing goals
+	if len(goals) > 0 {
+		go m.createPRDTask(p)
 	}
 
 	return p, nil
@@ -380,7 +375,10 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 	}
 
 	tt := project.TaskType(taskType)
-	if tt != project.TaskTypeResearch {
+	switch tt {
+	case project.TaskTypeResearch, project.TaskTypePRD, project.TaskTypeDesign:
+		// keep as-is
+	default:
 		tt = project.TaskTypeCode
 	}
 
@@ -396,8 +394,8 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 		Milestone:   milestone,
 	}
 
-	// Research tasks don't need a git branch
-	if tt != project.TaskTypeResearch {
+	// Only code tasks need a git branch
+	if tt == project.TaskTypeCode {
 		t.BranchName = gitops.BranchName(p.ID, "", slug)
 	}
 
@@ -411,7 +409,7 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 	}
 
 	// Fix branch name with actual task ID (only for code tasks)
-	if tt != project.TaskTypeResearch {
+	if tt == project.TaskTypeCode {
 		t.BranchName = gitops.BranchName(p.ID, t.ID, slug)
 		if err := m.projectStore.SaveTask(t); err != nil {
 			return nil, err
@@ -434,6 +432,10 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 
 func (m *Manager) ListTasks(projectID string) []*project.Task {
 	return m.projectStore.TasksForProject(projectID)
+}
+
+func (m *Manager) GetTask(taskID string) (*project.Task, bool) {
+	return m.projectStore.GetTask(taskID)
 }
 
 // --- Worker operations ---
@@ -744,6 +746,16 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 
 	if result.Success && t.Type == project.TaskTypeResearch {
 		m.handleResearchCompletion(w, t, p)
+		return
+	}
+
+	if result.Success && t.Type == project.TaskTypePRD {
+		m.handlePRDCompletion(w, t, p)
+		return
+	}
+
+	if result.Success && t.Type == project.TaskTypeDesign {
+		m.handleDesignCompletion(w, t, p)
 		return
 	}
 
@@ -1088,15 +1100,16 @@ func (m *Manager) drainReadyQueue(ctx context.Context) {
 	}
 	m.mu.RUnlock()
 
-	assigned := 0
+	assignedMap := make(map[string]bool)
 	for _, t := range readyTasks {
-		if assigned >= len(idle) {
-			break
+		best := m.findBestWorker(t, idle, assignedMap)
+		if best == nil {
+			continue
 		}
-		if err := m.AssignTask(ctx, idle[assigned].ID, t.ID); err != nil {
+		if err := m.AssignTask(ctx, best.ID, t.ID); err != nil {
 			continue // worker might have become busy, skip
 		}
-		assigned++
+		assignedMap[best.ID] = true
 	}
 }
 

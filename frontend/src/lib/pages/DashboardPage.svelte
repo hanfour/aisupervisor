@@ -7,7 +7,7 @@
   import ReviewQueuePanel from '../components/ReviewQueuePanel.svelte'
   import TrainingStatsPanel from '../components/TrainingStatsPanel.svelte'
   import { events } from '../stores/events.js'
-  import { companyStats, loadCompanyStats, loadReviewQueue, loadTrainingStats } from '../stores/company.js'
+  import { companyStats, loadCompanyStats, loadReviewQueue, loadTrainingStats, dashboardAlerts, loadDashboardAlerts } from '../stores/company.js'
   import { t } from '../stores/i18n.js'
 
   export let onNavigate = () => {}
@@ -28,6 +28,7 @@
     loadCompanyStats()
     loadReviewQueue()
     loadTrainingStats()
+    loadDashboardAlerts()
   })
 
   function handleApprove() {
@@ -47,6 +48,26 @@
 </script>
 
 <div class="dashboard">
+  {#if $dashboardAlerts.stuckWorkers > 0 || $dashboardAlerts.escalatedTasks > 0 || $dashboardAlerts.pendingApprovals > 0}
+  <div class="alert-banner">
+    {#if $dashboardAlerts.stuckWorkers > 0}
+      <button class="alert-item alert-red" on:click={() => onNavigate('workers')}>
+        {$t('alerts.stuckWorkers').replace('{n}', $dashboardAlerts.stuckWorkers)}
+      </button>
+    {/if}
+    {#if $dashboardAlerts.escalatedTasks > 0}
+      <button class="alert-item alert-yellow" on:click={() => onNavigate('board')}>
+        {$t('alerts.escalatedTasks').replace('{n}', $dashboardAlerts.escalatedTasks)}
+      </button>
+    {/if}
+    {#if $dashboardAlerts.pendingApprovals > 0}
+      <button class="alert-item alert-yellow" on:click={() => onNavigate('approvals')}>
+        {$t('alerts.pendingApprovals').replace('{n}', $dashboardAlerts.pendingApprovals)}
+      </button>
+    {/if}
+  </div>
+  {/if}
+
   <section class="nes-container with-title is-dark">
     <p class="title">{$t('dashboard.company')}</p>
     <div class="stat-cards">
@@ -164,5 +185,38 @@
   .empty-msg {
     color: var(--text-secondary);
     font-size: 10px;
+  }
+
+  .alert-banner {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .alert-item {
+    font-size: 9px;
+    padding: 6px 12px;
+    border: 2px solid;
+    cursor: pointer;
+    background: transparent;
+    font-family: inherit;
+  }
+
+  .alert-red {
+    border-color: #e74c3c;
+    color: #e74c3c;
+  }
+
+  .alert-red:hover {
+    background: rgba(231, 76, 60, 0.1);
+  }
+
+  .alert-yellow {
+    border-color: #f0c040;
+    color: #f0c040;
+  }
+
+  .alert-yellow:hover {
+    background: rgba(240, 192, 64, 0.1);
   }
 </style>

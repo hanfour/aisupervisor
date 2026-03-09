@@ -5,6 +5,7 @@ export const companyEvents = writable([])
 export const companyStats = writable({ projects: 0, inProgress: 0, idleWorkers: 0, reviewsPending: 0, trainingPairs: 0 })
 export const reviewQueue = writable([])
 export const trainingStats = writable({ totalPairs: 0, accepted: 0, rejected: 0, approvalRate: 0 })
+export const dashboardAlerts = writable({ stuckWorkers: 0, escalatedTasks: 0, pendingApprovals: 0 })
 const MAX_EVENTS = 200
 
 export function initCompanyStore() {
@@ -18,6 +19,7 @@ export function initCompanyStore() {
       loadCompanyStats()
       loadReviewQueue()
       loadTrainingStats()
+      loadDashboardAlerts()
       loadSessions()
     })
   }
@@ -72,4 +74,26 @@ export async function loadTrainingStats() {
   } catch {
     // ignore
   }
+}
+
+export async function loadDashboardAlerts() {
+  if (!window.go?.gui?.CompanyApp) return
+  try {
+    const result = await window.go.gui.CompanyApp.GetDashboardAlerts()
+    dashboardAlerts.set(result || { stuckWorkers: 0, escalatedTasks: 0, pendingApprovals: 0 })
+  } catch {
+    // ignore
+  }
+}
+
+export async function drainReviewQueue() {
+  if (!window.go?.gui?.CompanyApp) return
+  await window.go.gui.CompanyApp.DrainReviewQueue()
+  await loadReviewQueue()
+}
+
+export async function resetWorker(workerID) {
+  if (!window.go?.gui?.CompanyApp) return
+  await window.go.gui.CompanyApp.ResetWorker(workerID)
+  await loadCompanyStats()
 }

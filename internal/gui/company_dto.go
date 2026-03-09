@@ -15,6 +15,7 @@ type ProjectDTO struct {
 	RepoPath    string   `json:"repoPath"`
 	BaseBranch  string   `json:"baseBranch"`
 	Goals       []string `json:"goals"`
+	Phase       string   `json:"phase,omitempty"`
 	Status      string   `json:"status"`
 	CreatedAt   string   `json:"createdAt"`
 	UpdatedAt   string   `json:"updatedAt"`
@@ -28,6 +29,7 @@ func ProjectToDTO(p *project.Project) ProjectDTO {
 		RepoPath:    p.RepoPath,
 		BaseBranch:  p.BaseBranch,
 		Goals:       p.Goals,
+		Phase:       string(p.Phase),
 		Status:      string(p.Status),
 		CreatedAt:   p.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   p.UpdatedAt.Format(time.RFC3339),
@@ -35,24 +37,59 @@ func ProjectToDTO(p *project.Project) ProjectDTO {
 }
 
 type TaskDTO struct {
-	ID           string   `json:"id"`
-	ProjectID    string   `json:"projectId"`
-	Title        string   `json:"title"`
-	Description  string   `json:"description"`
-	Prompt       string   `json:"prompt"`
-	Type         string   `json:"type"`
-	Status       string   `json:"status"`
-	Priority     int      `json:"priority"`
-	BranchName   string   `json:"branchName"`
-	AssigneeID   string   `json:"assigneeId"`
-	DependsOn    []string `json:"dependsOn"`
-	Milestone    string   `json:"milestone"`
-	ReviewerID   string   `json:"reviewerId,omitempty"`
-	ParentTaskID string   `json:"parentTaskId,omitempty"`
-	ReviewCount  int      `json:"reviewCount,omitempty"`
-	CreatedAt    string   `json:"createdAt"`
-	StartedAt    string   `json:"startedAt,omitempty"`
-	CompletedAt  string   `json:"completedAt,omitempty"`
+	ID               string           `json:"id"`
+	ProjectID        string           `json:"projectId"`
+	Title            string           `json:"title"`
+	Description      string           `json:"description"`
+	Prompt           string           `json:"prompt"`
+	Type             string           `json:"type"`
+	Status           string           `json:"status"`
+	Priority         int              `json:"priority"`
+	BranchName       string           `json:"branchName"`
+	AssigneeID       string           `json:"assigneeId"`
+	DependsOn        []string         `json:"dependsOn"`
+	Milestone        string           `json:"milestone"`
+	ReviewerID       string           `json:"reviewerId,omitempty"`
+	ParentTaskID     string           `json:"parentTaskId,omitempty"`
+	ReviewCount      int              `json:"reviewCount,omitempty"`
+	RejectionCount   int              `json:"rejectionCount,omitempty"`
+	RejectionHistory []RejectionDTO   `json:"rejectionHistory,omitempty"`
+	BounceHistory    []BounceRecordDTO `json:"bounceHistory,omitempty"`
+	CreatedAt        string           `json:"createdAt"`
+	StartedAt        string           `json:"startedAt,omitempty"`
+	CompletedAt      string           `json:"completedAt,omitempty"`
+}
+
+type RejectionDTO struct {
+	Stage      string `json:"stage"`
+	RejectorID string `json:"rejectorId"`
+	Reason     string `json:"reason"`
+	Timestamp  string `json:"timestamp"`
+}
+
+type BounceRecordDTO struct {
+	FromID    string `json:"fromId"`
+	ToID      string `json:"toId"`
+	Stage     string `json:"stage"`
+	Reason    string `json:"reason"`
+	Timestamp string `json:"timestamp"`
+}
+
+type HumanGateRequestDTO struct {
+	ID        string `json:"id"`
+	Reason    string `json:"reason"`
+	TaskID    string `json:"taskId"`
+	WorkerID  string `json:"workerId"`
+	Message   string `json:"message"`
+	Blocking  bool   `json:"blocking"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type DashboardAlertsDTO struct {
+	StuckWorkers     int `json:"stuckWorkers"`
+	EscalatedTasks   int `json:"escalatedTasks"`
+	PendingApprovals int `json:"pendingApprovals"`
 }
 
 func TaskToDTO(t *project.Task) TaskDTO {
@@ -60,23 +97,45 @@ func TaskToDTO(t *project.Task) TaskDTO {
 	if taskType == "" {
 		taskType = "code"
 	}
+	rejections := make([]RejectionDTO, len(t.RejectionHistory))
+	for i, r := range t.RejectionHistory {
+		rejections[i] = RejectionDTO{
+			Stage:      string(r.Stage),
+			RejectorID: r.RejectorID,
+			Reason:     r.Reason,
+			Timestamp:  r.Timestamp.Format(time.RFC3339),
+		}
+	}
+	bounces := make([]BounceRecordDTO, len(t.BounceHistory))
+	for i, b := range t.BounceHistory {
+		bounces[i] = BounceRecordDTO{
+			FromID:    b.FromID,
+			ToID:      b.ToID,
+			Stage:     string(b.Stage),
+			Reason:    b.Reason,
+			Timestamp: b.Timestamp.Format(time.RFC3339),
+		}
+	}
 	dto := TaskDTO{
-		ID:           t.ID,
-		ProjectID:    t.ProjectID,
-		Title:        t.Title,
-		Description:  t.Description,
-		Prompt:       t.Prompt,
-		Type:         taskType,
-		Status:       string(t.Status),
-		Priority:     t.Priority,
-		BranchName:   t.BranchName,
-		AssigneeID:   t.AssigneeID,
-		DependsOn:    t.DependsOn,
-		Milestone:    t.Milestone,
-		ReviewerID:   t.ReviewerID,
-		ParentTaskID: t.ParentTaskID,
-		ReviewCount:  t.ReviewCount,
-		CreatedAt:    t.CreatedAt.Format(time.RFC3339),
+		ID:               t.ID,
+		ProjectID:        t.ProjectID,
+		Title:            t.Title,
+		Description:      t.Description,
+		Prompt:           t.Prompt,
+		Type:             taskType,
+		Status:           string(t.Status),
+		Priority:         t.Priority,
+		BranchName:       t.BranchName,
+		AssigneeID:       t.AssigneeID,
+		DependsOn:        t.DependsOn,
+		Milestone:        t.Milestone,
+		ReviewerID:       t.ReviewerID,
+		ParentTaskID:     t.ParentTaskID,
+		ReviewCount:      t.ReviewCount,
+		RejectionCount:   t.RejectionCount,
+		RejectionHistory: rejections,
+		BounceHistory:    bounces,
+		CreatedAt:        t.CreatedAt.Format(time.RFC3339),
 	}
 	if t.StartedAt != nil {
 		dto.StartedAt = t.StartedAt.Format(time.RFC3339)

@@ -9,6 +9,8 @@
   let clearStatus = '' // '', 'confirming', 'force-confirming'
   let activeCount = 0
   let clearMessage = ''
+  let healthResults = null
+  let healthLoading = false
 
   onMount(async () => {
     if (window.go?.gui?.App) {
@@ -48,6 +50,21 @@
   function cancelClear() {
     clearStatus = ''
     clearMessage = ''
+  }
+
+  async function handleHealthCheck() {
+    healthLoading = true
+    healthResults = null
+    try {
+      if (window.go?.gui?.CompanyApp?.RunHealthCheck) {
+        healthResults = await window.go.gui.CompanyApp.RunHealthCheck()
+      } else {
+        healthResults = [$t('settings.healthOk')]
+      }
+    } catch (e) {
+      healthResults = ['Error: ' + (e.message || e)]
+    }
+    healthLoading = false
   }
 </script>
 
@@ -122,6 +139,28 @@
       </table>
     {:else}
       <p class="empty">{$t('settings.noAutoApprove')}</p>
+    {/if}
+  </section>
+
+  <section class="nes-container with-title is-dark">
+    <p class="title">{$t('settings.healthCheck')}</p>
+    <div class="danger-row">
+      <div class="danger-info">
+        <p class="danger-desc">{$t('settings.healthCheck')}</p>
+      </div>
+      <button class="nes-btn is-primary btn-danger" on:click={handleHealthCheck} disabled={healthLoading}>
+        {healthLoading ? '...' : $t('settings.runHealthCheck')}
+      </button>
+    </div>
+    {#if healthResults}
+      <div class="health-results">
+        {#each healthResults as item}
+          <p class="health-item" class:error={item.startsWith('Error')}>{item}</p>
+        {/each}
+        {#if healthResults.length === 0}
+          <p class="health-ok">{$t('settings.healthOk')}</p>
+        {/if}
+      </div>
     {/if}
   </section>
 
@@ -257,5 +296,26 @@
 
   .clear-msg.error {
     color: #e74c3c;
+  }
+
+  .health-results {
+    margin-top: 8px;
+    padding: 8px;
+    border: 2px solid var(--border-color);
+  }
+
+  .health-item {
+    font-size: 9px;
+    margin: 2px 0;
+    color: var(--text-primary);
+  }
+
+  .health-item.error {
+    color: #e74c3c;
+  }
+
+  .health-ok {
+    font-size: 9px;
+    color: #2ecc71;
   }
 </style>

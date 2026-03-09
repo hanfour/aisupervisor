@@ -6,6 +6,9 @@
   export let onAssign = () => {}
   export let onComplete = () => {}
   export let onViewReport = () => {}
+  export let onReassign = () => {}
+  export let onEscalate = () => {}
+  export let onMarkFailed = () => {}
 
   $: assignee = workers.find(w => w.id === task.assigneeId)
 
@@ -28,6 +31,9 @@
     <span class="task-title">
       {#if task.type === 'research'}
         <span class="type-badge research">R</span>
+      {/if}
+      {#if task.rejectionCount > 0}
+        <span class="type-badge rejection">R:{task.rejectionCount}</span>
       {/if}
       {task.title}
     </span>
@@ -72,6 +78,15 @@
     {#if task.type === 'research' && (task.status === 'done' || task.status === 'review')}
       <button class="nes-btn is-warning btn-sm" on:click={() => onViewReport(task)}>Report</button>
     {/if}
+    {#if ['assigned', 'in_progress', 'revision'].includes(task.status)}
+      <button class="nes-btn btn-sm" on:click={() => onReassign(task)}>Reassign</button>
+    {/if}
+    {#if ['in_progress', 'revision'].includes(task.status)}
+      <button class="nes-btn is-warning btn-sm" on:click={() => onEscalate(task)}>Escalate</button>
+    {/if}
+    {#if !['done', 'failed'].includes(task.status)}
+      <button class="nes-btn is-error btn-sm" on:click={() => onMarkFailed(task)}>Fail</button>
+    {/if}
   </div>
 </div>
 
@@ -107,6 +122,11 @@
   .type-badge.research {
     color: #f0c040;
     border-color: #f0c040;
+  }
+
+  .type-badge.rejection {
+    color: #e74c3c;
+    border-color: #e74c3c;
   }
 
   .task-desc {

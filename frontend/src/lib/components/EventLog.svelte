@@ -31,6 +31,9 @@
         'branch_created': 'BRANCH',
         'commit_detected': 'COMMIT',
         'auto_assigned': 'AUTO',
+        'human_intervention_required': 'GATE',
+        'review_rejected': 'REJ',
+        'review_approved': 'PASS',
       }
       return labels[type] || type
     }
@@ -51,9 +54,12 @@
     if (source === 'company') {
       switch (type) {
         case 'task_completed':
-        case 'auto_assigned': return 'status-active'
-        case 'task_failed': return 'status-error'
+        case 'auto_assigned':
+        case 'review_approved': return 'status-active'
+        case 'task_failed':
+        case 'human_intervention_required': return 'status-error'
         case 'worker_idle': return 'status-paused'
+        case 'review_rejected': return 'status-warning'
         default: return ''
       }
     }
@@ -159,5 +165,9 @@
     text-align: center;
     color: var(--text-secondary);
     padding: 20px !important;
+  }
+
+  .status-warning {
+    color: #f0c040;
   }
 </style>

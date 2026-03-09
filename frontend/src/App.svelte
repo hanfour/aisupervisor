@@ -36,6 +36,7 @@
   let HierarchyPage = null
   let OfficePage = null
   let RetroPage = null
+  let ApprovalsPage = null
 
   onMount(async () => {
     window.addEventListener('hashchange', onHashChange)
@@ -103,6 +104,11 @@
       const retroModule = await import('./lib/pages/RetroPage.svelte')
       RetroPage = retroModule.default
     } catch {}
+    // Approvals page
+    try {
+      const approvalsModule = await import('./lib/pages/ApprovalsPage.svelte')
+      ApprovalsPage = approvalsModule.default
+    } catch {}
   })
 
   function navigate(page, id) {
@@ -148,6 +154,8 @@
       <svelte:component this={RetroPage} />
     {:else if currentPage === 'office' && OfficePage}
       <svelte:component this={OfficePage} />
+    {:else if currentPage === 'approvals' && ApprovalsPage}
+      <svelte:component this={ApprovalsPage} />
     {:else if currentPage === 'settings' && SettingsPage}
       <svelte:component this={SettingsPage} />
     {:else}

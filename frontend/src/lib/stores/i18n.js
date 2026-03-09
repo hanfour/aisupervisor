@@ -14,6 +14,7 @@ const translations = {
   'nav.groups': { en: 'Groups', zh: '群組' },
   'nav.office': { en: 'Office', zh: '辦公室' },
   'nav.retro': { en: 'Retro', zh: '回顧' },
+  'nav.approvals': { en: 'Approvals', zh: '審批' },
   'nav.settings': { en: 'Settings', zh: '設定' },
   'nav.skills': { en: 'Skills', zh: '技能' },
   'theme.light': { en: '☀ Light', zh: '☀ 亮色' },
@@ -355,6 +356,53 @@ const translations = {
   'terminal.assignedRoles': { en: 'Assigned roles:', zh: '已分配角色：' },
   'terminal.noEvents': { en: 'No events for this session', zh: '此工作階段沒有事件' },
   'terminal.back': { en: '< Back', zh: '< 返回' },
+
+  // --- Approvals ---
+  'approvals.title': { en: 'Pending Approvals', zh: '待審批項目' },
+  'approvals.empty': { en: 'No pending approvals', zh: '沒有待審批項目' },
+  'approvals.reason': { en: 'Reason', zh: '原因' },
+  'approvals.message': { en: 'Message', zh: '訊息' },
+  'approvals.worker': { en: 'Worker', zh: '員工' },
+  'approvals.task': { en: 'Task', zh: '任務' },
+  'approvals.waiting': { en: 'Waiting', zh: '等待中' },
+  'approvals.approve': { en: 'Approve', zh: '核准' },
+  'approvals.deny': { en: 'Deny', zh: '拒絕' },
+
+  // --- PRD Pipeline ---
+  'prd.completed': { en: 'PRD Completed', zh: 'PRD 已完成' },
+  'prd.approval': { en: 'PRD Approval Required', zh: '需要 PRD 核准' },
+  'prd.viewDocument': { en: 'View PRD', zh: '查看 PRD' },
+
+  // --- Dashboard Alerts ---
+  'alerts.stuckWorkers': { en: 'Stuck Workers', zh: '卡住的員工' },
+  'alerts.escalatedTasks': { en: 'Escalated Tasks', zh: '升級的任務' },
+  'alerts.pendingApprovals': { en: 'Pending Approvals', zh: '待審批' },
+
+  // --- Task Operations ---
+  'task.reassign': { en: 'Reassign', zh: '重新分配' },
+  'task.escalate': { en: 'Escalate', zh: '升級' },
+  'task.markFailed': { en: 'Mark Failed', zh: '標記失敗' },
+  'task.reassignConfirm': { en: 'Reassign this task?', zh: '重新分配此任務？' },
+  'task.escalateConfirm': { en: 'Escalate this task?', zh: '升級此任務？' },
+  'task.failConfirm': { en: 'Mark this task as failed?', zh: '標記此任務為失敗？' },
+
+  // --- Review Queue ---
+  'reviewQueue.drain': { en: 'Force Process', zh: '強制處理' },
+  'reviewQueue.drainConfirm': { en: 'Force process all pending reviews?', zh: '強制處理所有待審查項目？' },
+
+  // --- Worker Operations ---
+  'workers.reset': { en: 'Reset', zh: '重設' },
+  'workers.resetConfirm': { en: 'Reset worker {name} to idle?', zh: '重設員工 {name} 為閒置？' },
+  'workerDetail.delete': { en: 'Delete Worker', zh: '刪除員工' },
+  'workerDetail.deleteConfirm': { en: 'Delete worker {name}? This cannot be undone.', zh: '刪除員工 {name}？此操作無法復原。' },
+
+  // --- Settings ---
+  'settings.healthCheck': { en: 'Health Check', zh: '健康檢查' },
+  'settings.runHealthCheck': { en: 'Run Health Check', zh: '執行健康檢查' },
+  'settings.healthOk': { en: 'All systems healthy', zh: '所有系統正常' },
+
+  // --- Board ---
+  'board.escalation': { en: 'Escalation', zh: '升級' },
 }
 
 /** @type {import('svelte/store').Readable<(key: string) => string>} */

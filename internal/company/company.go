@@ -53,8 +53,9 @@ type Manager struct {
 	ollamaModel    string // kept for personality narrator
 	modelStrategy  *ModelStrategy
 	circuitBreaker *CircuitBreaker
-	humanGate      *HumanGate
-	commMatrix     *CommunicationMatrix
+	humanGate        *HumanGate
+	commMatrix       *CommunicationMatrix
+	lastPaneContent  map[string]paneSnapshot
 }
 
 type workersFile struct {
@@ -116,6 +117,7 @@ func New(
 		chatProvider:     chatProvider,
 		ollamaEndpoint:   ollamaEndpoint,
 		ollamaModel:      ollamaModel,
+		lastPaneContent:  make(map[string]paneSnapshot),
 	}
 	m.review = newReviewPipeline(m)
 	m.modelStrategy = NewModelStrategy()
@@ -422,6 +424,11 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 		TaskID:    t.ID,
 		Message:   m.msgf("Task created: %s", "任務已建立：%s", title),
 	})
+
+	if t.Status == project.TaskReady && m.autoSchedule {
+		go m.drainReadyQueue(context.Background())
+	}
+
 	return t, nil
 }
 
@@ -895,6 +902,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	// Engage idle managers after task completion
 	if len(promoted) > 0 {
 		go m.engageIdleManagers(context.Background(), projectID)
+		go m.drainReadyQueue(context.Background())
 	}
 
 	// Check if project is fully completed
@@ -981,6 +989,7 @@ func (m *Manager) handleResearchCompletion(w *worker.Worker, t *project.Task, p 
 	}
 	if len(promoted) > 0 {
 		go m.engageIdleManagers(context.Background(), projectID)
+		go m.drainReadyQueue(context.Background())
 	}
 
 	// Check if project is fully completed
@@ -1058,6 +1067,35 @@ func extractJSON(text string) string {
 	return ""
 }
 
+// drainReadyQueue assigns ready tasks to idle workers until no more matches.
+func (m *Manager) drainReadyQueue(ctx context.Context) {
+	readyTasks := m.projectStore.ReadyTasksByPriority()
+	if len(readyTasks) == 0 {
+		return
+	}
+
+	// Collect idle workers
+	m.mu.RLock()
+	var idle []*worker.Worker
+	for _, w := range m.workers {
+		if w.Status == worker.WorkerIdle {
+			idle = append(idle, w)
+		}
+	}
+	m.mu.RUnlock()
+
+	assigned := 0
+	for _, t := range readyTasks {
+		if assigned >= len(idle) {
+			break
+		}
+		if err := m.AssignTask(ctx, idle[assigned].ID, t.ID); err != nil {
+			continue // worker might have become busy, skip
+		}
+		assigned++
+	}
+}
+
 // tryAutoAssign picks the highest-priority ready task and assigns it to the given idle worker.
 func (m *Manager) tryAutoAssign(workerID string) {
 	candidates := m.projectStore.ReadyTasksByPriority()
@@ -1088,14 +1126,15 @@ func (m *Manager) tryAutoAssign(workerID string) {
 // UpdateTaskStatusDirect updates a task's status directly (used by board drag-and-drop).
 func (m *Manager) UpdateTaskStatusDirect(taskID string, status string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	t, ok := m.projectStore.GetTask(taskID)
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("task %q not found", taskID)
 	}
 
 	if err := m.projectStore.ForceUpdateTaskStatus(taskID, project.TaskStatus(status)); err != nil {
+		m.mu.Unlock()
 		return err
 	}
 
@@ -1106,20 +1145,28 @@ func (m *Manager) UpdateTaskStatusDirect(taskID string, status string) error {
 		Message:   m.msgf("Task %q status changed to %s", "任務 %q 狀態已變更為 %s", t.Title, status),
 	})
 
+	shouldDrain := project.TaskStatus(status) == project.TaskReady && m.autoSchedule
+	m.mu.Unlock()
+
+	if shouldDrain {
+		go m.drainReadyQueue(context.Background())
+	}
+
 	return nil
 }
 
 // CompleteTask manually marks a task as done (used by supervisor/UI for review → done).
 func (m *Manager) CompleteTask(taskID string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	t, ok := m.projectStore.GetTask(taskID)
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("task %q not found", taskID)
 	}
 
 	if err := m.projectStore.ForceUpdateTaskStatus(taskID, project.TaskDone); err != nil {
+		m.mu.Unlock()
 		return err
 	}
 
@@ -1153,6 +1200,13 @@ func (m *Manager) CompleteTask(taskID string) error {
 			TaskID:    pt.ID,
 			Message:   m.msgf("Task %q is now ready (dependencies resolved)", "任務 %q 已就緒（依賴已解決）", pt.Title),
 		})
+	}
+
+	shouldDrain := len(promoted) > 0 && m.autoSchedule
+	m.mu.Unlock()
+
+	if shouldDrain {
+		go m.drainReadyQueue(context.Background())
 	}
 
 	return nil
@@ -1562,4 +1616,73 @@ func slugify(s string) string {
 		s = s[:30]
 	}
 	return s
+}
+
+// ResetWorker forces a worker back to idle, killing its tmux session if active.
+func (m *Manager) ResetWorker(workerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	w, ok := m.workers[workerID]
+	if !ok {
+		return fmt.Errorf("worker %s not found", workerID)
+	}
+
+	// Cancel completion monitor
+	if cancel, ok := m.cancels[workerID]; ok {
+		cancel()
+		delete(m.cancels, workerID)
+	}
+
+	// Kill tmux session
+	if w.TmuxSession != "" && m.tmuxClient != nil {
+		_ = m.tmuxClient.KillSession(w.TmuxSession)
+	}
+
+	w.Status = worker.WorkerIdle
+	w.CurrentTaskID = ""
+	w.TmuxSession = ""
+	w.SessionID = ""
+	m.saveWorkers()
+
+	delete(m.lastPaneContent, workerID)
+
+	m.emit(Event{
+		Type:     EventWorkerIdle,
+		WorkerID: workerID,
+		Message:  m.msgf("Worker %s has been reset to idle", "員工 %s 已重設為閒置", w.Name),
+	})
+	return nil
+}
+
+// ReassignTask unassigns a task from its current worker and reassigns it to a new one.
+func (m *Manager) ReassignTask(ctx context.Context, taskID, newWorkerID string) error {
+	task, ok := m.projectStore.GetTask(taskID)
+	if !ok {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	// Reset old assignee if any
+	if task.AssigneeID != "" {
+		if err := m.ResetWorker(task.AssigneeID); err != nil {
+			log.Printf("WARN: failed to reset old assignee %s: %v", task.AssigneeID, err)
+		}
+	}
+
+	// Reset task to ready
+	if err := m.projectStore.ForceUpdateTaskStatus(taskID, project.TaskReady); err != nil {
+		return fmt.Errorf("reset task status: %w", err)
+	}
+	task.AssigneeID = ""
+	if err := m.projectStore.SaveTask(task); err != nil {
+		return fmt.Errorf("clear assignee: %w", err)
+	}
+
+	// Assign to new worker
+	return m.AssignTask(ctx, newWorkerID, taskID)
+}
+
+// DrainReviewQueue forces processing of all pending review requests.
+func (m *Manager) DrainReviewQueue(ctx context.Context) {
+	m.review.DrainQueue(ctx)
 }

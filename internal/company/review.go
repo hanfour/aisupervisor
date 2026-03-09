@@ -244,9 +244,10 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			})
 		}
 
-		// Engage idle managers after review approval
+		// Engage idle managers and drain ready queue after review approval
 		if len(promoted) > 0 {
 			go rp.mgr.engageIdleManagers(context.Background(), p.ID)
+			go rp.mgr.drainReadyQueue(context.Background())
 		}
 
 		// Check if project is fully completed

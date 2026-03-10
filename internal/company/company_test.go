@@ -35,7 +35,7 @@ func testManager(t *testing.T) (*Manager, <-chan Event) {
 func TestCreateProject(t *testing.T) {
 	m, ch := testManager(t)
 
-	p, err := m.CreateProject("test", "desc", "/tmp/repo", "main", []string{"goal1"})
+	p, err := m.CreateProject("test", "desc", "/tmp/repo", "main", nil)
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}

@@ -1083,6 +1083,12 @@ func extractJSON(text string) string {
 	return ""
 }
 
+// idleWorkerSnapshot holds the immutable fields needed for task matching.
+type idleWorkerSnapshot struct {
+	ID           string
+	SkillProfile string
+}
+
 // drainReadyQueue assigns ready tasks to idle workers until no more matches.
 func (m *Manager) drainReadyQueue(ctx context.Context) {
 	readyTasks := m.projectStore.ReadyTasksByPriority()
@@ -1090,26 +1096,26 @@ func (m *Manager) drainReadyQueue(ctx context.Context) {
 		return
 	}
 
-	// Collect idle workers
+	// Snapshot idle workers (IDs and skill profiles only)
 	m.mu.RLock()
-	var idle []*worker.Worker
+	var idle []idleWorkerSnapshot
 	for _, w := range m.workers {
 		if w.Status == worker.WorkerIdle {
-			idle = append(idle, w)
+			idle = append(idle, idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile})
 		}
 	}
 	m.mu.RUnlock()
 
 	assignedMap := make(map[string]bool)
 	for _, t := range readyTasks {
-		best := m.findBestWorker(t, idle, assignedMap)
-		if best == nil {
+		best := matchWorker(t, idle, assignedMap)
+		if best == "" {
 			continue
 		}
-		if err := m.AssignTask(ctx, best.ID, t.ID); err != nil {
+		if err := m.AssignTask(ctx, best, t.ID); err != nil {
 			continue // worker might have become busy, skip
 		}
-		assignedMap[best.ID] = true
+		assignedMap[best] = true
 	}
 }
 

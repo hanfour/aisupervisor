@@ -83,12 +83,20 @@ func (s *Store) SaveProject(p *Project) error {
 	return s.saveProjects()
 }
 
-// GetProject returns a project by ID.
+// GetProject returns a defensive copy of the project by ID.
 func (s *Store) GetProject(id string) (*Project, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, ok := s.projects[id]
-	return p, ok
+	if !ok {
+		return nil, false
+	}
+	cp := *p
+	if p.Goals != nil {
+		cp.Goals = make([]string, len(p.Goals))
+		copy(cp.Goals, p.Goals)
+	}
+	return &cp, true
 }
 
 // ListProjects returns all projects.
@@ -154,12 +162,38 @@ func (s *Store) SaveTask(t *Task) error {
 	return s.saveTasks()
 }
 
-// GetTask returns a task by ID.
+// GetTask returns a defensive copy of the task by ID.
+// Callers may safely modify the returned value without holding any lock.
+// Use SaveTask to persist changes.
 func (s *Store) GetTask(id string) (*Task, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	t, ok := s.tasks[id]
-	return t, ok
+	if !ok {
+		return nil, false
+	}
+	cp := *t
+	if t.DependsOn != nil {
+		cp.DependsOn = make([]string, len(t.DependsOn))
+		copy(cp.DependsOn, t.DependsOn)
+	}
+	if t.RejectionHistory != nil {
+		cp.RejectionHistory = make([]Rejection, len(t.RejectionHistory))
+		copy(cp.RejectionHistory, t.RejectionHistory)
+	}
+	if t.BounceHistory != nil {
+		cp.BounceHistory = make([]BounceRecord, len(t.BounceHistory))
+		copy(cp.BounceHistory, t.BounceHistory)
+	}
+	if t.StartedAt != nil {
+		sa := *t.StartedAt
+		cp.StartedAt = &sa
+	}
+	if t.CompletedAt != nil {
+		ca := *t.CompletedAt
+		cp.CompletedAt = &ca
+	}
+	return &cp, true
 }
 
 // TasksForProject returns all tasks belonging to a project.

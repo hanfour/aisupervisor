@@ -377,9 +377,10 @@ func preferredProfiles(taskType project.TaskType) []string {
 	}
 }
 
-// findBestWorker selects the best idle worker for a task using soft skill matching.
+// matchWorker selects the best idle worker ID for a task using soft skill matching.
 // First tries to match preferred skill profiles, then falls back to any idle worker.
-func (m *Manager) findBestWorker(t *project.Task, idle []*worker.Worker, assigned map[string]bool) *worker.Worker {
+// Returns empty string if no match found.
+func matchWorker(t *project.Task, idle []idleWorkerSnapshot, assigned map[string]bool) string {
 	preferred := preferredProfiles(t.Type)
 
 	// First pass: find skill profile match
@@ -389,7 +390,7 @@ func (m *Manager) findBestWorker(t *project.Task, idle []*worker.Worker, assigne
 		}
 		for _, pref := range preferred {
 			if w.SkillProfile == pref {
-				return w
+				return w.ID
 			}
 		}
 	}
@@ -399,8 +400,8 @@ func (m *Manager) findBestWorker(t *project.Task, idle []*worker.Worker, assigne
 		if assigned[w.ID] {
 			continue
 		}
-		return w
+		return w.ID
 	}
 
-	return nil
+	return ""
 }

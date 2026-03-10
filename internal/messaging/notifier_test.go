@@ -78,6 +78,7 @@ func testCompanyManager(t *testing.T) *company.Manager {
 	if err != nil {
 		t.Fatalf("company.New: %v", err)
 	}
+	mgr.SetLanguage("en")
 	return mgr
 }
 

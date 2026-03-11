@@ -53,9 +53,11 @@ type Manager struct {
 	ollamaModel    string // kept for personality narrator
 	modelStrategy  *ModelStrategy
 	circuitBreaker *CircuitBreaker
+	dataDir          string
 	humanGate        *HumanGate
 	commMatrix       *CommunicationMatrix
 	lastPaneContent  map[string]paneSnapshot
+	lastHealthReport *HealthReport
 }
 
 type workersFile struct {
@@ -110,6 +112,7 @@ func New(
 		autoSchedule:     true,
 		workers:          make(map[string]*worker.Worker),
 		cancels:          make(map[string]context.CancelFunc),
+		dataDir:          dataDir,
 		workersPath:      filepath.Join(dataDir, "workers.yaml"),
 		maxWorkers:       make(map[worker.WorkerTier]int),
 		personalityStore: personalityStore,
@@ -123,7 +126,7 @@ func New(
 	m.modelStrategy = NewModelStrategy()
 	m.circuitBreaker = NewCircuitBreaker(m)
 	m.commMatrix = NewCommunicationMatrix(m)
-	m.humanGate = NewHumanGate(m, DefaultHumanGateConfig())
+	m.humanGate = NewHumanGate(m, DefaultHumanGateConfig(), dataDir)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	m.shutdownCancel = bgCancel
@@ -134,6 +137,9 @@ func New(
 
 	// Recovery: reset workers with stale tmux sessions to idle
 	m.recoverStaleWorkers()
+
+	// Startup health check: fix orphaned tasks, check deps, clean old gates
+	m.lastHealthReport = m.RunHealthCheck()
 
 	// Periodically persist personality data
 	go func() {
@@ -636,6 +642,25 @@ func (m *Manager) UpdateWorkerFields(workerID, parentID, modelVersion, backendID
 	// Re-validate hierarchy after changes
 	if err := m.validateHierarchy(w); err != nil {
 		return err
+	}
+
+	return m.saveWorkers()
+}
+
+// UpdateWorkerAppearance updates the pixel office appearance for a worker.
+func (m *Manager) UpdateWorkerAppearance(workerID string, bodyRow int, outfit, hair string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	w, ok := m.workers[workerID]
+	if !ok {
+		return fmt.Errorf("worker %q not found", workerID)
+	}
+
+	w.Appearance = &worker.WorkerAppearance{
+		BodyRow: bodyRow,
+		Outfit:  outfit,
+		Hair:    hair,
 	}
 
 	return m.saveWorkers()
@@ -1449,7 +1474,7 @@ func (m *Manager) LoadHumanGateConfig(cfg config.HumanGateConfig) {
 		TokenBudgetThreshold:  cfg.TokenBudgetThreshold,
 		RequireDeployApproval: cfg.RequireDeployApproval,
 		ConfidenceFloor:       cfg.ConfidenceFloor,
-	})
+	}, m.dataDir)
 }
 
 // SetLanguage sets the prompt language for the company system.
@@ -1557,6 +1582,18 @@ func (m *Manager) GetHumanGate() *HumanGate {
 // GetCommunicationMatrix returns the communication matrix.
 func (m *Manager) GetCommunicationMatrix() *CommunicationMatrix {
 	return m.commMatrix
+}
+
+// GetLastHealthReport returns the health report from the last startup check.
+func (m *Manager) GetLastHealthReport() *HealthReport {
+	return m.lastHealthReport
+}
+
+// NeedsOnboarding returns true if no workers have been created yet.
+func (m *Manager) NeedsOnboarding() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.workers) == 0
 }
 
 // SetChatProvider replaces the current chat provider (used for runtime backend switching).

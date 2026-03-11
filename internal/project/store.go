@@ -299,6 +299,19 @@ func (s *Store) ForceUpdateTaskStatus(taskID string, status TaskStatus) error {
 	return s.saveTasks()
 }
 
+// UpdateTaskAssignee changes the assignee of a task.
+func (s *Store) UpdateTaskAssignee(taskID, assigneeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return fmt.Errorf("task %q not found", taskID)
+	}
+	t.AssigneeID = assigneeID
+	return s.saveTasks()
+}
+
 // depsResolved checks if all dependencies of a task are done. Must be called with lock held.
 func (s *Store) depsResolved(t *Task) bool {
 	for _, depID := range t.DependsOn {

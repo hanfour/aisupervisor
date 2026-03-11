@@ -11,7 +11,7 @@ func TestCheckDeployGate_Enabled(t *testing.T) {
 	hg := NewHumanGate(mgr, HumanGateConfig{
 		Enabled:               true,
 		RequireDeployApproval: true,
-	})
+	}, "")
 
 	req := hg.CheckDeployGate("t1", "w1")
 	if req == nil {
@@ -33,7 +33,7 @@ func TestCheckDeployGate_Disabled(t *testing.T) {
 	hg := NewHumanGate(mgr, HumanGateConfig{
 		Enabled:               false,
 		RequireDeployApproval: true,
-	})
+	}, "")
 
 	req := hg.CheckDeployGate("t1", "w1")
 	if req != nil {
@@ -46,7 +46,7 @@ func TestCheckBudgetGate(t *testing.T) {
 	hg := NewHumanGate(mgr, HumanGateConfig{
 		Enabled:              true,
 		TokenBudgetThreshold: 1000,
-	})
+	}, "")
 
 	// Under threshold
 	req := hg.CheckBudgetGate("t1", 500)
@@ -66,7 +66,7 @@ func TestCheckBudgetGate(t *testing.T) {
 
 func TestRespondToRequest(t *testing.T) {
 	mgr := &Manager{}
-	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true, RequireDeployApproval: true})
+	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true, RequireDeployApproval: true}, "")
 
 	req := hg.CheckDeployGate("t1", "w1")
 	if req == nil {
@@ -85,7 +85,7 @@ func TestRespondToRequest(t *testing.T) {
 
 func TestRespondToRequest_InvalidStatus(t *testing.T) {
 	mgr := &Manager{}
-	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true, RequireDeployApproval: true})
+	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true, RequireDeployApproval: true}, "")
 
 	req := hg.CheckDeployGate("t1", "w1")
 	err := hg.RespondToRequest(req.ID, "invalid")
@@ -96,7 +96,7 @@ func TestRespondToRequest_InvalidStatus(t *testing.T) {
 
 func TestRespondToRequest_NotFound(t *testing.T) {
 	mgr := &Manager{}
-	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true})
+	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true}, "")
 
 	err := hg.RespondToRequest("nonexistent", "approved")
 	if err == nil {
@@ -106,7 +106,7 @@ func TestRespondToRequest_NotFound(t *testing.T) {
 
 func TestPendingRequests(t *testing.T) {
 	mgr := &Manager{}
-	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true, RequireDeployApproval: true})
+	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true, RequireDeployApproval: true}, "")
 
 	hg.CheckDeployGate("t1", "w1")
 	hg.CheckDeployGate("t2", "w2")
@@ -126,7 +126,7 @@ func TestPendingRequests(t *testing.T) {
 
 func TestCheckEscalationGate(t *testing.T) {
 	mgr := &Manager{}
-	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true})
+	hg := NewHumanGate(mgr, HumanGateConfig{Enabled: true}, "")
 
 	req := hg.CheckEscalationGate("t1", "w1", "too many bounces")
 	if req == nil {

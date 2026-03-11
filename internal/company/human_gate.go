@@ -2,8 +2,13 @@ package company
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // HumanGateConfig controls when human intervention is required.
@@ -26,32 +31,107 @@ func DefaultHumanGateConfig() HumanGateConfig {
 
 // HumanGateRequest represents a pending request for human intervention.
 type HumanGateRequest struct {
-	ID        string    `json:"id"`
-	Reason    string    `json:"reason"`
-	TaskID    string    `json:"taskId,omitempty"`
-	WorkerID  string    `json:"workerId,omitempty"`
-	Message   string    `json:"message"`
-	Blocking  bool      `json:"blocking"` // true = task pauses until response
-	Status    string    `json:"status"`   // pending, approved, denied
-	CreatedAt time.Time `json:"createdAt"`
+	ID        string    `json:"id" yaml:"id"`
+	Reason    string    `json:"reason" yaml:"reason"`
+	TaskID    string    `json:"taskId,omitempty" yaml:"task_id,omitempty"`
+	WorkerID  string    `json:"workerId,omitempty" yaml:"worker_id,omitempty"`
+	Message   string    `json:"message" yaml:"message"`
+	Blocking  bool      `json:"blocking" yaml:"blocking"`
+	Status    string    `json:"status" yaml:"status"`
+	CreatedAt time.Time `json:"createdAt" yaml:"created_at"`
+}
+
+// gatesFile is the on-disk format for gate request persistence.
+type gatesFile struct {
+	Requests []*HumanGateRequest `yaml:"requests"`
 }
 
 // HumanGate manages human intervention checkpoints.
 type HumanGate struct {
-	mu       sync.Mutex
-	mgr      *Manager
-	cfg      HumanGateConfig
-	requests map[string]*HumanGateRequest
-	idSeq    int
+	mu        sync.Mutex
+	mgr       *Manager
+	cfg       HumanGateConfig
+	requests  map[string]*HumanGateRequest
+	idSeq     int
+	gatesPath string
 }
 
-// NewHumanGate creates a new HumanGate.
-func NewHumanGate(mgr *Manager, cfg HumanGateConfig) *HumanGate {
-	return &HumanGate{
+// NewHumanGate creates a new HumanGate. If dataDir is non-empty, gate requests
+// are persisted to gates.yaml in that directory.
+func NewHumanGate(mgr *Manager, cfg HumanGateConfig, dataDir string) *HumanGate {
+	hg := &HumanGate{
 		mgr:      mgr,
 		cfg:      cfg,
 		requests: make(map[string]*HumanGateRequest),
 	}
+	if dataDir != "" {
+		hg.gatesPath = filepath.Join(dataDir, "gates.yaml")
+		hg.loadGates()
+	}
+	return hg
+}
+
+// loadGates reads persisted gate requests from disk.
+func (hg *HumanGate) loadGates() {
+	if hg.gatesPath == "" {
+		return
+	}
+	data, err := os.ReadFile(hg.gatesPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("GATE: failed to load gates: %v", err)
+		}
+		return
+	}
+	var gf gatesFile
+	if err := yaml.Unmarshal(data, &gf); err != nil {
+		log.Printf("GATE: failed to parse gates: %v", err)
+		return
+	}
+	for _, r := range gf.Requests {
+		hg.requests[r.ID] = r
+		// Track highest idSeq to avoid ID collisions
+		hg.idSeq++
+	}
+}
+
+// saveGates persists gate requests to disk.
+func (hg *HumanGate) saveGates() {
+	if hg.gatesPath == "" {
+		return
+	}
+	var reqs []*HumanGateRequest
+	for _, r := range hg.requests {
+		reqs = append(reqs, r)
+	}
+	gf := gatesFile{Requests: reqs}
+	data, err := yaml.Marshal(&gf)
+	if err != nil {
+		log.Printf("GATE: failed to marshal gates: %v", err)
+		return
+	}
+	if err := os.WriteFile(hg.gatesPath, data, 0o644); err != nil {
+		log.Printf("GATE: failed to save gates: %v", err)
+	}
+}
+
+// CleanOldRequests removes resolved gate requests older than maxAge.
+func (hg *HumanGate) CleanOldRequests(maxAge time.Duration) int {
+	hg.mu.Lock()
+	defer hg.mu.Unlock()
+
+	cleaned := 0
+	cutoff := time.Now().Add(-maxAge)
+	for id, r := range hg.requests {
+		if r.Status != "pending" && r.CreatedAt.Before(cutoff) {
+			delete(hg.requests, id)
+			cleaned++
+		}
+	}
+	if cleaned > 0 {
+		hg.saveGates()
+	}
+	return cleaned
 }
 
 // CheckDeployGate returns true if deployment requires human approval and creates a request.
@@ -130,6 +210,7 @@ func (hg *HumanGate) RespondToRequest(requestID, status string) error {
 	}
 
 	req.Status = status
+	hg.saveGates()
 
 	// When PRD is approved, trigger phase advancement
 	if req.Reason == "prd_approval" && status == "approved" {
@@ -182,6 +263,7 @@ func (hg *HumanGate) createRequest(req HumanGateRequest) *HumanGateRequest {
 	req.CreatedAt = time.Now()
 
 	hg.requests[req.ID] = &req
+	hg.saveGates()
 
 	hg.mgr.emit(Event{
 		Type:     EventHumanInterventionRequired,

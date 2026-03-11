@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import SplashScreen from './lib/components/SplashScreen.svelte'
   import Sidebar from './lib/components/Sidebar.svelte'
   import Toast from './lib/components/Toast.svelte'
   import DashboardPage from './lib/pages/DashboardPage.svelte'
@@ -19,6 +20,9 @@
   let selectedSessionId = ''
   let selectedProjectId = ''
   let darkMode = true
+  let showSplash = true
+  let showSetup = false
+  let SetupWizard = null
 
   // Hash-based routing: read initial page from URL hash
   function readHash() {
@@ -49,6 +53,19 @@
     }
 
     initLanguage()
+
+    // Check if first-time setup is needed
+    try {
+      const needsOnboarding = await window.go.gui.CompanyApp.NeedsOnboarding()
+      const missingDeps = await window.go.gui.CompanyApp.CheckDependencies()
+      if (needsOnboarding || missingDeps.length > 0) {
+        const mod = await import('./lib/pages/SetupWizard.svelte')
+        SetupWizard = mod.default
+        showSetup = true
+        return
+      }
+    } catch {}
+
     initEventStore()
     initDiscussionStore()
     initCompanyStore()
@@ -123,8 +140,23 @@
     const page = readHash()
     if (page !== currentPage) currentPage = page
   }
+
+  function handleSetupComplete() {
+    showSetup = false
+    initEventStore()
+    initDiscussionStore()
+    initCompanyStore()
+    loadSessions().catch(() => {})
+    loadRoles().catch(() => {})
+    currentPage = 'dashboard'
+  }
 </script>
 
+{#if showSplash}
+  <SplashScreen onComplete={() => showSplash = false} />
+{:else if showSetup && SetupWizard}
+  <svelte:component this={SetupWizard} onComplete={handleSetupComplete} />
+{:else}
 <Toast />
 <WorkerChatDrawer />
 <div class="app-layout">
@@ -166,6 +198,7 @@
     {/if}
   </main>
 </div>
+{/if}
 
 <style>
   .app-layout {

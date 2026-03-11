@@ -2,7 +2,8 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import { workers as workersStore, loadWorkers } from '../stores/workers.js'
   import { events } from '../stores/events.js'
-  import { assignDesksToWorkers } from '../office/layout.js'
+  import { assignDesksToWorkers, clearDeskAssignments, OFFICE_LAYOUTS, getCurrentLayoutId, setCurrentLayoutId } from '../office/layout.js'
+  import { rebuildGrid } from '../office/pathfinding.js'
   import { OfficeRenderer } from '../office/officeRenderer.js'
   import { SimulationEngine } from '../office/simulation.js'
   import { loadAllSprites } from '../office/sprites.js'
@@ -20,6 +21,7 @@
   let clockSpeed = 1
   let pollTimer
   let prevStatuses = {}
+  let layoutId = getCurrentLayoutId()
 
   // Workers not assigned to any desk (overflow)
   let overflowWorkers = []
@@ -158,6 +160,19 @@
     if (simulation) simulation.setGameClockSpeed(clockSpeed)
   }
 
+  function switchLayout(e) {
+    const newLayoutId = e.target.value
+    if (newLayoutId === layoutId) return
+    layoutId = newLayoutId
+    setCurrentLayoutId(layoutId)
+    clearDeskAssignments()
+    rebuildGrid()
+    if (renderer) {
+      renderer.switchLayout(layoutId)
+      updateRenderer()
+    }
+  }
+
   const PHASE_LABELS = {
     morning_arrival: '上班',
     work_morning: '上午',
@@ -192,6 +207,11 @@
             />
           </div>
         </div>
+        <select class="layout-select" bind:value={layoutId} on:change={switchLayout}>
+          {#each Object.entries(OFFICE_LAYOUTS) as [id, layout]}
+            <option value={id}>{$t(layout.nameKey)}</option>
+          {/each}
+        </select>
         <span class="worker-count">{allWorkers.length} {$t('office.workers')}</span>
         <button class="nes-btn sound-btn" class:is-primary={soundOn} on:click={toggleSound}>
           {soundOn ? '&#9835; ON' : '&#9835; OFF'}
@@ -277,6 +297,21 @@
     display: flex;
     align-items: center;
     gap: 12px;
+  }
+
+  .layout-select {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 7px;
+    background: #21262d;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    padding: 3px 6px;
+    cursor: pointer;
+  }
+
+  .layout-select:focus {
+    border-color: var(--accent-green, #00ff41);
+    outline: none;
   }
 
   .worker-count {

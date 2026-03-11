@@ -184,37 +184,45 @@ function compositeFrame(bodyImg, bodyRow, outfitImg, hairImg, col) {
   return c
 }
 
-export function prerenderCharacter(charType) {
-  if (!imagesLoaded) return null
-  const config = WORKER_CONFIGS[charType] || CHARACTER_CONFIGS[charType]
-  if (!config) return null
-
+// Render character frames from an appearance config {bodyRow, outfit, hair}
+function _renderFromAppearance(appearance) {
   const bodyImg = imageCache.body
-  const outfitImg = imageCache[config.outfit]
-  const hairImg = imageCache[config.hair]
+  const outfitImg = imageCache[appearance.outfit]
+  const hairImg = imageCache[appearance.hair]
   if (!bodyImg) return null
 
   const cache = {}
 
-  // For each animation state, prerender the frames (all use down-facing direction)
   for (const [state, frameIndices] of Object.entries(ANIM_FRAME_MAP)) {
     cache[state] = frameIndices.map(fi => {
       const col = DIR.down * FRAMES_PER_DIR + fi
-      return compositeFrame(bodyImg, config.bodyRow, outfitImg, hairImg, col)
+      return compositeFrame(bodyImg, appearance.bodyRow, outfitImg, hairImg, col)
     })
   }
 
-  // Four-direction walk frames (3 frames per direction, matching animation.js walkDown/Up/Left/Right)
   const WALK_FRAMES = [0, 1, 2]
   for (const [dirName, dirIdx] of Object.entries(DIR)) {
     const animName = 'walk' + dirName[0].toUpperCase() + dirName.slice(1)
     cache[animName] = WALK_FRAMES.map(fi => {
       const col = dirIdx * FRAMES_PER_DIR + fi
-      return compositeFrame(bodyImg, config.bodyRow, outfitImg, hairImg, col)
+      return compositeFrame(bodyImg, appearance.bodyRow, outfitImg, hairImg, col)
     })
   }
 
   return cache
+}
+
+export function prerenderCharacter(charType) {
+  if (!imagesLoaded) return null
+  const config = WORKER_CONFIGS[charType] || CHARACTER_CONFIGS[charType]
+  if (!config) return null
+  return _renderFromAppearance(config)
+}
+
+// Prerender from a worker's custom appearance (backend WorkerAppearance)
+export function prerenderCharacterFromAppearance(appearance) {
+  if (!imagesLoaded || !appearance) return null
+  return _renderFromAppearance(appearance)
 }
 
 // ── Character type resolution ────────────────────────────────────────────────
@@ -230,6 +238,9 @@ const AVATAR_TO_CHAR = {
 }
 
 export function getCharacterType(worker) {
+  // Custom appearance from backend takes highest priority
+  if (worker.appearance) return `custom_${worker.id}`
+
   // Per-worker unique appearance takes priority
   if (worker.name && WORKER_CONFIGS[worker.name]) return worker.name
 

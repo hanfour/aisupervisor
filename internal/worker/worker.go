@@ -39,6 +39,13 @@ const (
 	RoleDesigner  WorkerRole = "designer"    // UI/UX related tasks
 )
 
+// WorkerAppearance stores pixel office visual customization.
+type WorkerAppearance struct {
+	BodyRow int    `yaml:"body_row" json:"bodyRow"`   // 0-5 skin tone
+	Outfit  string `yaml:"outfit" json:"outfit"`       // "outfit1".."outfit6"
+	Hair    string `yaml:"hair" json:"hair"`           // "hair1".."hair7"
+}
+
 type Worker struct {
 	ID            string       `yaml:"id" json:"id"`
 	Name          string       `yaml:"name" json:"name"`
@@ -56,8 +63,9 @@ type Worker struct {
 	CLITool       string       `yaml:"cli_tool,omitempty" json:"cliTool,omitempty"`
 	SkillProfile  string       `yaml:"skill_profile,omitempty" json:"skillProfile,omitempty"`
 	Role          WorkerRole   `yaml:"role,omitempty" json:"role,omitempty"`
-	Gender        WorkerGender `yaml:"gender,omitempty" json:"gender,omitempty"`
-	CreatedAt     time.Time    `yaml:"created_at" json:"createdAt"`
+	Gender        WorkerGender    `yaml:"gender,omitempty" json:"gender,omitempty"`
+	Appearance    *WorkerAppearance `yaml:"appearance,omitempty" json:"appearance,omitempty"`
+	CreatedAt     time.Time       `yaml:"created_at" json:"createdAt"`
 }
 
 // EffectiveTier returns the worker's tier, defaulting to TierEngineer if unset.

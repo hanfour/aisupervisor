@@ -1,17 +1,22 @@
 // A* pathfinding engine for the Pixel Office tile grid
-import { getFloorMap, COLS, ROWS } from './layout.js'
+import { getFloorMap, getLayoutDimensions, getCurrentLayoutId } from './layout.js'
 
 const WALKABLE_TILES = new Set([0, 7, 9, 10, 11, 15]) // floor, door, rugPattern, meetingRoomFloor, whiteboard, coffeeFloor
 
-let grid = null // cached walkability grid (ROWS × COLS booleans)
+let grid = null // cached walkability grid (gridRows × gridCols booleans)
+let gridCols = 0
+let gridRows = 0
 
 function ensureGrid() {
   if (grid) return grid
+  const dims = getLayoutDimensions()
+  gridCols = dims.cols
+  gridRows = dims.rows
   const map = getFloorMap()
-  grid = new Array(ROWS)
-  for (let r = 0; r < ROWS; r++) {
-    grid[r] = new Array(COLS)
-    for (let c = 0; c < COLS; c++) {
+  grid = new Array(gridRows)
+  for (let r = 0; r < gridRows; r++) {
+    grid[r] = new Array(gridCols)
+    for (let c = 0; c < gridCols; c++) {
       grid[r][c] = WALKABLE_TILES.has(map[r][c])
     }
   }
@@ -24,7 +29,7 @@ export function rebuildGrid() {
 
 export function isWalkable(col, row) {
   ensureGrid()
-  if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return false
+  if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return false
   return grid[row][col]
 }
 
@@ -41,7 +46,7 @@ export function getAdjacentWalkable(col, row) {
   for (const { dc, dr } of DIRS) {
     const nc = col + dc
     const nr = row + dr
-    if (nc >= 0 && nc < COLS && nr >= 0 && nr < ROWS && grid[nr][nc]) {
+    if (nc >= 0 && nc < gridCols && nr >= 0 && nr < gridRows && grid[nr][nc]) {
       neighbors.push({ col: nc, row: nr })
     }
   }
@@ -50,12 +55,12 @@ export function getAdjacentWalkable(col, row) {
 
 export function findNearestWalkable(col, row) {
   ensureGrid()
-  if (col >= 0 && col < COLS && row >= 0 && row < ROWS && grid[row][col]) {
+  if (col >= 0 && col < gridCols && row >= 0 && row < gridRows && grid[row][col]) {
     return { col, row }
   }
   // BFS outward
   const visited = new Set()
-  const key = (c, r) => r * COLS + c
+  const key = (c, r) => r * gridCols + c
   const queue = [{ col, row }]
   visited.add(key(col, row))
 
@@ -64,7 +69,7 @@ export function findNearestWalkable(col, row) {
     for (const { dc, dr } of DIRS) {
       const nc = cur.col + dc
       const nr = cur.row + dr
-      if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue
+      if (nc < 0 || nc >= gridCols || nr < 0 || nr >= gridRows) continue
       const k = key(nc, nr)
       if (visited.has(k)) continue
       visited.add(k)
@@ -82,7 +87,7 @@ export function findPath(startCol, startRow, endCol, endRow) {
   if (!isWalkable(startCol, startRow) || !isWalkable(endCol, endRow)) return []
   if (startCol === endCol && startRow === endRow) return [{ col: startCol, row: startRow }]
 
-  const key = (c, r) => r * COLS + c
+  const key = (c, r) => r * gridCols + c
   const startKey = key(startCol, startRow)
   const endKey = key(endCol, endRow)
 
@@ -115,8 +120,8 @@ export function findPath(startCol, startRow, endCol, endRow) {
       const path = []
       let k = endKey
       while (k !== undefined) {
-        const r = (k / COLS) | 0
-        const c = k % COLS
+        const r = (k / gridCols) | 0
+        const c = k % gridCols
         path.push({ col: c, row: r })
         k = cameFrom.get(k)
       }
@@ -129,7 +134,7 @@ export function findPath(startCol, startRow, endCol, endRow) {
     for (const { dc, dr } of DIRS) {
       const nc = cur.col + dc
       const nr = cur.row + dr
-      if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue
+      if (nc < 0 || nc >= gridCols || nr < 0 || nr >= gridRows) continue
       if (!grid[nr][nc]) continue
       const nk = key(nc, nr)
       if (closed.has(nk)) continue

@@ -3,10 +3,11 @@
   import { getWorker, getManager, getSubordinates } from '../stores/workers.js'
   import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import { events } from '../stores/events.js'
-  import { prerenderCharacter, getCharacterType, loadAllSprites, spritesReady } from '../office/sprites.js'
+  import { prerenderCharacter, prerenderCharacterFromAppearance, getCharacterType, loadAllSprites, spritesReady } from '../office/sprites.js'
   import { openChat } from '../stores/workerChat.js'
   import { t } from '../stores/i18n.js'
   import { calcAge, genderIcon } from '../utils/worker.js'
+  import AppearanceEditor from './AppearanceEditor.svelte'
 
   export let workerId
   export let onBack = () => {}
@@ -21,6 +22,7 @@
   let portraitCanvas
   let animFrame = 0
   let animTimer
+  let showAppearanceEditor = false
 
   $: workerEvents = ($events || []).filter(e =>
     e.workerID === workerId || e.workerId === workerId
@@ -91,8 +93,9 @@
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, 128, 128)
 
-    const charType = getCharacterType(worker, 0)
-    const cache = prerenderCharacter(charType)
+    const cache = worker.appearance
+      ? prerenderCharacterFromAppearance(worker.appearance)
+      : prerenderCharacter(getCharacterType(worker, 0))
     if (!cache || !cache.idle) return
 
     const frame = cache.idle[animFrame % cache.idle.length]
@@ -171,6 +174,24 @@
         <button class="nes-btn is-primary chat-profile-btn" on:click={() => openChat(worker.id, worker.name, worker.avatar)}>
           Chat with {worker.name}
         </button>
+        <button class="nes-btn appearance-btn" on:click={() => showAppearanceEditor = !showAppearanceEditor}>
+          {$t('appearance.title')}
+        </button>
+
+        {#if showAppearanceEditor}
+          <div class="appearance-editor-wrapper">
+            <AppearanceEditor
+              workerId={worker.id}
+              currentAppearance={worker.appearance}
+              onSave={(app) => {
+                worker.appearance = app
+                showAppearanceEditor = false
+                drawPortrait()
+              }}
+              onCancel={() => showAppearanceEditor = false}
+            />
+          </div>
+        {/if}
       </div>
 
       <!-- Equipment Section -->
@@ -535,6 +556,16 @@
   .chat-profile-btn {
     font-size: 8px !important;
     padding: 4px 10px !important;
+    margin-top: 8px;
+  }
+
+  .appearance-btn {
+    font-size: 8px !important;
+    padding: 4px 10px !important;
+    margin-top: 4px;
+  }
+
+  .appearance-editor-wrapper {
     margin-top: 8px;
   }
 

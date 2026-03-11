@@ -1,13 +1,13 @@
 // Canvas 2D rendering engine for Pixel Office — Warm Bright Edition
 
-import { TILE_SIZE, SCALE, COLS, ROWS, CANVAS_W, CANVAS_H, getFloorMap, getDesks, buildWorkerDeskMap } from './layout.js'
-import { prerenderCharacter, prerenderFurniture, prerenderEnvSprite, getCharacterType, SKILL_PROFILE_COLORS } from './sprites.js'
+import { TILE_SIZE, SCALE, getFloorMap, getDesks, buildWorkerDeskMap, getLayoutDimensions, getCurrentLayoutId } from './layout.js'
+import { prerenderCharacter, prerenderCharacterFromAppearance, prerenderFurniture, prerenderEnvSprite, getCharacterType, SKILL_PROFILE_COLORS } from './sprites.js'
 import { AnimationState, statusToAnim, ENV_ANIM } from './animation.js'
 import { startAmbient, stopAmbient, playKeyClatter } from './sounds.js'
 import { MovementController } from './movement.js'
 import { BubbleManager } from './bubbles.js'
 
-const TILE_PX = TILE_SIZE * SCALE  // 48
+let TILE_PX = TILE_SIZE * SCALE  // 48
 
 // ── Warm bright floor/wall palette ───────────────────────────────────────────
 const FLOOR_COLORS = {
@@ -76,15 +76,20 @@ export class OfficeRenderer {
   constructor(canvas) {
     this.canvas = canvas
     this.ctx = canvas.getContext('2d')
-    canvas.width = CANVAS_W
-    canvas.height = CANVAS_H
+
+    const dims = getLayoutDimensions()
+    this.layoutId = getCurrentLayoutId()
+    this.COLS = dims.cols
+    this.ROWS = dims.rows
+    canvas.width = dims.canvasW
+    canvas.height = dims.canvasH
     this.floorMap = getFloorMap()
     this.desks = getDesks()
 
     // Static background layer (drawn once)
     this.bgCanvas = document.createElement('canvas')
-    this.bgCanvas.width = CANVAS_W
-    this.bgCanvas.height = CANVAS_H
+    this.bgCanvas.width = dims.canvasW
+    this.bgCanvas.height = dims.canvasH
 
     // Prerender furniture
     this.furnitureCache = {}
@@ -127,8 +132,8 @@ export class OfficeRenderer {
   _drawBackground() {
     const ctx = this.bgCanvas.getContext('2d')
 
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
+    for (let row = 0; row < this.ROWS; row++) {
+      for (let col = 0; col < this.COLS; col++) {
         const tile = this.floorMap[row][col]
         ctx.fillStyle = FLOOR_COLORS[tile] || FLOOR_COLORS[0]
         ctx.fillRect(col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX)
@@ -174,15 +179,26 @@ export class OfficeRenderer {
       }
     }
 
-    // Zone labels
+    // Zone labels (layout-specific)
     ctx.font = '10px "Press Start 2P", monospace'
     ctx.fillStyle = 'rgba(140,110,70,0.15)'
-    ctx.fillText('OPEN OFFICE', 2 * TILE_PX, 5.5 * TILE_PX)
-    ctx.fillText('MGR', 1 * TILE_PX, 11.5 * TILE_PX)
-    ctx.fillText('MEETING', 11 * TILE_PX, 10.5 * TILE_PX)
-    ctx.fillText('COFFEE', 19 * TILE_PX, 10.5 * TILE_PX)
-    ctx.fillText('REST', 19 * TILE_PX, 12 * TILE_PX)
-    ctx.fillText('REC', 12 * TILE_PX, 14 * TILE_PX)
+    const ZONE_LABELS = {
+      standard: [
+        ['OPEN OFFICE', 2, 5.5], ['MGR', 1, 11.5], ['MEETING', 11, 10.5],
+        ['COFFEE', 19, 10.5], ['REST', 19, 12], ['REC', 12, 14],
+      ],
+      startup: [
+        ['OPEN OFFICE', 2, 3.5], ['MGR', 1, 9.5], ['COFFEE', 12, 9.5],
+      ],
+      enterprise: [
+        ['OPEN OFFICE', 2, 8.5], ['MGR', 1, 14.5], ['MEETING', 13, 13.5],
+        ['COFFEE', 22, 12.5], ['REST', 22, 14.5], ['REC', 6, 16.5],
+      ],
+    }
+    const labels = ZONE_LABELS[this.layoutId] || ZONE_LABELS.standard
+    for (const [text, col, row] of labels) {
+      ctx.fillText(text, col * TILE_PX, row * TILE_PX)
+    }
   }
 
   // ── Profile data (mood indicators) ───────────────────────────────────────
@@ -224,7 +240,10 @@ export class OfficeRenderer {
       const charType = getCharacterType(w)
       // Retry prerender if previous attempt returned null (sprites weren't ready)
       if (!this.charCache[charType]) {
-        const result = prerenderCharacter(charType)
+        // Custom appearance from backend
+        const result = w.appearance
+          ? prerenderCharacterFromAppearance(w.appearance)
+          : prerenderCharacter(charType)
         if (result) this.charCache[charType] = result
       }
     }
@@ -305,7 +324,7 @@ export class OfficeRenderer {
 
     // Spawn warm dust motes
     if (this.particles.length < ENV_ANIM.dustMoteMaxCount && Math.random() < ENV_ANIM.dustMoteSpawnRate) {
-      this.particles.push(new DustMote(CANVAS_W, CANVAS_H))
+      this.particles.push(new DustMote(this.canvas.width, this.canvas.height))
     }
 
     // Update particles
@@ -497,6 +516,31 @@ export class OfficeRenderer {
       }
     }
     return null
+  }
+
+  // Switch to a different office layout
+  switchLayout(layoutId) {
+    const dims = getLayoutDimensions(layoutId)
+    this.layoutId = layoutId
+    this.COLS = dims.cols
+    this.ROWS = dims.rows
+    this.canvas.width = dims.canvasW
+    this.canvas.height = dims.canvasH
+    this.floorMap = getFloorMap(layoutId)
+    this.desks = getDesks(layoutId)
+
+    this.bgCanvas.width = dims.canvasW
+    this.bgCanvas.height = dims.canvasH
+    this._drawBackground()
+
+    // Reset movement positions (workers will be re-registered in setWorkers)
+    this.movement = new MovementController()
+    this.animStates = {}
+  }
+
+  // Invalidate character cache for a worker (call after appearance change)
+  invalidateCharCache(workerId) {
+    delete this.charCache[`custom_${workerId}`]
   }
 
   setHoveredWorker(workerId) {

@@ -147,22 +147,23 @@ func TaskToDTO(t *project.Task) TaskDTO {
 }
 
 type WorkerDTO struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Avatar        string `json:"avatar"`
-	Status        string `json:"status"`
-	Tier          string `json:"tier"`
-	Role          string `json:"role,omitempty"`
-	BackendID     string `json:"backendId,omitempty"`
-	ParentID      string `json:"parentId,omitempty"`
-	ModelVersion  string `json:"modelVersion,omitempty"`
-	CLITool       string `json:"cliTool,omitempty"`
-	SkillProfile  string `json:"skillProfile,omitempty"`
-	Gender        string `json:"gender,omitempty"`
-	CurrentTaskID string `json:"currentTaskId"`
-	TmuxSession   string `json:"tmuxSession"`
-	SessionID     string `json:"sessionId"`
-	CreatedAt     string `json:"createdAt"`
+	ID            string                  `json:"id"`
+	Name          string                  `json:"name"`
+	Avatar        string                  `json:"avatar"`
+	Status        string                  `json:"status"`
+	Tier          string                  `json:"tier"`
+	Role          string                  `json:"role,omitempty"`
+	BackendID     string                  `json:"backendId,omitempty"`
+	ParentID      string                  `json:"parentId,omitempty"`
+	ModelVersion  string                  `json:"modelVersion,omitempty"`
+	CLITool       string                  `json:"cliTool,omitempty"`
+	SkillProfile  string                  `json:"skillProfile,omitempty"`
+	Gender        string                  `json:"gender,omitempty"`
+	Appearance    *worker.WorkerAppearance `json:"appearance,omitempty"`
+	CurrentTaskID string                  `json:"currentTaskId"`
+	TmuxSession   string                  `json:"tmuxSession"`
+	SessionID     string                  `json:"sessionId"`
+	CreatedAt     string                  `json:"createdAt"`
 }
 
 type SkillProfileDTO struct {
@@ -186,6 +187,7 @@ func WorkerToDTO(w *worker.Worker) WorkerDTO {
 		CLITool:       w.CLITool,
 		SkillProfile:  w.SkillProfile,
 		Gender:        string(w.Gender),
+		Appearance:    w.Appearance,
 		CurrentTaskID: w.CurrentTaskID,
 		TmuxSession:   w.TmuxSession,
 		SessionID:     w.SessionID,

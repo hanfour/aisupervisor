@@ -1,0 +1,253 @@
+/* AI Supervisor — Landing Page (Pixel Art Style) */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-card: #1c2128;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --accent-green: #92cc41;
+  --accent-blue: #209cee;
+  --accent-orange: #f7d51d;
+  --accent-red: #e76e55;
+  --border-color: #30363d;
+  --pixel-font: 'Press Start 2P', monospace;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.6;
+}
+
+/* --- Hero --- */
+
+.hero {
+  min-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 4rem 2rem;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(146, 204, 65, 0.08) 0%, transparent 60%),
+    var(--bg-primary);
+}
+
+.hero-title {
+  font-family: var(--pixel-font);
+  font-size: 2.5rem;
+  color: var(--accent-green);
+  margin-bottom: 1rem;
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+  image-rendering: pixelated;
+}
+
+.hero-subtitle {
+  font-size: 1.2rem;
+  color: var(--text-secondary);
+  max-width: 600px;
+  margin-bottom: 2rem;
+}
+
+.hero-tagline {
+  font-family: var(--pixel-font);
+  font-size: 0.75rem;
+  color: var(--accent-orange);
+  margin-bottom: 3rem;
+  letter-spacing: 2px;
+}
+
+.download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 32px;
+  background: var(--accent-green);
+  color: var(--bg-primary);
+  font-family: var(--pixel-font);
+  font-size: 0.9rem;
+  text-decoration: none;
+  border: 4px solid #6b9e31;
+  box-shadow:
+    4px 4px 0 #6b9e31,
+    inset -2px -2px 0 rgba(0, 0, 0, 0.2);
+  transition: transform 0.1s, box-shadow 0.1s;
+  cursor: pointer;
+}
+
+.download-btn:hover {
+  transform: translate(2px, 2px);
+  box-shadow:
+    2px 2px 0 #6b9e31,
+    inset -2px -2px 0 rgba(0, 0, 0, 0.2);
+}
+
+.download-btn .icon {
+  font-size: 1.2rem;
+}
+
+.version-tag {
+  display: inline-block;
+  margin-top: 1rem;
+  font-family: var(--pixel-font);
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  border: 2px solid var(--border-color);
+  padding: 4px 12px;
+}
+
+/* --- Features --- */
+
+.features {
+  padding: 4rem 2rem;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.section-title {
+  font-family: var(--pixel-font);
+  font-size: 1rem;
+  color: var(--accent-green);
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2rem;
+}
+
+.feature-card {
+  background: var(--bg-card);
+  border: 3px solid var(--border-color);
+  padding: 2rem;
+  position: relative;
+}
+
+.feature-card::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  height: 4px;
+  background: var(--accent-green);
+}
+
+.feature-icon {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+}
+
+.feature-title {
+  font-family: var(--pixel-font);
+  font-size: 0.7rem;
+  color: var(--text-primary);
+  margin-bottom: 0.75rem;
+}
+
+.feature-desc {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+/* --- Requirements --- */
+
+.requirements {
+  padding: 4rem 2rem;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.req-list {
+  list-style: none;
+  padding: 0;
+}
+
+.req-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.9rem;
+}
+
+.req-list li::before {
+  content: '>';
+  font-family: var(--pixel-font);
+  color: var(--accent-green);
+  font-size: 0.7rem;
+}
+
+/* --- Footer --- */
+
+.footer {
+  text-align: center;
+  padding: 3rem 2rem;
+  border-top: 2px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.footer a {
+  color: var(--accent-green);
+  text-decoration: none;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+/* --- Pixel decorations --- */
+
+.pixel-divider {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 2rem 0;
+}
+
+.pixel-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--border-color);
+}
+
+.pixel-dot:nth-child(odd) {
+  background: var(--accent-green);
+}
+
+/* --- Responsive --- */
+
+@media (max-width: 640px) {
+  .hero-title {
+    font-size: 1.5rem;
+  }
+
+  .hero-subtitle {
+    font-size: 1rem;
+  }
+
+  .download-btn {
+    font-size: 0.7rem;
+    padding: 12px 24px;
+  }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+  }
+}

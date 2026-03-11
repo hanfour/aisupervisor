@@ -11,6 +11,9 @@
   let clearMessage = ''
   let healthResults = null
   let healthLoading = false
+  let appVersion = ''
+  let updateStatus = '' // '', 'checking', 'up-to-date', 'available'
+  let updateInfo = null
 
   onMount(async () => {
     if (window.go?.gui?.App) {
@@ -18,8 +21,37 @@
     }
     if (window.go?.gui?.CompanyApp) {
       language = (await window.go.gui.CompanyApp.GetLanguage()) || 'zh-TW'
+      appVersion = (await window.go.gui.CompanyApp.GetVersion()) || 'dev'
     }
   })
+
+  async function checkForUpdates() {
+    updateStatus = 'checking'
+    updateInfo = null
+    try {
+      if (window.go?.gui?.CompanyApp?.CheckForUpdates) {
+        const info = await window.go.gui.CompanyApp.CheckForUpdates()
+        if (info && info.version) {
+          updateInfo = info
+          updateStatus = 'available'
+        } else {
+          updateStatus = 'up-to-date'
+        }
+      } else {
+        updateStatus = 'up-to-date'
+      }
+    } catch (e) {
+      updateStatus = 'up-to-date'
+    }
+  }
+
+  async function downloadUpdate() {
+    if (updateInfo?.download_url) {
+      if (window.go?.gui?.CompanyApp?.DownloadUpdate) {
+        await window.go.gui.CompanyApp.DownloadUpdate(updateInfo.download_url)
+      }
+    }
+  }
 
   async function handleLanguageChange() {
     await setI18nLanguage(language)
@@ -69,6 +101,26 @@
 </script>
 
 <div class="settings-page">
+  <section class="nes-container with-title is-dark">
+    <p class="title">{$t('settings.version')}</p>
+    <div class="version-row">
+      <span class="version-label">AI Supervisor v{appVersion}</span>
+      <div class="version-actions">
+        {#if updateStatus === 'checking'}
+          <span class="update-status">{$t('settings.checking')}</span>
+        {:else if updateStatus === 'up-to-date'}
+          <span class="update-status ok">{$t('settings.upToDate')}</span>
+        {:else if updateStatus === 'available' && updateInfo}
+          <span class="update-status new">{$t('settings.updateAvailable')}: v{updateInfo.version}</span>
+          <button class="nes-btn is-success btn-sm" on:click={downloadUpdate}>{$t('settings.download')}</button>
+        {/if}
+        <button class="nes-btn is-primary btn-sm" on:click={checkForUpdates} disabled={updateStatus === 'checking'}>
+          {$t('settings.checkUpdates')}
+        </button>
+      </div>
+    </div>
+  </section>
+
   <section class="nes-container with-title is-dark">
     <p class="title">{$t('settings.language')}</p>
     <div class="lang-select">
@@ -317,5 +369,41 @@
   .health-ok {
     font-size: 9px;
     color: #2ecc71;
+  }
+
+  .version-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .version-label {
+    font-size: 12px;
+    font-weight: bold;
+  }
+
+  .version-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .update-status {
+    font-size: 9px;
+    color: var(--text-secondary);
+  }
+
+  .update-status.ok {
+    color: #2ecc71;
+  }
+
+  .update-status.new {
+    color: #f39c12;
+  }
+
+  .btn-sm {
+    font-size: 9px !important;
+    padding: 4px 8px !important;
   }
 </style>

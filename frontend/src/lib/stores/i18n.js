@@ -224,6 +224,19 @@ const translations = {
   'office.title': { en: 'PIXEL OFFICE', zh: 'PIXEL OFFICE' },
   'office.workers': { en: 'workers', zh: '位員工' },
   'office.overflow': { en: 'Workers without desks', zh: '沒有座位的員工' },
+  'office.layout': { en: 'Office Layout', zh: '辦公室佈局' },
+  'office.standard': { en: 'Standard Office', zh: '標準辦公室' },
+  'office.startup': { en: 'Startup Studio', zh: '新創工作室' },
+  'office.enterprise': { en: 'Enterprise Tower', zh: '企業大樓' },
+
+  // --- Appearance Editor ---
+  'appearance.title': { en: 'Appearance', zh: '外觀' },
+  'appearance.skin': { en: 'Skin Tone', zh: '膚色' },
+  'appearance.outfit': { en: 'Outfit', zh: '服裝' },
+  'appearance.hair': { en: 'Hairstyle', zh: '髮型' },
+  'appearance.preview': { en: 'Preview', zh: '預覽' },
+  'appearance.save': { en: 'Save', zh: '儲存' },
+  'appearance.reset': { en: 'Reset to Default', zh: '重設為預設' },
 
   // --- Worker Detail Drawer ---
   'workerDetail.title': { en: 'Worker Detail', zh: '員工詳情' },
@@ -400,9 +413,29 @@ const translations = {
   'settings.healthCheck': { en: 'Health Check', zh: '健康檢查' },
   'settings.runHealthCheck': { en: 'Run Health Check', zh: '執行健康檢查' },
   'settings.healthOk': { en: 'All systems healthy', zh: '所有系統正常' },
+  'settings.version': { en: 'Version', zh: '版本' },
+  'settings.checkUpdates': { en: 'Check for Updates', zh: '檢查更新' },
+  'settings.upToDate': { en: 'You are on the latest version', zh: '已是最新版本' },
+  'settings.updateAvailable': { en: 'New version available', zh: '有新版本可用' },
+  'settings.download': { en: 'Download', zh: '下載' },
+  'settings.checking': { en: 'Checking...', zh: '檢查中...' },
 
   // --- Board ---
   'board.escalation': { en: 'Escalation', zh: '升級' },
+
+  // --- Setup Wizard ---
+  'setup.welcome': { en: 'Welcome to AI Supervisor', zh: '歡迎使用 AI Supervisor' },
+  'setup.languageSelect': { en: 'Select Language', zh: '選擇語言' },
+  'setup.envCheck': { en: 'Environment Check', zh: '環境檢查' },
+  'setup.teamSetup': { en: 'Team Setup', zh: '團隊設定' },
+  'setup.complete': { en: 'Setup Complete', zh: '設定完成' },
+  'setup.starterTeam': { en: 'Starter Team', zh: '入門團隊' },
+  'setup.fullTeam': { en: 'Full Team', zh: '完整團隊' },
+  'setup.customTeam': { en: 'Custom', zh: '自訂' },
+  'setup.missingDep': { en: 'Missing dependency', zh: '缺少必要元件' },
+  'setup.installGuide': { en: 'Install Guide', zh: '安裝指引' },
+  'setup.recheck': { en: 'Recheck', zh: '重新檢查' },
+  'setup.startUsing': { en: 'Start Using', zh: '開始使用' },
 }
 
 /** @type {import('svelte/store').Readable<(key: string) => string>} */

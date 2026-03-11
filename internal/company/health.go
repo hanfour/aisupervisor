@@ -3,8 +3,13 @@ package company
 import (
 	"context"
 	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/binpath"
+	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
 )
 
@@ -12,6 +17,115 @@ import (
 type paneSnapshot struct {
 	content string
 	since   time.Time
+}
+
+// HealthReport summarises what the startup health check found and fixed.
+type HealthReport struct {
+	StaleWorkersReset  int      `json:"staleWorkersReset"`
+	OrphanedTasksFixed int      `json:"orphanedTasksFixed"`
+	MissingDeps        []string `json:"missingDeps"`
+	Warnings           []string `json:"warnings"`
+	GatesCleaned       int      `json:"gatesCleaned"`
+}
+
+// RunHealthCheck performs a one-time startup health check:
+//   - resets orphaned tasks (in_progress/assigned but worker is idle with no tmux)
+//   - checks for required external dependencies
+//   - cleans old resolved gate requests
+func (m *Manager) RunHealthCheck() *HealthReport {
+	report := &HealthReport{}
+
+	// 1. Check external dependencies
+	for _, dep := range []string{"tmux", "claude", "git"} {
+		if _, err := exec.LookPath(dep); err != nil {
+			report.MissingDeps = append(report.MissingDeps, dep)
+		}
+	}
+
+	// 2. Fix orphaned tasks: in_progress/assigned but assignee worker is idle and has no tmux session
+	m.mu.RLock()
+	workersCopy := make(map[string]*worker.Worker)
+	for id, w := range m.workers {
+		workersCopy[id] = w
+	}
+	m.mu.RUnlock()
+
+	for _, p := range m.projectStore.ListProjects() {
+		for _, t := range m.projectStore.TasksForProject(p.ID) {
+			if t.Status != project.TaskInProgress && t.Status != project.TaskAssigned {
+				continue
+			}
+			if t.AssigneeID == "" {
+				continue
+			}
+			w, ok := workersCopy[t.AssigneeID]
+			if !ok {
+				// Assignee worker doesn't exist — reset task
+				log.Printf("HEALTH: task %s assigned to nonexistent worker %s — resetting to ready", t.ID, t.AssigneeID)
+				m.projectStore.ForceUpdateTaskStatus(t.ID, project.TaskReady)
+				m.projectStore.UpdateTaskAssignee(t.ID, "")
+				report.OrphanedTasksFixed++
+				continue
+			}
+			if w.Status == worker.WorkerIdle && w.TmuxSession == "" {
+				log.Printf("HEALTH: task %s assigned to idle worker %s with no tmux — resetting to ready", t.ID, w.ID)
+				m.projectStore.ForceUpdateTaskStatus(t.ID, project.TaskReady)
+				m.projectStore.UpdateTaskAssignee(t.ID, "")
+				report.OrphanedTasksFixed++
+			}
+		}
+	}
+
+	// 3. Clean old resolved gate requests (older than 7 days)
+	if m.humanGate != nil {
+		report.GatesCleaned = m.humanGate.CleanOldRequests(7 * 24 * time.Hour)
+	}
+
+	if len(report.MissingDeps) > 0 {
+		report.Warnings = append(report.Warnings, "Missing dependencies: "+joinStrings(report.MissingDeps))
+	}
+	if report.OrphanedTasksFixed > 0 {
+		log.Printf("HEALTH: fixed %d orphaned tasks", report.OrphanedTasksFixed)
+	}
+
+	return report
+}
+
+// CheckDependencies returns a list of missing required external dependencies.
+// It checks the bundled bin directory first, then falls back to system PATH.
+func CheckDependencies() []string {
+	var missing []string
+	for _, dep := range []string{"tmux", "claude", "git"} {
+		if !findDep(dep) {
+			missing = append(missing, dep)
+		}
+	}
+	return missing
+}
+
+// findDep checks for a dependency in bundled bin first, then system PATH.
+func findDep(name string) bool {
+	// Check bundled bin directory
+	if bundled := binpath.BundledBinDir(); bundled != "" {
+		candidate := filepath.Join(bundled, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	// Fallback to system PATH
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func joinStrings(ss []string) string {
+	result := ""
+	for i, s := range ss {
+		if i > 0 {
+			result += ", "
+		}
+		result += s
+	}
+	return result
 }
 
 // StartHealthCheck runs a periodic background health check every 60 seconds.

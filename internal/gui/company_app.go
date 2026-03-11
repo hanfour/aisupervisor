@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
+	"github.com/hanfourmini/aisupervisor/internal/updater"
 	anthropicBackend "github.com/hanfourmini/aisupervisor/internal/ai/anthropic"
 	ollamaBackend "github.com/hanfourmini/aisupervisor/internal/ai/ollama"
 	openaiBackend "github.com/hanfourmini/aisupervisor/internal/ai/openai"
@@ -28,10 +30,38 @@ type CompanyApp struct {
 	trainingDir   string
 	skillProfiles []config.SkillProfile
 	spawner       *worker.Spawner
+	version       string
+	updateURL     string
 }
 
-func NewCompanyApp(company *company.Manager, tmuxClient tmux.TmuxClient) *CompanyApp {
-	return &CompanyApp{company: company, tmuxClient: tmuxClient}
+func NewCompanyApp(company *company.Manager, tmuxClient tmux.TmuxClient, version string) *CompanyApp {
+	return &CompanyApp{company: company, tmuxClient: tmuxClient, version: version}
+}
+
+// GetVersion returns the application version string.
+func (c *CompanyApp) GetVersion() string {
+	return c.version
+}
+
+// SetUpdateURL sets the URL to check for updates.
+func (c *CompanyApp) SetUpdateURL(url string) {
+	c.updateURL = url
+}
+
+// CheckForUpdates checks the update server for a newer version.
+// Returns nil if already up to date.
+func (c *CompanyApp) CheckForUpdates() (*updater.UpdateInfo, error) {
+	return updater.CheckForUpdates(c.version, c.updateURL)
+}
+
+// DownloadUpdate opens the download URL in the user's default browser.
+func (c *CompanyApp) DownloadUpdate(url string) error {
+	return openURL(url)
+}
+
+// openURL opens a URL in the default browser (macOS).
+func openURL(url string) error {
+	return exec.Command("open", url).Start()
 }
 
 // SetTrainingDir sets the training data directory for stats queries.
@@ -295,6 +325,11 @@ func (c *CompanyApp) DeleteWorker(workerID string) error {
 // UpdateWorkerFields updates optional fields on a worker.
 func (c *CompanyApp) UpdateWorkerFields(workerID, parentID, modelVersion, backendID, skillProfile string) error {
 	return c.company.UpdateWorkerFields(workerID, parentID, modelVersion, backendID, skillProfile)
+}
+
+// UpdateWorkerAppearance updates the pixel office appearance for a worker.
+func (c *CompanyApp) UpdateWorkerAppearance(workerID string, bodyRow int, outfit, hair string) error {
+	return c.company.UpdateWorkerAppearance(workerID, bodyRow, outfit, hair)
 }
 
 // GetHierarchy returns workers organized by tier.
@@ -666,6 +701,28 @@ func (c *CompanyApp) UpdateWorkerBirthday(workerID, birthday string) error {
 		return fmt.Errorf("profile not found: %s", workerID)
 	}
 	return nil
+}
+
+// --- Health & Onboarding Bindings ---
+
+// GetHealthReport returns the health report from the last startup check.
+func (c *CompanyApp) GetHealthReport() *company.HealthReport {
+	return c.company.GetLastHealthReport()
+}
+
+// CheckDependencies returns missing external dependency names.
+func (c *CompanyApp) CheckDependencies() []string {
+	return company.CheckDependencies()
+}
+
+// NeedsOnboarding returns true if no workers exist (first-time setup needed).
+func (c *CompanyApp) NeedsOnboarding() bool {
+	return c.company.NeedsOnboarding()
+}
+
+// ApplyOnboarding applies the onboarding configuration (team template, language).
+func (c *CompanyApp) ApplyOnboarding(cfg company.OnboardingConfig) error {
+	return c.company.ApplyOnboarding(cfg)
 }
 
 // --- Operations Management Bindings ---

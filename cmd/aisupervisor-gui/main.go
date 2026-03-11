@@ -16,6 +16,7 @@ import (
 	ollamaBackend "github.com/hanfourmini/aisupervisor/internal/ai/ollama"
 	openaiBackend "github.com/hanfourmini/aisupervisor/internal/ai/openai"
 	"github.com/hanfourmini/aisupervisor/internal/audit"
+	"github.com/hanfourmini/aisupervisor/internal/binpath"
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	sessionctx "github.com/hanfourmini/aisupervisor/internal/context"
@@ -35,6 +36,9 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
+
+// Version is set at build time via -ldflags "-X main.Version=..."
+var Version = "dev"
 
 var (
 	flagConfig  string
@@ -172,7 +176,7 @@ func main() {
 	companyMgr.SetLanguage(cfg.Language)
 	spawner.SetLanguage(cfg.Language)
 
-	companyApp := gui.NewCompanyApp(companyMgr, tmuxClient)
+	companyApp := gui.NewCompanyApp(companyMgr, tmuxClient, Version)
 	companyApp.SetSpawner(spawner)
 	if cfg.Training.Enabled {
 		trainingDir := cfg.Training.DataDir
@@ -184,6 +188,9 @@ func main() {
 		companyApp.SetTrainingDir(trainingDir)
 	}
 	companyApp.SetSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
+	if cfg.UpdateURL != "" {
+		companyApp.SetUpdateURL(cfg.UpdateURL)
+	}
 
 	// Start messaging integrations if configured
 	startMessaging(cfg, companyMgr)
@@ -196,6 +203,7 @@ func main() {
 			Assets: assets,
 		},
 		OnStartup: func(ctx context.Context) {
+			binpath.PrependBundledBin()
 			app.Startup(ctx)
 			companyApp.Startup(ctx)
 		},

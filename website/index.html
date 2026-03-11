@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Supervisor — Virtual Office for AI Workers</title>
+  <meta name="description" content="AI Supervisor is a macOS desktop app that manages AI workers (Claude Code CLI) in a pixel-art virtual office. Assign tasks, review code, and supervise your AI team.">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>">
+</head>
+<body>
+
+  <!-- Hero -->
+  <section class="hero">
+    <h1 class="hero-title">AI SUPERVISOR</h1>
+    <p class="hero-tagline">VIRTUAL OFFICE FOR AI WORKERS</p>
+    <p class="hero-subtitle">
+      A macOS desktop app that manages AI workers running Claude Code CLI in tmux sessions.
+      Assign tasks, track progress, and review code — all from a pixel-art office interface.
+    </p>
+    <a href="releases/aisupervisor-1.0.0.dmg" class="download-btn">
+      <span class="icon">⬇</span>
+      <span>Download for macOS</span>
+    </a>
+    <span class="version-tag">v1.0.0 — macOS 12+</span>
+  </section>
+
+  <!-- Pixel Divider -->
+  <div class="pixel-divider">
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+  </div>
+
+  <!-- Features -->
+  <section class="features">
+    <h2 class="section-title">FEATURES</h2>
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <div class="feature-icon">🤖</div>
+        <h3 class="feature-title">AI WORKER MANAGEMENT</h3>
+        <p class="feature-desc">
+          Hire AI workers with different skill profiles — coder, architect, designer, analyst.
+          Each runs Claude Code CLI in an isolated tmux session with task-specific git branches.
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">📋</div>
+        <h3 class="feature-title">PROJECT PIPELINE</h3>
+        <p class="feature-desc">
+          Create projects with goals, auto-decompose into tasks with AI, track on a kanban board.
+          Full PRD pipeline with human gate approval before development starts.
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🔍</div>
+        <h3 class="feature-title">CODE REVIEW SYSTEM</h3>
+        <p class="feature-desc">
+          Automated review pipeline where reviewer workers check code quality.
+          Approved work merges automatically; rejected tasks get reworked with feedback.
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🏢</div>
+        <h3 class="feature-title">PIXEL OFFICE</h3>
+        <p class="feature-desc">
+          Watch your AI team in a retro pixel-art office. Each worker has personality traits,
+          moods, relationships, and customizable appearances. NPC dialogue included.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Pixel Divider -->
+  <div class="pixel-divider">
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+    <span class="pixel-dot"></span>
+  </div>
+
+  <!-- Requirements -->
+  <section class="requirements">
+    <h2 class="section-title">REQUIREMENTS</h2>
+    <ul class="req-list">
+      <li>macOS 12 (Monterey) or later</li>
+      <li>Claude Code CLI installed (<code>npm install -g @anthropic-ai/claude-code</code>)</li>
+      <li>Anthropic API key configured in Claude CLI</li>
+      <li>tmux and git (bundled with the app, or install via Homebrew)</li>
+    </ul>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>AI Supervisor &copy; 2026 — Built with Go, Svelte, and Wails</p>
+  </footer>
+
+</body>
+</html>

@@ -30,6 +30,7 @@ type Config struct {
 	Verification   VerificationConfig   `yaml:"verification,omitempty"`
 	HumanGate            HumanGateConfig                `yaml:"human_gate,omitempty"`
 	WorkerSkillOverrides map[string]SkillProfileOverride `yaml:"worker_skill_overrides,omitempty"`
+	UpdateURL            string                         `yaml:"update_url,omitempty"` // URL base for auto-update checks
 }
 
 // SkillProfileOverride holds per-worker customizations layered on top of the base SkillProfile.

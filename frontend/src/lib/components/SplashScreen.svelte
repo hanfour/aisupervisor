@@ -3,20 +3,21 @@
   import { loadAllSprites, spritesReady, prerenderCharacter } from '../office/sprites.js'
 
   export let onComplete = () => {}
+  export let onSettings = () => {}
 
   let canvas
   let phase = 'fadein'    // fadein → title → chars → ready → fadeout
   let opacity = 0
   let titleY = -40
   let showSubtitle = false
-  let showPressStart = false
-  let pressStartBlink = true
+  let showButtons = false
   let charSlots = []
   let animFrame = 0
   let elapsed = 0
   let fadeOutOpacity = 1
   let starParticles = []
   let raf
+  let fadeCallback = null
 
   const CANVAS_W = 800
   const CANVAS_H = 500
@@ -56,6 +57,22 @@
   onDestroy(() => {
     if (raf) cancelAnimationFrame(raf)
   })
+
+  function startFadeOut(callback) {
+    fadeCallback = callback
+    phase = 'fadeout'
+    fadeOutOpacity = 1
+  }
+
+  function handleStart() {
+    showButtons = false
+    startFadeOut(onComplete)
+  }
+
+  function handleSettings() {
+    showButtons = false
+    startFadeOut(onSettings)
+  }
 
   let lastTime = 0
   function loop() {
@@ -97,11 +114,10 @@
           slot.arrived = true
         }
       }
-    } else if (elapsed < 3500) {
-      // Ready — show "Loading complete"
+    } else if (phase !== 'fadeout') {
+      // Ready — show buttons, wait for user action
       phase = 'ready'
-      showPressStart = true
-      pressStartBlink = Math.floor(elapsed / 400) % 2 === 0
+      showButtons = true
       // All chars should be at target
       for (const slot of charSlots) {
         slot.x = slot.targetX
@@ -109,11 +125,10 @@
       }
     } else {
       // Fade out and complete
-      phase = 'fadeout'
-      fadeOutOpacity = Math.max(0, 1 - (elapsed - 3500) / 600)
+      fadeOutOpacity = Math.max(0, fadeOutOpacity - delta / 600)
       if (fadeOutOpacity <= 0) {
         cancelAnimationFrame(raf)
-        onComplete()
+        if (fadeCallback) fadeCallback()
       }
     }
 
@@ -220,13 +235,13 @@
       ctx.drawImage(frame, slot.x, slot.y, 48, 48)
     }
 
-    // "Press Start" / loading text
-    if (showPressStart) {
-      ctx.globalAlpha = globalAlpha * (pressStartBlink ? 1 : 0.2)
-      ctx.font = '10px "Press Start 2P", monospace'
+    // "READY" text when buttons are shown
+    if (showButtons) {
+      ctx.globalAlpha = globalAlpha * 0.4
+      ctx.font = '8px "Press Start 2P", monospace'
       ctx.textAlign = 'center'
       ctx.fillStyle = '#ffdd57'
-      ctx.fillText('LOADING COMPLETE', CANVAS_W / 2, 440)
+      ctx.fillText('READY', CANVAS_W / 2, 420)
       ctx.globalAlpha = globalAlpha
     }
 
@@ -245,6 +260,12 @@
     height={CANVAS_H}
     class="splash-canvas"
   ></canvas>
+  {#if showButtons && phase === 'ready'}
+    <div class="splash-buttons">
+      <button class="splash-btn start-btn" on:click={handleStart}>START</button>
+      <button class="splash-btn settings-btn" on:click={handleSettings}>SETTINGS</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -265,5 +286,56 @@
     image-rendering: pixelated;
     max-width: 100%;
     max-height: 100%;
+  }
+
+  .splash-buttons {
+    position: absolute;
+    bottom: 18%;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 24px;
+    z-index: 10;
+  }
+
+  .splash-btn {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 12px;
+    padding: 10px 28px;
+    border: 3px solid;
+    cursor: pointer;
+    background: transparent;
+    transition: transform 0.1s, box-shadow 0.1s;
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .splash-btn:hover {
+    transform: translate(1px, 1px);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .splash-btn:active {
+    transform: translate(3px, 3px);
+    box-shadow: none;
+  }
+
+  .start-btn {
+    color: #00ff41;
+    border-color: #00ff41;
+    text-shadow: 0 0 8px rgba(0, 255, 65, 0.5);
+  }
+
+  .start-btn:hover {
+    background: rgba(0, 255, 65, 0.1);
+  }
+
+  .settings-btn {
+    color: #5bbad5;
+    border-color: #5bbad5;
+    text-shadow: 0 0 8px rgba(91, 186, 213, 0.5);
+  }
+
+  .settings-btn:hover {
+    background: rgba(91, 186, 213, 0.1);
   }
 </style>

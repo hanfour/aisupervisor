@@ -132,33 +132,57 @@ export class OfficeRenderer {
   _drawBackground() {
     const ctx = this.bgCanvas.getContext('2d')
 
+    // First pass: base floor tiles
     for (let row = 0; row < this.ROWS; row++) {
       for (let col = 0; col < this.COLS; col++) {
         const tile = this.floorMap[row][col]
         ctx.fillStyle = FLOOR_COLORS[tile] || FLOOR_COLORS[0]
         ctx.fillRect(col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX)
 
-        // Subtle warm grid lines for floor tiles
+        // Subtle wood plank lines for floor tiles
         if (tile === 0 || tile === 7 || tile === 8 || tile === 9 ||
             (tile >= 2 && tile <= 6) || tile === 10 || tile === 11 ||
             tile === 12 || tile === 13 || tile === 14 || tile === 15) {
-          ctx.strokeStyle = 'rgba(160,130,90,0.06)'
+          // Plank grain lines (horizontal, staggered by row)
+          ctx.fillStyle = 'rgba(160,130,90,0.07)'
+          const offset = (row % 2) * (TILE_PX / 2)
+          ctx.fillRect(col * TILE_PX, row * TILE_PX + 12, TILE_PX, 1)
+          ctx.fillRect(col * TILE_PX, row * TILE_PX + 36, TILE_PX, 1)
+          // Vertical seam
+          ctx.fillRect(col * TILE_PX + offset + 20, row * TILE_PX, 1, TILE_PX)
+          // Subtle grid
+          ctx.strokeStyle = 'rgba(160,130,90,0.04)'
           ctx.strokeRect(col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX)
         }
 
-        // Wall: warm wood highlight lines
+        // Wall: richer wood panel texture
         if (tile === 1) {
+          // Base wall color already drawn, add panel detail
           ctx.fillStyle = '#c9b896'
           ctx.fillRect(col * TILE_PX, row * TILE_PX, TILE_PX, 2)
-          ctx.fillStyle = '#bfad88'
-          ctx.fillRect(col * TILE_PX, row * TILE_PX + TILE_PX / 2, TILE_PX, 1)
+          ctx.fillStyle = '#dcc8a0'
+          ctx.fillRect(col * TILE_PX + 2, row * TILE_PX + 4, TILE_PX - 4, TILE_PX - 8)
+          ctx.fillStyle = '#c9b896'
+          ctx.fillRect(col * TILE_PX + 2, row * TILE_PX + 4, TILE_PX - 4, 1)
+          ctx.fillRect(col * TILE_PX + 2, row * TILE_PX + TILE_PX - 5, TILE_PX - 4, 1)
+          // Molding shadow at bottom
+          ctx.fillStyle = 'rgba(120,90,50,0.15)'
+          ctx.fillRect(col * TILE_PX, row * TILE_PX + TILE_PX - 3, TILE_PX, 3)
         }
 
-        // Door: warm wood accent
+        // Door: carved wood panel door
         if (tile === 7) {
           ctx.fillStyle = '#dcc8a0'
           ctx.fillRect(col * TILE_PX + 4, row * TILE_PX, TILE_PX - 8, TILE_PX)
+          // Door panels (2 inset rectangles)
           ctx.fillStyle = '#c9b896'
+          ctx.fillRect(col * TILE_PX + 8, row * TILE_PX + 4, TILE_PX - 16, TILE_PX / 2 - 6)
+          ctx.fillRect(col * TILE_PX + 8, row * TILE_PX + TILE_PX / 2 + 2, TILE_PX - 16, TILE_PX / 2 - 6)
+          // Door handle
+          ctx.fillStyle = '#e8a855'
+          ctx.fillRect(col * TILE_PX + TILE_PX - 14, row * TILE_PX + TILE_PX / 2 - 2, 3, 4)
+          // Frame lines
+          ctx.fillStyle = '#bfad88'
           ctx.fillRect(col * TILE_PX + 4, row * TILE_PX, TILE_PX - 8, 2)
           ctx.fillRect(col * TILE_PX + 4, row * TILE_PX + TILE_PX - 2, TILE_PX - 8, 2)
         }
@@ -175,6 +199,45 @@ export class OfficeRenderer {
         if (furnitureName && this.furnitureCache[furnitureName]) {
           ctx.imageSmoothingEnabled = false
           ctx.drawImage(this.furnitureCache[furnitureName], col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX)
+        }
+      }
+    }
+
+    // Second pass: ambient lighting overlays
+
+    // Ceiling lights (every 4-6 tiles in open areas)
+    for (let row = 0; row < this.ROWS; row++) {
+      for (let col = 0; col < this.COLS; col++) {
+        const tile = this.floorMap[row][col]
+        // Place ceiling lights on floor tiles at regular intervals
+        if ((tile === 0 || tile === 10 || tile === 15) && col % 5 === 2 && row % 4 === 1) {
+          // Warm light pool on the floor
+          const cx = col * TILE_PX + TILE_PX / 2
+          const cy = row * TILE_PX + TILE_PX / 2
+          const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, TILE_PX * 1.5)
+          grad.addColorStop(0, 'rgba(255,240,200,0.08)')
+          grad.addColorStop(1, 'rgba(255,240,200,0)')
+          ctx.fillStyle = grad
+          ctx.fillRect(cx - TILE_PX * 1.5, cy - TILE_PX * 1.5, TILE_PX * 3, TILE_PX * 3)
+          // Light fixture dot on ceiling
+          ctx.fillStyle = 'rgba(255,248,220,0.25)'
+          ctx.fillRect(cx - 2, cy - TILE_PX / 2, 4, 3)
+        }
+      }
+    }
+
+    // Window light beams on the top edge walls
+    for (let col = 0; col < this.COLS; col++) {
+      if (this.floorMap[0]?.[col] === 1 && this.floorMap[1]?.[col] !== 1) {
+        // Sunlight beam from window
+        const wx = col * TILE_PX
+        const wy = TILE_PX  // starts just below wall
+        if (col % 3 === 0) {
+          const grad = ctx.createLinearGradient(wx, wy, wx + TILE_PX, wy + TILE_PX * 3)
+          grad.addColorStop(0, 'rgba(255,245,200,0.06)')
+          grad.addColorStop(1, 'rgba(255,245,200,0)')
+          ctx.fillStyle = grad
+          ctx.fillRect(wx, wy, TILE_PX * 2, TILE_PX * 3)
         }
       }
     }
@@ -433,6 +496,9 @@ export class OfficeRenderer {
 
     // 4. Floating warm dust motes
     this._drawParticles(ctx)
+
+    // 5. Subtle vignette overlay for depth
+    this._drawVignette(ctx)
   }
 
   _drawMoodIndicator(ctx, x, y, mood) {
@@ -486,13 +552,28 @@ export class OfficeRenderer {
   _drawParticles(ctx) {
     ctx.save()
     for (const p of this.particles) {
-      ctx.globalAlpha = p.life * 0.4
-      ctx.fillStyle = '#d4a76a'
+      ctx.globalAlpha = p.life * 0.35
+      // Warm golden dust motes with glow
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 2)
+      grad.addColorStop(0, 'rgba(255,230,160,0.6)')
+      grad.addColorStop(0.5, 'rgba(212,167,106,0.3)')
+      grad.addColorStop(1, 'rgba(212,167,106,0)')
+      ctx.fillStyle = grad
       ctx.beginPath()
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+      ctx.arc(p.x, p.y, p.size * 2, 0, Math.PI * 2)
       ctx.fill()
     }
     ctx.restore()
+  }
+
+  _drawVignette(ctx) {
+    const w = this.canvas.width
+    const h = this.canvas.height
+    const grad = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.7)
+    grad.addColorStop(0, 'rgba(0,0,0,0)')
+    grad.addColorStop(1, 'rgba(40,30,15,0.12)')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, w, h)
   }
 
   getWorkerAtPixel(x, y) {

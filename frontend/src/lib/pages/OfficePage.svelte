@@ -207,7 +207,7 @@
             />
           </div>
         </div>
-        <select class="layout-select" bind:value={layoutId} on:change={switchLayout}>
+        <select class="layout-select" value={layoutId} on:change={switchLayout}>
           {#each Object.entries(OFFICE_LAYOUTS) as [id, layout]}
             <option value={id}>{$t(layout.nameKey)}</option>
           {/each}

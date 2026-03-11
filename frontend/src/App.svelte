@@ -153,7 +153,10 @@
 </script>
 
 {#if showSplash}
-  <SplashScreen onComplete={() => showSplash = false} />
+  <SplashScreen
+    onComplete={() => showSplash = false}
+    onSettings={() => { showSplash = false; currentPage = 'settings' }}
+  />
 {:else if showSetup && SetupWizard}
   <svelte:component this={SetupWizard} onComplete={handleSetupComplete} />
 {:else}

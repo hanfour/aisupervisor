@@ -32,6 +32,12 @@
       {#if task.type === 'research'}
         <span class="type-badge research">R</span>
       {/if}
+      {#if task.type === 'admin'}
+        <span class="type-badge admin">A</span>
+      {/if}
+      {#if task.type === 'hr'}
+        <span class="type-badge hr">HR</span>
+      {/if}
       {#if task.rejectionCount > 0}
         <span class="type-badge rejection">R:{task.rejectionCount}</span>
       {/if}
@@ -122,6 +128,16 @@
   .type-badge.research {
     color: #f0c040;
     border-color: #f0c040;
+  }
+
+  .type-badge.admin {
+    color: #3498db;
+    border-color: #3498db;
+  }
+
+  .type-badge.hr {
+    color: #9b59b6;
+    border-color: #9b59b6;
   }
 
   .type-badge.rejection {

@@ -63,6 +63,8 @@ const translations = {
   'taskForm.type': { en: 'Type', zh: '類型' },
   'taskForm.typeCode': { en: 'Code', zh: '程式碼' },
   'taskForm.typeResearch': { en: 'Research', zh: '研究' },
+  'taskForm.typeAdmin': { en: 'Admin', zh: '行政' },
+  'taskForm.typeHR': { en: 'HR', zh: '人資' },
   'taskForm.priority': { en: 'Priority', zh: '優先級' },
   'taskForm.milestone': { en: 'Milestone', zh: '里程碑' },
   'taskForm.dependencies': { en: 'Dependencies', zh: '依賴項目' },
@@ -220,6 +222,17 @@ const translations = {
   'skills.disallowedTools': { en: 'Disallowed Tools (one per line)', zh: '禁用工具（每行一個）' },
   'skills.extraCliArgs': { en: 'Extra CLI Args', zh: '額外 CLI 參數' },
   'skills.builtInNoDelete': { en: 'Built-in profiles cannot be deleted', zh: '內建配置無法刪除' },
+  'skills.searchMP': { en: 'Search SkillsMP', zh: '搜尋技能市場' },
+  'skills.importSkill': { en: 'Import', zh: '匯入' },
+  'skills.mergeOptimize': { en: 'Merge & Optimize', zh: '合併優化' },
+  'skills.searching': { en: 'Searching...', zh: '搜尋中...' },
+  'skills.merging': { en: 'AI merging skills...', zh: 'AI 合併技能中...' },
+  'skills.mergeName': { en: 'Profile Name', zh: '配置名稱' },
+  'skills.mergePreview': { en: 'Merge Preview', zh: '合併預覽' },
+  'skills.searchResults': { en: 'Search Results', zh: '搜尋結果' },
+  'skills.noResults': { en: 'No results found', zh: '沒有找到結果' },
+  'skills.stars': { en: 'stars', zh: '星' },
+  'skills.aiSearch': { en: 'AI Search', zh: 'AI 搜尋' },
 
   // --- Office ---
   'office.title': { en: 'PIXEL OFFICE', zh: 'PIXEL OFFICE' },
@@ -420,6 +433,9 @@ const translations = {
   'settings.updateAvailable': { en: 'New version available', zh: '有新版本可用' },
   'settings.download': { en: 'Download', zh: '下載' },
   'settings.checking': { en: 'Checking...', zh: '檢查中...' },
+  'settings.skillsmpKey': { en: 'SkillsMP API Key', zh: 'SkillsMP API 金鑰' },
+  'settings.skillsmpKeyHint': { en: 'Get free key at skillsmp.com/docs/api', zh: '在 skillsmp.com/docs/api 免費取得' },
+  'settings.skillsmpKeySaved': { en: 'API Key saved', zh: 'API 金鑰已儲存' },
 
   // --- Board ---
   'board.escalation': { en: 'Escalation', zh: '升級' },

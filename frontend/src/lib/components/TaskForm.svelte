@@ -71,6 +71,14 @@
                 <input type="radio" class="nes-radio is-dark" name="taskType" value="research" bind:group={taskType} />
                 <span>{$t('taskForm.typeResearch')}</span>
               </label>
+              <label class="type-option" class:selected={taskType === 'admin'}>
+                <input type="radio" class="nes-radio is-dark" name="taskType" value="admin" bind:group={taskType} />
+                <span>{$t('taskForm.typeAdmin')}</span>
+              </label>
+              <label class="type-option" class:selected={taskType === 'hr'}>
+                <input type="radio" class="nes-radio is-dark" name="taskType" value="hr" bind:group={taskType} />
+                <span>{$t('taskForm.typeHR')}</span>
+              </label>
             </div>
           </div>
           <div class="nes-field">

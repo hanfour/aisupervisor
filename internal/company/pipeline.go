@@ -311,6 +311,10 @@ func (m *Manager) DecomposeFromPRD(ctx context.Context, projectID, prdContent st
 			taskType = "research"
 		case "design":
 			taskType = "design"
+		case "admin":
+			taskType = "admin"
+		case "hr":
+			taskType = "hr"
 		}
 		if _, err := m.AddTask(projectID, dt.Title, dt.Description, dt.Prompt, nil, dt.Priority, "", taskType); err != nil {
 			return fmt.Errorf("failed to add task %q: %w", dt.Title, err)
@@ -335,7 +339,7 @@ Given a project name, description, and PRD content, create a list of concrete ta
 Rules:
 - Each task should be small and focused (completable in a few hours).
 - Include a clear title, description, and a detailed prompt that a developer can directly use.
-- Set type to "code" for implementation tasks, "research" for investigation, or "design" for UI/UX design tasks.
+- Set type to "code" for implementation, "research" for investigation, "design" for UI/UX, "admin" for document/template tasks, or "hr" for hiring/workforce tasks.
 - Design tasks should output to docs/design/ directory.
 - Priority: 1 = highest, higher numbers = lower priority. Order tasks logically.
 - The prompt should be specific enough that an AI coding assistant can execute it.
@@ -351,7 +355,7 @@ Respond with valid JSON only:
 規則：
 - 每個任務應該小而專注（幾小時內可完成）。
 - 包含清楚的標題、描述，以及開發者可以直接使用的詳細 prompt。
-- type 設為 "code"（實作）、"research"（調查）或 "design"（UI/UX 設計）。
+- type 設為 "code"（實作）、"research"（調查）、"design"（UI/UX 設計）、"admin"（文件/模板任務）或 "hr"（招募/人力任務）。
 - 設計任務應輸出到 docs/design/ 目錄。
 - 優先順序：1 = 最高，數字越大優先度越低。按邏輯順序排列任務。
 - prompt 要夠具體，讓 AI 程式助手可以直接執行。
@@ -372,6 +376,10 @@ func preferredProfiles(taskType project.TaskType) []string {
 		return []string{"coder", "hacker", "devops"}
 	case project.TaskTypeResearch:
 		return []string{"researcher", "analyst"}
+	case project.TaskTypeAdmin:
+		return []string{"assistant"}
+	case project.TaskTypeHR:
+		return []string{"hr", "analyst"}
 	default:
 		return nil
 	}

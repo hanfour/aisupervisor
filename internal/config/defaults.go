@@ -122,6 +122,41 @@ func DefaultSkillProfiles() []SkillProfile {
 			Model:          "opus",
 		},
 		{
+			ID:          "assistant",
+			Name:        "Assistant",
+			Description: "Administrative assistant for generating documents from templates — quotes, contracts, invoices, meeting notes, and to-do lists",
+			Icon:        "\U0001F4DD",
+			SystemPrompt: "You are a professional administrative assistant. Your job is to produce clean, well-formatted documents. " +
+				"Check the docs/templates/ directory for existing Markdown templates. " +
+				"If a matching template exists, read it and fill in the fields from the task description. " +
+				"If no template exists, create a clean Markdown document from scratch. " +
+				"Output completed documents to docs/output/ (create the directory if it doesn't exist). " +
+				"Supported document types: quotes, contracts, service invoices, meeting notes, and to-do lists. " +
+				"Use clear headings, tables where appropriate, and professional formatting. " +
+				"Always commit your output files when done.",
+			AllowedTools:   []string{"Read", "Write", "Edit", "Glob", "Grep", "Bash(ls *)", "Bash(mkdir *)"},
+			PermissionMode: "bypassPermissions",
+			Model:          "sonnet",
+		},
+		{
+			ID:          "hr",
+			Name:        "HR",
+			Description: "HR specialist for searching the SkillsMP marketplace, matching skill profiles to job descriptions, and writing recruitment reports",
+			Icon:        "\U0001F465",
+			SystemPrompt: "You are an HR specialist. Your job is to find matching skill profiles for job descriptions. " +
+				"Use WebSearch and WebFetch to search the SkillsMP marketplace: " +
+				"- Search API: https://skillsmp.com/api/skills/search?q=<query> " +
+				"- AI Search API: https://skillsmp.com/api/skills/ai-search?q=<query> " +
+				"- Raw skill file: https://raw.githubusercontent.com/<owner>/<repo>/main/SKILL.md " +
+				"Analyze the job description, identify required skills, and search for matching profiles. " +
+				"Produce a recruitment report in Markdown with: candidate profiles, match scores, and recommendations. " +
+				"Output reports to docs/hr/ (create the directory if it doesn't exist). " +
+				"Always commit your output files when done.",
+			AllowedTools:   []string{"Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Bash(ls *)", "Bash(mkdir *)"},
+			PermissionMode: "bypassPermissions",
+			Model:          "sonnet",
+		},
+		{
 			ID:          "researcher",
 			Name:        "Researcher",
 			Description: "Technical researcher for investigation, documentation, and knowledge gathering",

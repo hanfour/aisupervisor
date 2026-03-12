@@ -382,7 +382,8 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 
 	tt := project.TaskType(taskType)
 	switch tt {
-	case project.TaskTypeResearch, project.TaskTypePRD, project.TaskTypeDesign:
+	case project.TaskTypeResearch, project.TaskTypePRD, project.TaskTypeDesign,
+		project.TaskTypeAdmin, project.TaskTypeHR:
 		// keep as-is
 	default:
 		tt = project.TaskTypeCode
@@ -780,6 +781,16 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	}
 
 	if result.Success && t.Type == project.TaskTypeDesign {
+		m.handleDesignCompletion(w, t, p)
+		return
+	}
+
+	if result.Success && t.Type == project.TaskTypeAdmin {
+		m.handleDesignCompletion(w, t, p)
+		return
+	}
+
+	if result.Success && t.Type == project.TaskTypeHR {
 		m.handleDesignCompletion(w, t, p)
 		return
 	}
@@ -1601,6 +1612,13 @@ func (m *Manager) SetChatProvider(cp ai.ChatProvider) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.chatProvider = cp
+}
+
+// GetChatProvider returns the current chat provider.
+func (m *Manager) GetChatProvider() ai.ChatProvider {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.chatProvider
 }
 
 // Shutdown cancels all active workers and waits for goroutines to exit.

@@ -9,6 +9,8 @@ const (
 	TaskTypeResearch TaskType = "research"
 	TaskTypePRD      TaskType = "prd"
 	TaskTypeDesign   TaskType = "design"
+	TaskTypeAdmin    TaskType = "admin"
+	TaskTypeHR       TaskType = "hr"
 )
 
 type TaskStatus string

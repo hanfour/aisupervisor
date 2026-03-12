@@ -188,7 +188,8 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	tmuxName := fmt.Sprintf("aiworker-%s", w.ID)
 
 	isNonCodeTask := t.Type == project.TaskTypeResearch ||
-		t.Type == project.TaskTypePRD || t.Type == project.TaskTypeDesign
+		t.Type == project.TaskTypePRD || t.Type == project.TaskTypeDesign ||
+		t.Type == project.TaskTypeAdmin || t.Type == project.TaskTypeHR
 
 	// 1. Create git branch if it doesn't exist (skip for non-code tasks)
 	if !isNonCodeTask && t.BranchName != "" {
@@ -474,6 +475,13 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 		return s.buildResearchPrompt(t, deps)
 	}
 
+	if t.Type == project.TaskTypeAdmin {
+		return s.buildAdminPrompt(t, deps)
+	}
+	if t.Type == project.TaskTypeHR {
+		return s.buildHRPrompt(t, deps)
+	}
+
 	// PRD and design tasks use their pre-built prompt directly
 	if t.Type == project.TaskTypePRD || t.Type == project.TaskTypeDesign {
 		prompt := t.Prompt
@@ -573,6 +581,122 @@ func (s *Spawner) buildResearchPrompt(t *project.Task, deps []depContext) string
 		sb.WriteString(`{"summary": "研究摘要 (200字以內)", "keyFindings": ["發現1", "發現2", ...], "recommendations": ["建議1", ...], "references": ["參考資料1", ...], "rawContent": "完整研究內容 markdown"}`)
 		sb.WriteString("\n\n--- When Done ---\n")
 		sb.WriteString("將上述 JSON 輸出後，輸入 /stop 完成任務。\n")
+	}
+
+	return sb.String()
+}
+
+// buildAdminPrompt creates a prompt for administrative document tasks.
+func (s *Spawner) buildAdminPrompt(t *project.Task, deps []depContext) string {
+	lang := s.language
+	if lang == "" {
+		lang = "zh-TW"
+	}
+
+	var sb strings.Builder
+
+	if lang == "en" {
+		sb.WriteString("You are an administrative assistant. Generate the requested document.\n\n")
+		sb.WriteString("IMPORTANT: You are working autonomously without a human operator.\n")
+		sb.WriteString("- Do NOT ask questions or use AskUserQuestion\n")
+		sb.WriteString("- Do NOT invoke brainstorming, writing-plans, or any interactive skills\n")
+		sb.WriteString("- Do NOT use EnterPlanMode or ExitPlanMode\n\n")
+		sb.WriteString(t.Prompt)
+		if len(deps) > 0 {
+			sb.WriteString("\n\n--- Related Documents ---\n")
+			for _, d := range deps {
+				sb.WriteString(fmt.Sprintf("- %s\n", d.Title))
+			}
+		}
+		sb.WriteString("\n\n--- Instructions ---\n")
+		sb.WriteString("1. Check docs/templates/ for a matching Markdown template\n")
+		sb.WriteString("2. If found, read the template and fill in fields from the task description\n")
+		sb.WriteString("3. If not found, create a clean Markdown document from scratch\n")
+		sb.WriteString("4. Output the completed document to docs/output/ (create directory if needed)\n")
+		sb.WriteString("5. Commit your changes with a descriptive message\n")
+		sb.WriteString("6. Type /stop to signal completion\n")
+	} else {
+		sb.WriteString("你是一位行政助理。請產生所要求的文件。\n\n")
+		sb.WriteString("重要：你正在自主工作，沒有人類操作員。\n")
+		sb.WriteString("- 不要詢問問題、不要使用 AskUserQuestion\n")
+		sb.WriteString("- 不要使用 brainstorming、writing-plans 或其他互動式技能\n")
+		sb.WriteString("- 不要使用 EnterPlanMode 或 ExitPlanMode\n\n")
+		sb.WriteString(t.Prompt)
+		if len(deps) > 0 {
+			sb.WriteString("\n\n--- 相關文件 ---\n")
+			for _, d := range deps {
+				sb.WriteString(fmt.Sprintf("- %s\n", d.Title))
+			}
+		}
+		sb.WriteString("\n\n--- 操作指引 ---\n")
+		sb.WriteString("1. 檢查 docs/templates/ 中是否有相關的 Markdown 模板\n")
+		sb.WriteString("2. 如果有模板，讀取並根據任務描述填入欄位\n")
+		sb.WriteString("3. 如果沒有模板，用 Markdown 從頭建立乾淨的文件\n")
+		sb.WriteString("4. 將完成的文件輸出到 docs/output/（如目錄不存在請建立）\n")
+		sb.WriteString("5. 用描述性訊息提交變更\n")
+		sb.WriteString("6. 輸入 /stop 表示完成\n")
+	}
+
+	return sb.String()
+}
+
+// buildHRPrompt creates a prompt for HR/recruitment tasks.
+func (s *Spawner) buildHRPrompt(t *project.Task, deps []depContext) string {
+	lang := s.language
+	if lang == "" {
+		lang = "zh-TW"
+	}
+
+	var sb strings.Builder
+
+	if lang == "en" {
+		sb.WriteString("You are an HR specialist. Find matching skill profiles for the given job description.\n\n")
+		sb.WriteString("IMPORTANT: You are working autonomously without a human operator.\n")
+		sb.WriteString("- Do NOT ask questions or use AskUserQuestion\n")
+		sb.WriteString("- Do NOT invoke brainstorming, writing-plans, or any interactive skills\n")
+		sb.WriteString("- Do NOT use EnterPlanMode or ExitPlanMode\n\n")
+		sb.WriteString(t.Prompt)
+		if len(deps) > 0 {
+			sb.WriteString("\n\n--- Related Context ---\n")
+			for _, d := range deps {
+				sb.WriteString(fmt.Sprintf("- %s\n", d.Title))
+			}
+		}
+		sb.WriteString("\n\n--- SkillsMP API Reference ---\n")
+		sb.WriteString("- Search: https://skillsmp.com/api/skills/search?q=<query>\n")
+		sb.WriteString("- AI Search: https://skillsmp.com/api/skills/ai-search?q=<query>\n")
+		sb.WriteString("- Raw SKILL.md: https://raw.githubusercontent.com/<owner>/<repo>/main/SKILL.md\n")
+		sb.WriteString("\n--- Instructions ---\n")
+		sb.WriteString("1. Analyze the job description and identify required skills\n")
+		sb.WriteString("2. Search SkillsMP for matching profiles using WebFetch\n")
+		sb.WriteString("3. Produce a recruitment report in Markdown with: candidate profiles, match scores, recommendations\n")
+		sb.WriteString("4. Output the report to docs/hr/ (create directory if needed)\n")
+		sb.WriteString("5. Commit your changes with a descriptive message\n")
+		sb.WriteString("6. Type /stop to signal completion\n")
+	} else {
+		sb.WriteString("你是一位人資專員。請根據職缺描述搜尋匹配的技能配置。\n\n")
+		sb.WriteString("重要：你正在自主工作，沒有人類操作員。\n")
+		sb.WriteString("- 不要詢問問題、不要使用 AskUserQuestion\n")
+		sb.WriteString("- 不要使用 brainstorming、writing-plans 或其他互動式技能\n")
+		sb.WriteString("- 不要使用 EnterPlanMode 或 ExitPlanMode\n\n")
+		sb.WriteString(t.Prompt)
+		if len(deps) > 0 {
+			sb.WriteString("\n\n--- 相關背景 ---\n")
+			for _, d := range deps {
+				sb.WriteString(fmt.Sprintf("- %s\n", d.Title))
+			}
+		}
+		sb.WriteString("\n\n--- SkillsMP API 參考 ---\n")
+		sb.WriteString("- 搜尋：https://skillsmp.com/api/skills/search?q=<query>\n")
+		sb.WriteString("- AI 搜尋：https://skillsmp.com/api/skills/ai-search?q=<query>\n")
+		sb.WriteString("- 原始 SKILL.md：https://raw.githubusercontent.com/<owner>/<repo>/main/SKILL.md\n")
+		sb.WriteString("\n--- 操作指引 ---\n")
+		sb.WriteString("1. 分析職缺描述，識別所需技能\n")
+		sb.WriteString("2. 使用 WebFetch 在 SkillsMP 搜尋匹配的配置\n")
+		sb.WriteString("3. 用 Markdown 產生招募報告：候選配置、匹配分數、建議\n")
+		sb.WriteString("4. 將報告輸出到 docs/hr/（如目錄不存在請建立）\n")
+		sb.WriteString("5. 用描述性訊息提交變更\n")
+		sb.WriteString("6. 輸入 /stop 表示完成\n")
 	}
 
 	return sb.String()

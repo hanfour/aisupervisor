@@ -625,71 +625,110 @@ const FURNITURE_DRAW = {
   },
 
   computer(ctx, S) {
+    // This tile sits next to a desk tile — draw matching desk surface first
+    // so the computer looks like it's ON the desk, not on the floor
+
+    // ── Desk surface (same style as desk sprite) ──
+    const topGrad = ctx.createLinearGradient(4, 5, 4, 23)
+    topGrad.addColorStop(0, '#d4b880')
+    topGrad.addColorStop(1, '#a08050')
+    ctx.fillStyle = topGrad
+    roundRect(ctx, 4, 5, 38, 18, 2)
+    ctx.fill()
+
+    ctx.strokeStyle = '#e8dcc0'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(6, 6)
+    ctx.lineTo(40, 6)
+    ctx.stroke()
+
+    drawWoodGrain(ctx, 6, 7, 34, 14, 'rgba(139,110,70,0.3)', 4)
+
+    // Front face
+    const faceGrad = ctx.createLinearGradient(4, 23, 4, 40)
+    faceGrad.addColorStop(0, '#c8a878')
+    faceGrad.addColorStop(1, '#a08050')
+    ctx.fillStyle = faceGrad
+    ctx.fillRect(4, 23, 38, 17)
+
+    // Legs
+    ctx.fillStyle = '#8a6d40'
+    ctx.fillRect(6, 40, 3, 6)
+    ctx.fillRect(37, 40, 3, 6)
+
+    ctx.strokeStyle = '#8a6d40'
+    ctx.lineWidth = 0.5
+    roundRect(ctx, 4, 5, 38, 35, 2)
+    ctx.stroke()
+
+    // ── Computer equipment ON the desk ──
+
     // Monitor stand base
     ctx.fillStyle = '#555'
-    roundRect(ctx, 14, 30, 18, 3, 1)
+    roundRect(ctx, 16, 16, 14, 2.5, 1)
     ctx.fill()
 
     // Monitor stand neck
     ctx.fillStyle = '#666'
-    ctx.fillRect(21, 25, 4, 6)
+    ctx.fillRect(21, 12, 4, 5)
 
-    // Monitor body — dark frame
-    const monGrad = ctx.createLinearGradient(8, 2, 8, 26)
+    // Monitor body
+    const monGrad = ctx.createLinearGradient(10, 1, 10, 13)
     monGrad.addColorStop(0, '#2a2a2a')
     monGrad.addColorStop(1, '#1a1a1a')
     ctx.fillStyle = monGrad
-    roundRect(ctx, 8, 2, 30, 23, 2)
+    roundRect(ctx, 10, 1, 26, 12, 2)
     ctx.fill()
 
-    // Screen — blue glow
-    const scrGrad = ctx.createLinearGradient(10, 4, 10, 22)
+    // Screen
+    const scrGrad = ctx.createLinearGradient(12, 2, 12, 11)
     scrGrad.addColorStop(0, '#7ab8d4')
     scrGrad.addColorStop(0.3, '#5baad5')
     scrGrad.addColorStop(1, '#4488bb')
     ctx.fillStyle = scrGrad
-    roundRect(ctx, 10, 4, 26, 18, 1)
+    roundRect(ctx, 12, 2, 22, 9, 1)
     ctx.fill()
 
     // Screen content — code lines
     ctx.fillStyle = 'rgba(255,255,255,0.6)'
-    for (let i = 0; i < 5; i++) {
-      const w = 8 + (i * 7 % 13)
-      ctx.fillRect(12, 6 + i * 3, w, 1.5)
+    for (let i = 0; i < 3; i++) {
+      const w = 6 + (i * 7 % 11)
+      ctx.fillRect(14, 4 + i * 2.5, w, 1.5)
     }
 
     // Screen reflection
     ctx.fillStyle = 'rgba(255,255,255,0.08)'
-    ctx.fillRect(10, 4, 26, 9)
+    ctx.fillRect(12, 2, 22, 4)
 
     // Power LED
     ctx.fillStyle = '#00ff41'
     ctx.beginPath()
-    ctx.arc(23, 24, 1, 0, Math.PI * 2)
+    ctx.arc(23, 12.5, 1, 0, Math.PI * 2)
     ctx.fill()
 
-    // Keyboard
+    // Keyboard (on desk surface)
     ctx.fillStyle = '#444'
-    roundRect(ctx, 10, 35, 26, 8, 2)
+    roundRect(ctx, 14, 19, 18, 3, 1.5)
     ctx.fill()
 
     // Keyboard keys
     ctx.fillStyle = '#666'
-    for (let r = 0; r < 3; r++) {
-      for (let c = 0; c < 8; c++) {
-        ctx.fillRect(12 + c * 3, 36 + r * 2.5, 2, 1.5)
+    for (let r = 0; r < 2; r++) {
+      for (let c = 0; c < 6; c++) {
+        ctx.fillRect(15 + c * 2.8, 19.5 + r * 1.5, 2, 1)
       }
     }
 
     // Mouse
     ctx.fillStyle = '#555'
-    roundRect(ctx, 38, 37, 5, 7, 2)
+    roundRect(ctx, 34, 18, 4, 4, 2)
     ctx.fill()
 
-    // Screen glow effect
+    // Screen glow
     ctx.fillStyle = 'rgba(91,186,213,0.06)'
     ctx.beginPath()
-    ctx.arc(23, 13, 20, 0, Math.PI * 2)
+    ctx.arc(23, 8, 16, 0, Math.PI * 2)
     ctx.fill()
   },
 
@@ -1154,6 +1193,26 @@ const FURNITURE_DRAW = {
     ctx.stroke()
   },
 
+  chair(ctx, S) {
+    // Chair back
+    ctx.fillStyle = '#3a3a3a'
+    roundRect(ctx, S * 0.25, S * 0.25, S * 0.5, S * 0.32, 4)
+    ctx.fill()
+    // Chair seat
+    ctx.fillStyle = '#4a4a4a'
+    roundRect(ctx, S * 0.2, S * 0.55, S * 0.6, S * 0.15, 3)
+    ctx.fill()
+    // Chair legs
+    ctx.fillStyle = '#2a2a2a'
+    ctx.fillRect(S * 0.25, S * 0.7, 3, S * 0.15)
+    ctx.fillRect(S * 0.72, S * 0.7, 3, S * 0.15)
+    // Wheels
+    ctx.fillStyle = '#222'
+    ctx.beginPath(); ctx.arc(S * 0.26, S * 0.88, 3, 0, Math.PI * 2); ctx.fill()
+    ctx.beginPath(); ctx.arc(S * 0.74, S * 0.88, 3, 0, Math.PI * 2); ctx.fill()
+    ctx.beginPath(); ctx.arc(S * 0.5, S * 0.9, 3, 0, Math.PI * 2); ctx.fill()
+  },
+
   largePlant(ctx, S) {
     // Large decorative pot
     const potGrad = ctx.createLinearGradient(10, 30, 36, 30)
@@ -1303,6 +1362,165 @@ const ENV_DRAW = {
     ctx.arc(cx, cy, 3, 0, Math.PI * 2)
     ctx.fill()
   },
+}
+
+// ── Desk decoration mini-sprites (drawn at ~10-14px scale on desk surface) ───
+const DESK_DECORATIONS = {
+  miniPlant(ctx, x, y) {
+    // Tiny pot
+    ctx.fillStyle = '#c97b5e'
+    ctx.fillRect(x, y + 5, 7, 5)
+    // Leaves
+    ctx.fillStyle = '#5cb86e'
+    ctx.beginPath()
+    ctx.ellipse(x + 3, y + 3, 5, 4, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#78dda0'
+    ctx.beginPath()
+    ctx.ellipse(x + 4, y + 1, 3, 2.5, 0, 0, Math.PI * 2)
+    ctx.fill()
+  },
+  photoFrame(ctx, x, y) {
+    // Frame
+    ctx.fillStyle = '#8a6d40'
+    ctx.fillRect(x, y, 10, 9)
+    // Photo
+    ctx.fillStyle = '#b8d8f0'
+    ctx.fillRect(x + 1, y + 1, 8, 7)
+    // Silhouette
+    ctx.fillStyle = '#6a9cc0'
+    ctx.beginPath()
+    ctx.arc(x + 5, y + 3, 2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillRect(x + 3, y + 5, 4, 3)
+  },
+  figurine(ctx, x, y) {
+    // Base
+    ctx.fillStyle = '#ddd'
+    ctx.fillRect(x + 1, y + 7, 6, 3)
+    // Body
+    ctx.fillStyle = '#e8a855'
+    ctx.fillRect(x + 2, y + 3, 4, 5)
+    // Head
+    ctx.fillStyle = '#f0d0a0'
+    ctx.beginPath()
+    ctx.arc(x + 4, y + 2, 2.5, 0, Math.PI * 2)
+    ctx.fill()
+  },
+  mug(ctx, x, y) {
+    // Cup body
+    ctx.fillStyle = '#f0e6d3'
+    roundRect(ctx, x, y + 2, 7, 8, 1)
+    ctx.fill()
+    // Coffee inside
+    ctx.fillStyle = '#6b4a30'
+    ctx.fillRect(x + 1, y + 3, 5, 2)
+    // Handle
+    ctx.strokeStyle = '#ddd'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(x + 8, y + 6, 3, -Math.PI * 0.5, Math.PI * 0.5)
+    ctx.stroke()
+  },
+  bookStack(ctx, x, y) {
+    const colors = ['#cc4444', '#4488bb', '#8866aa', '#e8a855']
+    for (let i = 0; i < 4; i++) {
+      ctx.fillStyle = colors[i]
+      ctx.fillRect(x, y + i * 2.5, 9, 2)
+    }
+  },
+  deskLamp(ctx, x, y) {
+    // Arm
+    ctx.strokeStyle = '#666'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(x + 4, y + 10)
+    ctx.lineTo(x + 3, y + 4)
+    ctx.lineTo(x + 7, y + 1)
+    ctx.stroke()
+    // Shade
+    ctx.fillStyle = '#444'
+    ctx.beginPath()
+    ctx.moveTo(x + 3, y)
+    ctx.lineTo(x + 11, y)
+    ctx.lineTo(x + 9, y + 3)
+    ctx.lineTo(x + 5, y + 3)
+    ctx.closePath()
+    ctx.fill()
+    // Base
+    ctx.fillStyle = '#555'
+    ctx.fillRect(x + 1, y + 10, 6, 2)
+    // Glow
+    ctx.fillStyle = 'rgba(255,240,180,0.2)'
+    ctx.beginPath()
+    ctx.ellipse(x + 7, y + 4, 5, 3, 0, 0, Math.PI * 2)
+    ctx.fill()
+  },
+}
+
+const DECORATION_NAMES = Object.keys(DESK_DECORATIONS)
+
+// Deterministic hash for worker → decoration selection
+function hashString(str) {
+  let h = 0
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h) + str.charCodeAt(i)
+    h |= 0
+  }
+  return Math.abs(h)
+}
+
+export function getWorkerDecorations(workerName, skillProfile) {
+  const seed = hashString(workerName || 'default')
+  const count = 2 + (seed % 2)  // 2 or 3 decorations
+  const decorations = []
+  const used = new Set()
+  for (let i = 0; i < count; i++) {
+    let idx = (seed + i * 7) % DECORATION_NAMES.length
+    while (used.has(idx)) idx = (idx + 1) % DECORATION_NAMES.length
+    used.add(idx)
+    decorations.push(DECORATION_NAMES[idx])
+  }
+  return decorations
+}
+
+export function drawDeskDecoration(ctx, name, x, y) {
+  if (DESK_DECORATIONS[name]) DESK_DECORATIONS[name](ctx, x, y)
+}
+
+export function prerenderWallVariants() {
+  const S = DRAW_SIZE // 48
+  const variants = []
+  for (let mask = 0; mask < 16; mask++) {
+    const c = document.createElement('canvas')
+    c.width = S; c.height = S
+    const ctx = c.getContext('2d')
+    // Base fill
+    ctx.fillStyle = '#d4c4a8'
+    ctx.fillRect(0, 0, S, S)
+    // Panel texture
+    ctx.fillStyle = '#dcc8a0'
+    ctx.fillRect(2, 4, S - 4, S - 8)
+    // Borders on sides without adjacent wall
+    const hasN = mask & 1, hasE = mask & 2, hasS = mask & 4, hasW = mask & 8
+    ctx.fillStyle = '#b8a882'
+    if (!hasN) ctx.fillRect(0, 0, S, 3)        // top border
+    if (!hasS) ctx.fillRect(0, S - 3, S, 3)    // bottom border
+    if (!hasW) ctx.fillRect(0, 0, 3, S)        // left border
+    if (!hasE) ctx.fillRect(S - 3, 0, 3, S)    // right border
+    // Top decorative strip (no wall above)
+    if (!hasN) {
+      ctx.fillStyle = '#c9b896'
+      ctx.fillRect(0, 0, S, 2)
+    }
+    // Bottom baseboard (no wall below)
+    if (!hasS) {
+      ctx.fillStyle = '#8b7355'
+      ctx.fillRect(0, S - 2, S, 2)
+    }
+    variants.push(c)
+  }
+  return variants
 }
 
 export function prerenderFurniture(name) {

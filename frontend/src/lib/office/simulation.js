@@ -1051,6 +1051,7 @@ export class SimulationEngine {
     setTimeout(() => {
       for (const w of workers) {
         this._addBubble(w.id, this._getBubbleContent(w, 'celebration') || '🎉')
+        this.renderer.spawnConfetti?.(w.id, 20)
       }
     }, 3000)
     this._logActivity(`團隊慶祝！`)
@@ -1077,6 +1078,7 @@ export class SimulationEngine {
       this._interruptWorker(id)
       const dur = 3000
       this.renderer.showSpeech(id, '★ Done!', dur)
+      this.renderer.spawnConfetti?.(id, 25)
       this._log(id, 'task completed')
     }
 

@@ -22,6 +22,7 @@
     { id: 'office', key: 'nav.office', icon: '▣' },
     { id: 'retro', key: 'nav.retro', icon: '↻' },
     { id: 'approvals', key: 'nav.approvals', icon: '⚑' },
+    { id: 'skills', key: 'nav.skills', icon: '◆' },
     { id: 'settings', key: 'nav.settings', icon: '⚙' },
   ]
 </script>

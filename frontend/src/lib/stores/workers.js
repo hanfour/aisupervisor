@@ -68,3 +68,25 @@ export async function getSubordinates(workerID) {
   if (!window.go?.gui?.CompanyApp) return []
   return (await window.go.gui.CompanyApp.GetSubordinates(workerID)) || []
 }
+
+export const fullSkillProfiles = writable([])
+
+export async function loadFullSkillProfiles() {
+  if (!window.go?.gui?.CompanyApp) return
+  try {
+    const result = await window.go.gui.CompanyApp.ListFullSkillProfiles()
+    fullSkillProfiles.set(result || [])
+  } catch { /* ignore */ }
+}
+
+export async function saveSkillProfile(profile) {
+  await window.go.gui.CompanyApp.SaveSkillProfile(profile)
+  await loadFullSkillProfiles()
+  await loadSkillProfiles()
+}
+
+export async function deleteSkillProfile(id) {
+  await window.go.gui.CompanyApp.DeleteSkillProfile(id)
+  await loadFullSkillProfiles()
+  await loadSkillProfiles()
+}

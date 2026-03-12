@@ -84,6 +84,7 @@ const translations = {
   'workers.manager': { en: 'Manager:', zh: '管理員：' },
   'workers.none': { en: 'None', zh: '無' },
   'workers.noWorkers': { en: 'No workers', zh: '沒有員工' },
+  'workers.recommended': { en: 'Recommended', zh: '推薦配置' },
 
   // --- Board ---
   'board.addTask': { en: '+ Add Task', zh: '+ 新增任務' },
@@ -436,6 +437,9 @@ const translations = {
   'setup.installGuide': { en: 'Install Guide', zh: '安裝指引' },
   'setup.recheck': { en: 'Recheck', zh: '重新檢查' },
   'setup.startUsing': { en: 'Start Using', zh: '開始使用' },
+  'setup.workerCount': { en: 'Number of Workers', zh: '員工數量' },
+  'setup.configureWorkers': { en: 'Configure Workers', zh: '配置員工' },
+  'setup.creating': { en: 'Creating workers...', zh: '建立員工中...' },
 }
 
 /** @type {import('svelte/store').Readable<(key: string) => string>} */

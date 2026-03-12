@@ -1,5 +1,6 @@
 <script>
   import { t, language, setLanguage } from '../stores/i18n.js'
+  import { skillProfiles, loadSkillProfiles } from '../stores/workers.js'
 
   export let onComplete = () => {}
 
@@ -10,6 +11,26 @@
   let selectedTemplate = 'starter'
   let applying = false
   let createdWorkers = []
+
+  // Custom mode state
+  let customStep = 'count' // 'count' | 'configure' | 'creating'
+  let workerCount = 3
+  let customWorkers = []
+
+  const tierOptions = [
+    { id: 'engineer', label: 'Engineer' },
+    { id: 'manager', label: 'Manager' },
+    { id: 'consultant', label: 'Consultant' },
+  ]
+
+  function initCustomWorkers() {
+    customWorkers = Array.from({ length: workerCount }, (_, i) => ({
+      name: `Worker ${i + 1}`,
+      skillProfile: '',
+      tier: 'engineer',
+      gender: i % 2 === 0 ? 'male' : 'female',
+    }))
+  }
 
   async function checkDeps() {
     checking = true
@@ -26,6 +47,9 @@
     if (step === 2) {
       checkDeps()
     }
+    if (step === 3) {
+      loadSkillProfiles()
+    }
   }
 
   function prevStep() {
@@ -36,20 +60,50 @@
     applying = true
     try {
       await setLanguage(selectedLang)
-      await window.go.gui.CompanyApp.ApplyOnboarding({
-        companyName: '',
-        language: selectedLang,
-        teamTemplate: selectedTemplate,
-        apiKeySource: ''
-      })
-      // Load the created workers
-      const workers = await window.go.gui.CompanyApp.ListWorkers()
-      createdWorkers = workers
+      if (selectedTemplate === 'custom') {
+        // Custom mode: create empty company then batch create workers
+        await window.go.gui.CompanyApp.ApplyOnboarding({
+          companyName: '',
+          language: selectedLang,
+          teamTemplate: 'custom',
+          apiKeySource: ''
+        })
+        customStep = 'creating'
+        const result = await window.go.gui.CompanyApp.BatchCreateWorkers(customWorkers)
+        createdWorkers = result || []
+      } else {
+        await window.go.gui.CompanyApp.ApplyOnboarding({
+          companyName: '',
+          language: selectedLang,
+          teamTemplate: selectedTemplate,
+          apiKeySource: ''
+        })
+        const workers = await window.go.gui.CompanyApp.ListWorkers()
+        createdWorkers = workers
+      }
       step = 4
     } catch (e) {
       alert('Setup failed: ' + e.message)
     }
     applying = false
+    customStep = 'count'
+  }
+
+  function handleCustomNext() {
+    if (customStep === 'count') {
+      initCustomWorkers()
+      customStep = 'configure'
+    } else if (customStep === 'configure') {
+      applySetup()
+    }
+  }
+
+  function handleCustomBack() {
+    if (customStep === 'configure') {
+      customStep = 'count'
+    } else {
+      selectedTemplate = 'starter'
+    }
   }
 
   const requiredDeps = ['tmux', 'claude', 'git']
@@ -135,26 +189,76 @@
     {:else if step === 3}
       <div class="step-content">
         <h3>{$t('setup.teamSetup')}</h3>
-        <div class="template-options">
-          <label class="nes-radio-label">
-            <input type="radio" class="nes-radio is-dark" value="starter" bind:group={selectedTemplate} />
-            <span>🌟 {$t('setup.starterTeam')} (1 + 2)</span>
-          </label>
-          <label class="nes-radio-label">
-            <input type="radio" class="nes-radio is-dark" value="full" bind:group={selectedTemplate} />
-            <span>🏢 {$t('setup.fullTeam')} (1 + 3 + 12)</span>
-          </label>
-          <label class="nes-radio-label">
-            <input type="radio" class="nes-radio is-dark" value="custom" bind:group={selectedTemplate} />
-            <span>⚙️ {$t('setup.customTeam')}</span>
-          </label>
-        </div>
-        <div class="step-actions">
-          <button class="nes-btn" on:click={prevStep}>← Back</button>
-          <button class="nes-btn is-primary" disabled={applying} on:click={applySetup}>
-            {#if applying}{$t('common.loading')}{:else}{$t('setup.startUsing')}{/if}
-          </button>
-        </div>
+
+        {#if selectedTemplate !== 'custom' || customStep === 'count'}
+          <div class="template-options">
+            <label class="nes-radio-label">
+              <input type="radio" class="nes-radio is-dark" value="starter" bind:group={selectedTemplate} />
+              <span>🌟 {$t('setup.starterTeam')} (1 + 2)</span>
+            </label>
+            <label class="nes-radio-label">
+              <input type="radio" class="nes-radio is-dark" value="full" bind:group={selectedTemplate} />
+              <span>🏢 {$t('setup.fullTeam')} (1 + 3 + 12)</span>
+            </label>
+            <label class="nes-radio-label">
+              <input type="radio" class="nes-radio is-dark" value="custom" bind:group={selectedTemplate} />
+              <span>⚙️ {$t('setup.customTeam')}</span>
+            </label>
+          </div>
+
+          {#if selectedTemplate === 'custom'}
+            <div class="custom-count">
+              <label for="worker-count">{$t('setup.workerCount')}: {workerCount}</label>
+              <input type="range" id="worker-count" min="1" max="8" bind:value={workerCount} class="nes-progress" />
+            </div>
+          {/if}
+
+          <div class="step-actions">
+            <button class="nes-btn" on:click={prevStep}>← Back</button>
+            {#if selectedTemplate === 'custom'}
+              <button class="nes-btn is-primary" on:click={handleCustomNext}>Next →</button>
+            {:else}
+              <button class="nes-btn is-primary" disabled={applying} on:click={applySetup}>
+                {#if applying}{$t('common.loading')}{:else}{$t('setup.startUsing')}{/if}
+              </button>
+            {/if}
+          </div>
+
+        {:else if customStep === 'configure'}
+          <h4>{$t('setup.configureWorkers')}</h4>
+          <div class="custom-workers-list">
+            {#each customWorkers as cw, i}
+              <div class="custom-worker-row">
+                <span class="cw-num">#{i + 1}</span>
+                <input type="text" class="nes-input is-dark cw-name" bind:value={cw.name} placeholder="Name" />
+                <select class="nes-select-inline is-dark" bind:value={cw.skillProfile}>
+                  <option value="">-- Skill --</option>
+                  {#each $skillProfiles as sp}
+                    <option value={sp.id}>{sp.icon} {sp.name}</option>
+                  {/each}
+                </select>
+                <select class="nes-select-inline is-dark" bind:value={cw.tier}>
+                  {#each tierOptions as opt}
+                    <option value={opt.id}>{opt.label}</option>
+                  {/each}
+                </select>
+                <select class="nes-select-inline is-dark" bind:value={cw.gender}>
+                  <option value="male">♂</option>
+                  <option value="female">♀</option>
+                </select>
+              </div>
+            {/each}
+          </div>
+          <div class="step-actions">
+            <button class="nes-btn" on:click={handleCustomBack}>← Back</button>
+            <button class="nes-btn is-primary" disabled={applying} on:click={handleCustomNext}>
+              {#if applying}{$t('setup.creating')}{:else}{$t('setup.startUsing')}{/if}
+            </button>
+          </div>
+
+        {:else if customStep === 'creating'}
+          <p>{$t('setup.creating')}</p>
+        {/if}
       </div>
 
     <!-- Step 4: Complete -->
@@ -311,5 +415,58 @@
     padding: 0.25rem 0.5rem;
     border: 1px solid #555;
     font-size: 0.8rem;
+  }
+
+  .custom-count {
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    border: 1px solid #555;
+  }
+
+  .custom-count label {
+    font-size: 0.8rem;
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  .custom-count input[type="range"] {
+    width: 100%;
+    cursor: pointer;
+  }
+
+  .custom-workers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 1rem;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .custom-worker-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+  }
+
+  .cw-num {
+    color: #92cc41;
+    min-width: 1.5rem;
+    font-size: 0.7rem;
+  }
+
+  .cw-name {
+    width: 100px;
+    font-size: 0.7rem !important;
+    padding: 4px 6px !important;
+  }
+
+  .nes-select-inline {
+    font-size: 0.7rem;
+    padding: 3px 4px;
+    background: var(--bg-secondary, #212529);
+    color: inherit;
+    border: 2px solid #555;
   }
 </style>

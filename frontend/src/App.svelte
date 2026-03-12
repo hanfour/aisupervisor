@@ -41,6 +41,7 @@
   let OfficePage = null
   let RetroPage = null
   let ApprovalsPage = null
+  let SkillProfilesPage = null
 
   onMount(async () => {
     window.addEventListener('hashchange', onHashChange)
@@ -126,6 +127,11 @@
       const approvalsModule = await import('./lib/pages/ApprovalsPage.svelte')
       ApprovalsPage = approvalsModule.default
     } catch {}
+    // Skill profiles page
+    try {
+      const skillsMod = await import('./lib/pages/SkillProfilesPage.svelte')
+      SkillProfilesPage = skillsMod.default
+    } catch {}
   })
 
   function navigate(page, id) {
@@ -191,6 +197,8 @@
       <svelte:component this={OfficePage} />
     {:else if currentPage === 'approvals' && ApprovalsPage}
       <svelte:component this={ApprovalsPage} />
+    {:else if currentPage === 'skills' && SkillProfilesPage}
+      <svelte:component this={SkillProfilesPage} />
     {:else if currentPage === 'settings' && SettingsPage}
       <svelte:component this={SettingsPage} />
     {:else}

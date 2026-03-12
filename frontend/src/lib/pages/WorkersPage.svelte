@@ -16,6 +16,8 @@
   let newSkillProfile = ''
   let newGender = 'male'
   let selectedWorkerId = null
+  let teamComposition = []
+  let missingProfiles = []
 
   const avatarOptions = [
     { id: 'robot', label: 'Robot' },
@@ -87,6 +89,17 @@
     return tier.charAt(0).toUpperCase() + tier.slice(1) + 's'
   }
 
+  async function openHireDialog() {
+    showHire = true
+    try {
+      teamComposition = await window.go.gui.CompanyApp.GetTeamComposition() || []
+      const usedIds = new Set(teamComposition.map(tc => tc.profileId))
+      missingProfiles = $skillProfiles.filter(sp => !usedIds.has(sp.id))
+    } catch {
+      missingProfiles = []
+    }
+  }
+
   const tierOrder = ['consultant', 'manager', 'engineer']
 </script>
 
@@ -94,7 +107,7 @@
   <section class="nes-container with-title is-dark">
     <p class="title">{$t('workers.title')}</p>
     <div class="toolbar">
-      <button class="nes-btn is-success" on:click={() => showHire = true}>{$t('workers.hire')}</button>
+      <button class="nes-btn is-success" on:click={openHireDialog}>{$t('workers.hire')}</button>
     </div>
 
     <div class="hierarchy-grid">
@@ -210,6 +223,20 @@
               </select>
             </div>
           </div>
+
+          {#if missingProfiles.length > 0}
+            <div class="recommendation-box">
+              <p class="rec-title">{$t('workers.recommended')}</p>
+              <div class="rec-chips">
+                {#each missingProfiles.slice(0, 3) as sp}
+                  <button type="button" class="rec-chip" on:click={() => newSkillProfile = sp.id}>
+                    {sp.icon} {sp.name}
+                    <span class="rec-desc">{sp.description}</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
 
           <div class="nes-field">
             <label for="w-skill">{$t('workers.skillProfile')}</label>
@@ -398,5 +425,47 @@
     font-size: 8px;
     color: var(--text-secondary);
     margin: 4px 0 0;
+  }
+
+  .recommendation-box {
+    margin-bottom: 12px;
+    padding: 8px;
+    border: 2px solid var(--accent-blue);
+    background: rgba(0, 100, 255, 0.05);
+  }
+
+  .rec-title {
+    font-size: 10px;
+    color: var(--accent-blue);
+    margin: 0 0 6px;
+  }
+
+  .rec-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .rec-chip {
+    background: rgba(0, 255, 65, 0.08);
+    border: 2px solid rgba(0, 255, 65, 0.3);
+    color: var(--text-primary);
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 9px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    font-family: inherit;
+  }
+
+  .rec-chip:hover {
+    border-color: var(--accent-green);
+  }
+
+  .rec-chip .rec-desc {
+    font-size: 7px;
+    color: var(--text-secondary);
   }
 </style>

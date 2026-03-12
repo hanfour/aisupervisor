@@ -173,6 +173,32 @@ type SkillProfileDTO struct {
 	Icon        string `json:"icon"`
 }
 
+type FullSkillProfileDTO struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Icon            string   `json:"icon"`
+	SystemPrompt    string   `json:"systemPrompt"`
+	AllowedTools    []string `json:"allowedTools"`
+	DisallowedTools []string `json:"disallowedTools"`
+	Model           string   `json:"model"`
+	PermissionMode  string   `json:"permissionMode"`
+	ExtraCLIArgs    string   `json:"extraCliArgs"`
+	BuiltIn         bool     `json:"builtIn"`
+}
+
+type TeamCompositionDTO struct {
+	ProfileID string `json:"profileId"`
+	Count     int    `json:"count"`
+}
+
+type OnboardingWorkerDTO struct {
+	Name         string `json:"name"`
+	SkillProfile string `json:"skillProfile"`
+	Tier         string `json:"tier"`
+	Gender       string `json:"gender"`
+}
+
 func WorkerToDTO(w *worker.Worker) WorkerDTO {
 	return WorkerDTO{
 		ID:            w.ID,

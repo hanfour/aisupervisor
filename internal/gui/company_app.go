@@ -822,3 +822,127 @@ func (c *CompanyApp) GetDashboardAlerts() DashboardAlertsDTO {
 		PendingApprovals: pendingCount,
 	}
 }
+
+// ListFullSkillProfiles returns complete profile info including systemPrompt, tools, etc.
+func (c *CompanyApp) ListFullSkillProfiles() []FullSkillProfileDTO {
+	builtInIDs := make(map[string]bool)
+	for _, sp := range config.DefaultSkillProfiles() {
+		builtInIDs[sp.ID] = true
+	}
+	dtos := make([]FullSkillProfileDTO, len(c.skillProfiles))
+	for i, sp := range c.skillProfiles {
+		dtos[i] = FullSkillProfileDTO{
+			ID:              sp.ID,
+			Name:            sp.Name,
+			Description:     sp.Description,
+			Icon:            sp.Icon,
+			SystemPrompt:    sp.SystemPrompt,
+			AllowedTools:    sp.AllowedTools,
+			DisallowedTools: sp.DisallowedTools,
+			Model:           sp.Model,
+			PermissionMode:  sp.PermissionMode,
+			ExtraCLIArgs:    sp.ExtraCLIArgs,
+			BuiltIn:         builtInIDs[sp.ID],
+		}
+	}
+	return dtos
+}
+
+// SaveSkillProfile creates or updates a custom skill profile, persisting to config.yaml.
+func (c *CompanyApp) SaveSkillProfile(dto FullSkillProfileDTO) error {
+	cfg, err := config.Load("")
+	if err != nil {
+		return err
+	}
+	sp := config.SkillProfile{
+		ID:              dto.ID,
+		Name:            dto.Name,
+		Description:     dto.Description,
+		Icon:            dto.Icon,
+		SystemPrompt:    dto.SystemPrompt,
+		AllowedTools:    dto.AllowedTools,
+		DisallowedTools: dto.DisallowedTools,
+		Model:           dto.Model,
+		PermissionMode:  dto.PermissionMode,
+		ExtraCLIArgs:    dto.ExtraCLIArgs,
+	}
+	found := false
+	for i, existing := range cfg.SkillProfiles {
+		if existing.ID == sp.ID {
+			cfg.SkillProfiles[i] = sp
+			found = true
+			break
+		}
+	}
+	if !found {
+		cfg.SkillProfiles = append(cfg.SkillProfiles, sp)
+	}
+	if err := cfg.Save(""); err != nil {
+		return err
+	}
+	c.skillProfiles = config.MergeSkillProfiles(cfg.SkillProfiles)
+	return nil
+}
+
+// DeleteSkillProfile removes a custom skill profile (built-in profiles cannot be deleted).
+func (c *CompanyApp) DeleteSkillProfile(id string) error {
+	for _, sp := range config.DefaultSkillProfiles() {
+		if sp.ID == id {
+			return fmt.Errorf("cannot delete built-in profile %q", id)
+		}
+	}
+	cfg, err := config.Load("")
+	if err != nil {
+		return err
+	}
+	filtered := make([]config.SkillProfile, 0, len(cfg.SkillProfiles))
+	for _, sp := range cfg.SkillProfiles {
+		if sp.ID != id {
+			filtered = append(filtered, sp)
+		}
+	}
+	cfg.SkillProfiles = filtered
+	if err := cfg.Save(""); err != nil {
+		return err
+	}
+	c.skillProfiles = config.MergeSkillProfiles(cfg.SkillProfiles)
+	return nil
+}
+
+// GetTeamComposition returns the count of workers per skill profile.
+func (c *CompanyApp) GetTeamComposition() []TeamCompositionDTO {
+	counts := make(map[string]int)
+	for _, w := range c.company.ListWorkers() {
+		if w.SkillProfile != "" {
+			counts[w.SkillProfile]++
+		}
+	}
+	result := make([]TeamCompositionDTO, 0, len(counts))
+	for id, count := range counts {
+		result = append(result, TeamCompositionDTO{ProfileID: id, Count: count})
+	}
+	return result
+}
+
+// BatchCreateWorkers creates multiple workers at once (used by Setup Wizard custom mode).
+func (c *CompanyApp) BatchCreateWorkers(workers []OnboardingWorkerDTO) ([]WorkerDTO, error) {
+	var result []WorkerDTO
+	for _, w := range workers {
+		var opts []company.WorkerOption
+		if w.Tier != "" {
+			opts = append(opts, company.WithTier(worker.WorkerTier(w.Tier)))
+		}
+		if w.SkillProfile != "" {
+			opts = append(opts, company.WithSkillProfile(w.SkillProfile))
+		}
+		if w.Gender != "" {
+			opts = append(opts, company.WithGender(worker.WorkerGender(w.Gender)))
+		}
+		created, err := c.company.CreateWorker(w.Name, "", opts...)
+		if err != nil {
+			return result, fmt.Errorf("creating worker %s: %w", w.Name, err)
+		}
+		result = append(result, WorkerToDTO(created))
+	}
+	return result, nil
+}

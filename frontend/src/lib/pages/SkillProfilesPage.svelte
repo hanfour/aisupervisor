@@ -1,11 +1,24 @@
 <script>
   import { onMount } from 'svelte'
-  import { fullSkillProfiles, loadFullSkillProfiles, saveSkillProfile, deleteSkillProfile } from '../stores/workers.js'
+  import { fullSkillProfiles, loadFullSkillProfiles, saveSkillProfile, deleteSkillProfile,
+           searchSkillsMP, aiSearchSkillsMP, importSkillFromMP, mergeSkillsFromMP } from '../stores/workers.js'
   import { t } from '../stores/i18n.js'
 
   let showModal = false
   let editing = false
   let form = emptyForm()
+
+  // SkillsMP search state
+  let showSearchModal = false
+  let searchQuery = ''
+  let searchResults = []
+  let searchLoading = false
+  let searchError = ''
+
+  // Merge state
+  let mergeTarget = ''
+  let mergeLoading = false
+  let mergePreview = null
 
   function emptyForm() {
     return {
@@ -77,6 +90,79 @@
     if (!s) return ''
     return s.length > len ? s.slice(0, len) + '...' : s
   }
+
+  // --- SkillsMP Search ---
+
+  function openSearch() {
+    searchQuery = ''
+    searchResults = []
+    searchError = ''
+    mergePreview = null
+    showSearchModal = true
+  }
+
+  async function doSearch() {
+    if (!searchQuery.trim()) return
+    searchLoading = true
+    searchError = ''
+    try {
+      searchResults = (await searchSkillsMP(searchQuery)) || []
+    } catch (e) {
+      searchError = e.message || String(e)
+      searchResults = []
+    }
+    searchLoading = false
+  }
+
+  async function doAISearch() {
+    if (!searchQuery.trim()) return
+    searchLoading = true
+    searchError = ''
+    try {
+      searchResults = (await aiSearchSkillsMP(searchQuery)) || []
+    } catch (e) {
+      searchError = e.message || String(e)
+      searchResults = []
+    }
+    searchLoading = false
+  }
+
+  async function handleImport(skill) {
+    try {
+      const dto = await importSkillFromMP(skill.repo, skill.skillName)
+      if (dto) {
+        await saveSkillProfile(dto)
+        showSearchModal = false
+      }
+    } catch (e) {
+      alert('Import failed: ' + (e.message || e))
+    }
+  }
+
+  async function handleMerge(skill) {
+    if (!mergeTarget.trim()) {
+      mergeTarget = skill.skillName + '-merged'
+    }
+    mergeLoading = true
+    mergePreview = null
+    try {
+      mergePreview = await mergeSkillsFromMP(skill.repo, skill.skillName, mergeTarget)
+    } catch (e) {
+      alert('Merge failed: ' + (e.message || e))
+    }
+    mergeLoading = false
+  }
+
+  async function saveMergedProfile() {
+    if (!mergePreview) return
+    try {
+      await saveSkillProfile(mergePreview)
+      mergePreview = null
+      showSearchModal = false
+    } catch (e) {
+      alert('Save failed: ' + (e.message || e))
+    }
+  }
 </script>
 
 <div class="skills-page">
@@ -84,6 +170,7 @@
     <p class="title">{$t('skills.title')}</p>
     <div class="toolbar">
       <button class="nes-btn is-primary" on:click={openCreate}>+ {$t('skills.newProfile')}</button>
+      <button class="nes-btn is-success" on:click={openSearch}>{$t('skills.searchMP')}</button>
     </div>
 
     <div class="profile-grid">
@@ -195,6 +282,88 @@
   </div>
 {/if}
 
+{#if showSearchModal}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <div class="modal-overlay" on:click|self={() => showSearchModal = false} role="dialog">
+    <div class="nes-container is-dark is-rounded modal-box search-modal">
+      <h3>{$t('skills.searchMP')}</h3>
+
+      <div class="search-bar">
+        <input class="nes-input is-dark search-input" bind:value={searchQuery}
+          placeholder="e.g. code review, security..."
+          on:keydown={(e) => e.key === 'Enter' && doSearch()} />
+        <button class="nes-btn is-primary btn-sm" on:click={doSearch} disabled={searchLoading}>
+          {searchLoading ? $t('skills.searching') : $t('skills.searchMP')}
+        </button>
+        <button class="nes-btn is-success btn-sm" on:click={doAISearch} disabled={searchLoading}>
+          {$t('skills.aiSearch')}
+        </button>
+      </div>
+
+      {#if searchError}
+        <p class="search-error">{searchError}</p>
+      {/if}
+
+      {#if mergePreview}
+        <div class="merge-preview">
+          <h4>{$t('skills.mergePreview')}</h4>
+          <div class="preview-fields">
+            <p><strong>ID:</strong> {mergePreview.id}</p>
+            <p><strong>{$t('skills.name')}:</strong> {mergePreview.name}</p>
+            <p><strong>{$t('skills.description')}:</strong> {mergePreview.description}</p>
+            <p><strong>{$t('skills.model')}:</strong> {mergePreview.model}</p>
+            {#if mergePreview.systemPrompt}
+              <div class="preview-prompt">
+                <strong>{$t('skills.systemPrompt')}:</strong>
+                <pre>{truncate(mergePreview.systemPrompt, 500)}</pre>
+              </div>
+            {/if}
+          </div>
+          <div class="modal-actions">
+            <button class="nes-btn is-success" on:click={saveMergedProfile}>{$t('common.save')}</button>
+            <button class="nes-btn" on:click={() => mergePreview = null}>{$t('common.cancel')}</button>
+          </div>
+        </div>
+      {:else}
+        {#if searchResults.length > 0}
+          <div class="search-results">
+            <p class="results-title">{$t('skills.searchResults')} ({searchResults.length})</p>
+            {#each searchResults as skill}
+              <div class="result-item">
+                <div class="result-info">
+                  <strong class="result-name">{skill.name}</strong>
+                  <span class="result-stars">{skill.stars} {$t('skills.stars')}</span>
+                  <p class="result-desc">{truncate(skill.description, 120)}</p>
+                  <p class="result-repo">{skill.repo}</p>
+                </div>
+                <div class="result-actions">
+                  <button class="nes-btn is-primary btn-sm" on:click={() => handleImport(skill)}>
+                    {$t('skills.importSkill')}
+                  </button>
+                  <div class="merge-row">
+                    <input class="nes-input is-dark merge-input" bind:value={mergeTarget}
+                      placeholder={$t('skills.mergeName')} />
+                    <button class="nes-btn is-warning btn-sm" on:click={() => handleMerge(skill)}
+                      disabled={mergeLoading}>
+                      {mergeLoading ? $t('skills.merging') : $t('skills.mergeOptimize')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else if !searchLoading}
+          <p class="no-results">{$t('skills.noResults')}</p>
+        {/if}
+      {/if}
+
+      <div class="modal-actions">
+        <button class="nes-btn" on:click={() => showSearchModal = false}>{$t('common.close')}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .skills-page {
     height: 100%;
@@ -203,6 +372,8 @@
 
   .toolbar {
     margin-bottom: 16px;
+    display: flex;
+    gap: 8px;
   }
 
   .profile-grid {
@@ -295,6 +466,10 @@
     overflow-y: auto;
   }
 
+  .search-modal {
+    max-width: 780px;
+  }
+
   .modal-box h3 {
     margin-top: 0;
     font-size: 14px;
@@ -331,5 +506,130 @@
 
   .nes-badge {
     font-size: 8px;
+  }
+
+  /* --- Search Modal Styles --- */
+
+  .search-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    align-items: center;
+  }
+
+  .search-input {
+    flex: 1;
+    font-size: 10px !important;
+  }
+
+  .search-error {
+    font-size: 9px;
+    color: #e74c3c;
+    margin: 4px 0;
+  }
+
+  .search-results {
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+
+  .results-title {
+    font-size: 10px;
+    margin-bottom: 8px;
+    color: var(--text-secondary, #aaa);
+  }
+
+  .result-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 8px;
+    border: 2px solid var(--border-color, #555);
+    margin-bottom: 8px;
+  }
+
+  .result-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .result-name {
+    font-size: 11px;
+  }
+
+  .result-stars {
+    font-size: 9px;
+    color: #f1c40f;
+    margin-left: 8px;
+  }
+
+  .result-desc {
+    font-size: 9px;
+    color: var(--text-secondary, #aaa);
+    margin: 4px 0 2px;
+  }
+
+  .result-repo {
+    font-size: 8px;
+    color: var(--text-secondary, #666);
+    margin: 0;
+  }
+
+  .result-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .merge-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .merge-input {
+    width: 120px;
+    font-size: 9px !important;
+    padding: 2px 4px !important;
+  }
+
+  .no-results {
+    font-size: 10px;
+    color: var(--text-secondary, #aaa);
+    text-align: center;
+    padding: 20px;
+  }
+
+  .merge-preview {
+    border: 2px solid #2ecc71;
+    padding: 12px;
+    margin: 8px 0;
+  }
+
+  .merge-preview h4 {
+    margin-top: 0;
+    font-size: 12px;
+    color: #2ecc71;
+  }
+
+  .preview-fields {
+    font-size: 10px;
+  }
+
+  .preview-fields p {
+    margin: 4px 0;
+  }
+
+  .preview-prompt pre {
+    font-size: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+    background: rgba(0,0,0,0.3);
+    padding: 8px;
+    margin-top: 4px;
   }
 </style>

@@ -31,6 +31,7 @@ type Config struct {
 	HumanGate            HumanGateConfig                `yaml:"human_gate,omitempty"`
 	WorkerSkillOverrides map[string]SkillProfileOverride `yaml:"worker_skill_overrides,omitempty"`
 	UpdateURL            string                         `yaml:"update_url,omitempty"` // URL base for auto-update checks
+	SkillsMPAPIKey       string                         `yaml:"skillsmp_api_key,omitempty"`
 }
 
 // SkillProfileOverride holds per-worker customizations layered on top of the base SkillProfile.

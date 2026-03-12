@@ -2,10 +2,13 @@ package gui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
@@ -16,6 +19,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
+	"github.com/hanfourmini/aisupervisor/internal/skillsmp"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
@@ -30,8 +34,9 @@ type CompanyApp struct {
 	trainingDir   string
 	skillProfiles []config.SkillProfile
 	spawner       *worker.Spawner
-	version       string
-	updateURL     string
+	version        string
+	updateURL      string
+	skillsmpClient *skillsmp.Client
 }
 
 func NewCompanyApp(company *company.Manager, tmuxClient tmux.TmuxClient, version string) *CompanyApp {
@@ -117,6 +122,17 @@ func (c *CompanyApp) ListSkillProfiles() []SkillProfileDTO {
 func (c *CompanyApp) Startup(ctx context.Context) {
 	c.ctx = ctx
 	go startCompanyEventForwarding(ctx, c.company)
+	c.initSkillsMP()
+}
+
+func (c *CompanyApp) initSkillsMP() {
+	cfg, err := config.Load("")
+	if err != nil {
+		return
+	}
+	if cfg.SkillsMPAPIKey != "" {
+		c.skillsmpClient = skillsmp.NewClient(cfg.SkillsMPAPIKey)
+	}
 }
 
 // Shutdown is called by Wails when the application shuts down.
@@ -922,6 +938,182 @@ func (c *CompanyApp) GetTeamComposition() []TeamCompositionDTO {
 		result = append(result, TeamCompositionDTO{ProfileID: id, Count: count})
 	}
 	return result
+}
+
+// --- SkillsMP Marketplace ---
+
+// GetSkillsMPAPIKey returns the stored SkillsMP API key.
+func (c *CompanyApp) GetSkillsMPAPIKey() string {
+	cfg, err := config.Load("")
+	if err != nil {
+		return ""
+	}
+	return cfg.SkillsMPAPIKey
+}
+
+// SetSkillsMPAPIKey saves the SkillsMP API key and re-initializes the client.
+func (c *CompanyApp) SetSkillsMPAPIKey(key string) error {
+	cfg, err := config.Load("")
+	if err != nil {
+		return err
+	}
+	cfg.SkillsMPAPIKey = key
+	if err := cfg.Save(""); err != nil {
+		return err
+	}
+	if key != "" {
+		c.skillsmpClient = skillsmp.NewClient(key)
+	} else {
+		c.skillsmpClient = nil
+	}
+	return nil
+}
+
+// SearchSkillsMP searches the SkillsMP marketplace by keyword.
+func (c *CompanyApp) SearchSkillsMP(query string) ([]SkillsMPSearchResultDTO, error) {
+	if c.skillsmpClient == nil {
+		return nil, fmt.Errorf("SkillsMP API key not configured")
+	}
+	result, err := c.skillsmpClient.Search(c.ctx, query, 1, 20)
+	if err != nil {
+		return nil, err
+	}
+	dtos := make([]SkillsMPSearchResultDTO, len(result.Skills))
+	for i, s := range result.Skills {
+		dtos[i] = SkillsMPSearchResultDTO{
+			Name:        s.Name,
+			Description: s.Description,
+			Repo:        s.Repo,
+			Stars:       s.Stars,
+			SkillName:   s.SkillName,
+		}
+	}
+	return dtos, nil
+}
+
+// AISearchSkillsMP performs semantic AI search on the SkillsMP marketplace.
+func (c *CompanyApp) AISearchSkillsMP(query string) ([]SkillsMPSearchResultDTO, error) {
+	if c.skillsmpClient == nil {
+		return nil, fmt.Errorf("SkillsMP API key not configured")
+	}
+	skills, err := c.skillsmpClient.AISearch(c.ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	dtos := make([]SkillsMPSearchResultDTO, len(skills))
+	for i, s := range skills {
+		dtos[i] = SkillsMPSearchResultDTO{
+			Name:        s.Name,
+			Description: s.Description,
+			Repo:        s.Repo,
+			Stars:       s.Stars,
+			SkillName:   s.SkillName,
+		}
+	}
+	return dtos, nil
+}
+
+// ImportSkillFromMP reads a skill from SkillsMP and converts it to a FullSkillProfileDTO.
+func (c *CompanyApp) ImportSkillFromMP(repo, skillName string) (*FullSkillProfileDTO, error) {
+	if c.skillsmpClient == nil {
+		return nil, fmt.Errorf("SkillsMP API key not configured")
+	}
+	content, err := c.skillsmpClient.ReadSkill(c.ctx, repo, skillName)
+	if err != nil {
+		return nil, err
+	}
+	return &FullSkillProfileDTO{
+		ID:           skillName,
+		Name:         skillName,
+		Description:  fmt.Sprintf("Imported from %s", repo),
+		SystemPrompt: content,
+		Model:        "sonnet",
+	}, nil
+}
+
+// MergeSkillsFromMP reads a base skill, finds similar skills via AI search,
+// and uses Claude API to merge them into a single optimized profile.
+func (c *CompanyApp) MergeSkillsFromMP(baseRepo, baseSkillName, targetName string) (*FullSkillProfileDTO, error) {
+	if c.skillsmpClient == nil {
+		return nil, fmt.Errorf("SkillsMP API key not configured")
+	}
+
+	// 1. Read base skill content
+	baseContent, err := c.skillsmpClient.ReadSkill(c.ctx, baseRepo, baseSkillName)
+	if err != nil {
+		return nil, fmt.Errorf("reading base skill: %w", err)
+	}
+
+	// 2. Find similar skills via AI search
+	similarSkills, err := c.skillsmpClient.AISearch(c.ctx, baseSkillName+" "+baseContent[:min(200, len(baseContent))])
+	if err != nil {
+		log.Printf("AI search for similar skills failed: %v", err)
+		similarSkills = nil
+	}
+
+	// 3. Read similar skill contents (up to 5)
+	var similarContents []string
+	limit := min(5, len(similarSkills))
+	for i := 0; i < limit; i++ {
+		s := similarSkills[i]
+		if s.Repo == baseRepo && s.SkillName == baseSkillName {
+			continue
+		}
+		content, err := c.skillsmpClient.ReadSkill(c.ctx, s.Repo, s.SkillName)
+		if err != nil {
+			continue
+		}
+		similarContents = append(similarContents, fmt.Sprintf("### Skill: %s (from %s)\n%s", s.Name, s.Repo, content))
+	}
+
+	// 4. Build merge prompt and call Claude API
+	chatProvider := c.company.GetChatProvider()
+	if chatProvider == nil {
+		return nil, fmt.Errorf("no chat backend configured — cannot merge skills with AI")
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Base Skill: " + baseSkillName + " (from " + baseRepo + ")\n")
+	sb.WriteString(baseContent)
+	sb.WriteString("\n\n## Similar Skills for Reference:\n")
+	for _, sc := range similarContents {
+		sb.WriteString("\n" + sc + "\n")
+	}
+
+	userPrompt := sb.String() + "\n\nPlease merge these skills into a single optimized skill profile. " +
+		"Return ONLY valid JSON with these fields: " +
+		`{"id":"...","name":"...","description":"...","icon":"...","systemPrompt":"...","allowedTools":["..."],"disallowedTools":["..."],"model":"sonnet","permissionMode":"acceptEdits","extraCliArgs":""}` +
+		"\nThe profile name should be: " + targetName
+
+	messages := []ai.ChatMessage{
+		{Role: "system", Content: "You are an AI skill expert. Given multiple skill definitions, merge and optimize them into a unique, comprehensive skill profile configuration. Return ONLY valid JSON, no markdown code blocks."},
+		{Role: "user", Content: userPrompt},
+	}
+
+	resp, err := chatProvider.Chat(c.ctx, messages)
+	if err != nil {
+		return nil, fmt.Errorf("AI merge failed: %w", err)
+	}
+
+	// 5. Parse response JSON
+	// Strip markdown code block if present
+	resp = strings.TrimSpace(resp)
+	if strings.HasPrefix(resp, "```") {
+		lines := strings.Split(resp, "\n")
+		if len(lines) > 2 {
+			lines = lines[1 : len(lines)-1]
+			resp = strings.Join(lines, "\n")
+		}
+	}
+
+	var dto FullSkillProfileDTO
+	if err := json.Unmarshal([]byte(resp), &dto); err != nil {
+		return nil, fmt.Errorf("failed to parse AI response as JSON: %w\nRaw response: %s", err, resp[:min(500, len(resp))])
+	}
+
+	dto.Name = targetName
+	dto.ID = strings.ToLower(strings.ReplaceAll(targetName, " ", "-"))
+	return &dto, nil
 }
 
 // BatchCreateWorkers creates multiple workers at once (used by Setup Wizard custom mode).

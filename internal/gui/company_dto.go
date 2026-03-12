@@ -439,6 +439,26 @@ type SkillProfileAdjustmentDTO struct {
 	ModelChange     string   `json:"modelChange,omitempty"`
 }
 
+// SkillsMPSearchResultDTO represents a skill from the SkillsMP marketplace.
+type SkillsMPSearchResultDTO struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Repo        string `json:"repo"`
+	Stars       int    `json:"stars"`
+	SkillName   string `json:"skillName"`
+}
+
+// SkillsMPMergeRequestDTO holds parameters for merging skills from SkillsMP.
+type SkillsMPMergeRequestDTO struct {
+	BaseSkillRepo string `json:"baseSkillRepo"`
+	BaseSkillName string `json:"baseSkillName"`
+	SimilarSkills []struct {
+		Repo      string `json:"repo"`
+		SkillName string `json:"skillName"`
+	} `json:"similarSkills"`
+	TargetProfileName string `json:"targetProfileName"`
+}
+
 type SkillProfileOverrideDTO struct {
 	ExtraPrompt   string   `json:"extraPrompt,omitempty"`
 	AddTools      []string `json:"addTools,omitempty"`

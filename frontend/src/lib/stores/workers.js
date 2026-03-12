@@ -90,3 +90,21 @@ export async function deleteSkillProfile(id) {
   await loadFullSkillProfiles()
   await loadSkillProfiles()
 }
+
+// --- SkillsMP Marketplace ---
+
+export async function searchSkillsMP(query) {
+  return await window.go.gui.CompanyApp.SearchSkillsMP(query)
+}
+
+export async function aiSearchSkillsMP(query) {
+  return await window.go.gui.CompanyApp.AISearchSkillsMP(query)
+}
+
+export async function importSkillFromMP(repo, skillName) {
+  return await window.go.gui.CompanyApp.ImportSkillFromMP(repo, skillName)
+}
+
+export async function mergeSkillsFromMP(baseRepo, baseSkillName, targetName) {
+  return await window.go.gui.CompanyApp.MergeSkillsFromMP(baseRepo, baseSkillName, targetName)
+}

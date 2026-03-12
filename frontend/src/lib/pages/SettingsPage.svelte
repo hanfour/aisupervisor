@@ -14,6 +14,8 @@
   let appVersion = ''
   let updateStatus = '' // '', 'checking', 'up-to-date', 'available'
   let updateInfo = null
+  let skillsmpKey = ''
+  let skillsmpSaveMsg = ''
 
   onMount(async () => {
     if (window.go?.gui?.App) {
@@ -22,6 +24,7 @@
     if (window.go?.gui?.CompanyApp) {
       language = (await window.go.gui.CompanyApp.GetLanguage()) || 'zh-TW'
       appVersion = (await window.go.gui.CompanyApp.GetVersion()) || 'dev'
+      skillsmpKey = (await window.go.gui.CompanyApp.GetSkillsMPAPIKey()) || ''
     }
   })
 
@@ -135,6 +138,26 @@
         <span>繁體中文</span>
       </label>
     </div>
+  </section>
+
+  <section class="nes-container with-title is-dark">
+    <p class="title">{$t('settings.skillsmpKey')}</p>
+    <div class="skillsmp-row">
+      <input type="password" class="nes-input is-dark skillsmp-input" bind:value={skillsmpKey} placeholder="sk-..." />
+      <button class="nes-btn is-primary btn-sm" on:click={async () => {
+        try {
+          await window.go.gui.CompanyApp.SetSkillsMPAPIKey(skillsmpKey)
+          skillsmpSaveMsg = $t('settings.skillsmpKeySaved')
+          setTimeout(() => skillsmpSaveMsg = '', 3000)
+        } catch (e) {
+          skillsmpSaveMsg = 'Error: ' + (e.message || e)
+        }
+      }}>{$t('common.save')}</button>
+    </div>
+    <p class="hint-text">{$t('settings.skillsmpKeyHint')}</p>
+    {#if skillsmpSaveMsg}
+      <p class="save-msg" class:error={skillsmpSaveMsg.startsWith('Error')}>{skillsmpSaveMsg}</p>
+    {/if}
   </section>
 
   <section class="nes-container with-title is-dark">
@@ -405,5 +428,32 @@
   .btn-sm {
     font-size: 9px !important;
     padding: 4px 8px !important;
+  }
+
+  .skillsmp-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .skillsmp-input {
+    flex: 1;
+    font-size: 10px !important;
+  }
+
+  .hint-text {
+    font-size: 8px;
+    color: var(--text-secondary, #888);
+    margin-top: 4px;
+  }
+
+  .save-msg {
+    font-size: 9px;
+    margin-top: 4px;
+    color: #2ecc71;
+  }
+
+  .save-msg.error {
+    color: #e74c3c;
   }
 </style>

@@ -2,11 +2,66 @@ package worker
 
 import (
 	"context"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
+
+// Separate regexes to avoid double-counting (input+output vs total)
+var (
+	// Matches "Total tokens: 12,345" or "tokens used: 5000" (aggregate totals)
+	totalTokensRe = regexp.MustCompile(`(?i)total\s+tokens?(?:\s+used)?[:\s]+([0-9][0-9,_]+)`)
+	// Matches "input tokens: 12,345" or "output tokens: 6,789" (individual counts)
+	ioTokensRe = regexp.MustCompile(`(?i)(input|output)\s+tokens?[:\s]+([0-9][0-9,_]+)`)
+	// Matches Claude Code's cost summary: "Total cost: $0.1234"
+	costRe = regexp.MustCompile(`(?i)total\s+cost[:\s]+\$([0-9]+\.?[0-9]*)`)
+)
+
+// ParseTokenUsage extracts approximate token usage from Claude Code pane output.
+// Prefers "Total tokens" (single value), falls back to summing input+output,
+// then estimates from cost. Returns 0 if no usage is found.
+func ParseTokenUsage(paneContent string) int64 {
+	// Strategy 1: Look for an explicit total (avoids double-counting)
+	if matches := totalTokensRe.FindAllStringSubmatch(paneContent, -1); len(matches) > 0 {
+		last := matches[len(matches)-1]
+		if val := parseTokenNum(last[1]); val > 0 {
+			return val
+		}
+	}
+
+	// Strategy 2: Sum input + output tokens separately
+	ioMatches := ioTokensRe.FindAllStringSubmatch(paneContent, -1)
+	if len(ioMatches) > 0 {
+		var total int64
+		for _, m := range ioMatches {
+			total += parseTokenNum(m[2])
+		}
+		if total > 0 {
+			return total
+		}
+	}
+
+	// Strategy 3: Estimate from cost ($3/MTok average)
+	if matches := costRe.FindAllStringSubmatch(paneContent, -1); len(matches) > 0 {
+		last := matches[len(matches)-1]
+		cost, err := strconv.ParseFloat(last[1], 64)
+		if err == nil && cost > 0 {
+			return int64(cost / 3.0 * 1_000_000)
+		}
+	}
+
+	return 0
+}
+
+func parseTokenNum(s string) int64 {
+	s = strings.ReplaceAll(s, ",", "")
+	s = strings.ReplaceAll(s, "_", "")
+	val, _ := strconv.ParseInt(s, 10, 64)
+	return val
+}
 
 type CompletionResult struct {
 	Success bool
@@ -32,11 +87,13 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 
 	var lastContent string
 	noChangeCount := 0
-	const noChangeThreshold = 90 // 90 seconds of no change after meaningful activity
+	noChangeThreshold := noChangeThresholdForModel(w.ModelVersion) // seconds of no change after meaningful activity
 	hadActivity := false
 	useAider := w.CLITool == "aider"
 	changeCount := 0              // total number of content changes observed
 	const minChanges = 3          // require at least 3 content changes before no_change can trigger
+	captureErrors := 0            // consecutive CapturePane failures
+	const maxCaptureErrors = 30   // after 30 consecutive errors, check if session is dead
 
 	// Grace period: ignore idle prompts for the first N seconds after monitoring starts.
 	// This prevents false completion when the CLI briefly shows an idle prompt between
@@ -51,8 +108,17 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 		case <-ticker.C:
 			content, err := m.tmuxClient.CapturePane(w.TmuxSession, w.Window, w.Pane, 20)
 			if err != nil {
+				captureErrors++
+				if captureErrors >= maxCaptureErrors {
+					// Check if tmux session still exists
+					if exists, _ := m.tmuxClient.HasSession(w.TmuxSession); !exists {
+						return CompletionResult{Success: false, Reason: "session_dead"}, nil
+					}
+					captureErrors = 0 // session exists, reset counter
+				}
 				continue
 			}
+			captureErrors = 0
 
 			// Check for shell prompt (CLI has exited)
 			if isShellPrompt(content) && hadActivity {
@@ -122,6 +188,22 @@ func isAiderIdle(content string) bool {
 		}
 	}
 	return false
+}
+
+// noChangeThresholdForModel returns the no-change timeout in seconds based on model.
+// Larger/slower models get longer timeouts to avoid premature completion.
+func noChangeThresholdForModel(model string) int {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "opus"):
+		return 180 // 3 minutes for opus
+	case strings.Contains(m, "sonnet"):
+		return 120 // 2 minutes for sonnet
+	case strings.Contains(m, "haiku"):
+		return 60 // 1 minute for haiku
+	default:
+		return 90 // default
+	}
 }
 
 func isShellPrompt(content string) bool {

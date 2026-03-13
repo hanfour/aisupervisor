@@ -440,6 +440,49 @@ const translations = {
   // --- Board ---
   'board.escalation': { en: 'Escalation', zh: '升級' },
 
+  // --- Objectives ---
+  'nav.objectives': { en: 'Objectives', zh: '目標' },
+  'objectives.title': { en: 'Company Objectives', zh: '公司目標' },
+  'objectives.create': { en: '+ New Objective', zh: '+ 新增目標' },
+  'objectives.empty': { en: 'No objectives yet. Create one to get started!', zh: '還沒有目標。建立一個開始吧！' },
+  'objectives.titleLabel': { en: 'Title', zh: '標題' },
+  'objectives.descLabel': { en: 'Description', zh: '描述' },
+  'objectives.budgetLabel': { en: 'Token Budget Limit', zh: 'Token 預算上限' },
+  'objectives.keyResults': { en: 'Key Results', zh: '關鍵結果' },
+  'objectives.linkedProjects': { en: 'Projects', zh: '關聯專案' },
+  'objectives.decompose': { en: 'AI Decompose', zh: 'AI 拆解' },
+  'objectives.decomposing': { en: 'Decomposing...', zh: '拆解中...' },
+
+  // --- Board Overview ---
+  'nav.boardOverview': { en: 'Board', zh: '董事會' },
+  'boardOverview.title': { en: 'Board Overview', zh: '董事會總覽' },
+  'boardOverview.objectives': { en: 'Objectives', zh: '目標' },
+  'boardOverview.projects': { en: 'Projects', zh: '專案' },
+  'boardOverview.tasks': { en: 'Tasks', zh: '任務' },
+  'boardOverview.workers': { en: 'Workers', zh: '員工' },
+  'boardOverview.approvalRate': { en: 'Approval Rate', zh: '核准率' },
+  'boardOverview.budget': { en: 'Monthly Budget', zh: '月度預算' },
+  'boardOverview.tokensUsed': { en: 'Tokens Used', zh: 'Token 使用量' },
+  'boardOverview.tasksThisMonth': { en: 'Tasks This Month', zh: '本月任務數' },
+  'boardOverview.objectiveProgress': { en: 'Objective Progress', zh: '目標進度' },
+  'boardOverview.performance': { en: 'Worker Performance', zh: '員工績效' },
+  'boardOverview.worker': { en: 'Worker', zh: '員工' },
+  'boardOverview.completed': { en: 'Completed', zh: '完成' },
+  'boardOverview.failed': { en: 'Failed', zh: '失敗' },
+  'boardOverview.approval': { en: 'Approval', zh: '核准' },
+  'boardOverview.tokens': { en: 'Tokens', zh: 'Token' },
+
+  // --- Worker Pause/Resume ---
+  'workers.pause': { en: 'Pause', zh: '暫停' },
+  'workers.resume': { en: 'Resume', zh: '恢復' },
+  'workers.paused': { en: 'Paused', zh: '已暫停' },
+  'workerDetail.titleLabel': { en: 'Title', zh: '職稱' },
+
+  // --- Dashboard Budget ---
+  'dashboard.budget': { en: 'Monthly Budget', zh: '月度預算' },
+  'dashboard.tokensUsed': { en: 'Tokens Used', zh: 'Token 使用量' },
+  'dashboard.objectiveProgress': { en: 'Objectives', zh: '目標進度' },
+
   // --- Setup Wizard ---
   'setup.welcome': { en: 'Welcome to AI Supervisor', zh: '歡迎使用 AI Supervisor' },
   'setup.languageSelect': { en: 'Select Language', zh: '選擇語言' },

@@ -19,6 +19,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
+	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/skillsmp"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/training"
@@ -823,7 +824,7 @@ func (c *CompanyApp) GetDashboardAlerts() DashboardAlertsDTO {
 	escalatedCount := 0
 	for _, p := range c.company.ListProjects() {
 		for _, t := range c.company.ListTasks(p.ID) {
-			if string(t.Status) == "escalation" {
+			if t.Status == project.TaskEscalation {
 				escalatedCount++
 			}
 		}
@@ -1137,4 +1138,100 @@ func (c *CompanyApp) BatchCreateWorkers(workers []OnboardingWorkerDTO) ([]Worker
 		result = append(result, WorkerToDTO(created))
 	}
 	return result, nil
+}
+
+// --- Objective operations ---
+
+// ObjectiveDTO is the frontend representation of an objective.
+type ObjectiveDTO struct {
+	ID          string              `json:"id"`
+	Title       string              `json:"title"`
+	Description string              `json:"description"`
+	KeyResults  []company.KeyResult `json:"keyResults"`
+	ProjectIDs  []string            `json:"projectIds"`
+	Status      string              `json:"status"`
+	BudgetLimit int64               `json:"budgetLimit"`
+	CreatedAt   string              `json:"createdAt"`
+}
+
+func objectiveToDTO(o company.Objective) ObjectiveDTO {
+	return ObjectiveDTO{
+		ID:          o.ID,
+		Title:       o.Title,
+		Description: o.Description,
+		KeyResults:  o.KeyResults,
+		ProjectIDs:  o.ProjectIDs,
+		Status:      string(o.Status),
+		BudgetLimit: o.BudgetLimit,
+		CreatedAt:   o.CreatedAt.Format("2006-01-02 15:04"),
+	}
+}
+
+func (c *CompanyApp) CreateObjective(title, description string, budgetLimit int64) (*ObjectiveDTO, error) {
+	obj, err := c.company.CreateObjective(title, description, budgetLimit)
+	if err != nil {
+		return nil, err
+	}
+	dto := objectiveToDTO(*obj)
+	return &dto, nil
+}
+
+func (c *CompanyApp) ListObjectives() []ObjectiveDTO {
+	objs := c.company.ListObjectives()
+	dtos := make([]ObjectiveDTO, len(objs))
+	for i, o := range objs {
+		dtos[i] = objectiveToDTO(o)
+	}
+	return dtos
+}
+
+func (c *CompanyApp) GetObjective(id string) (*ObjectiveDTO, error) {
+	obj, ok := c.company.GetObjective(id)
+	if !ok {
+		return nil, fmt.Errorf("objective %q not found", id)
+	}
+	dto := objectiveToDTO(*obj)
+	return &dto, nil
+}
+
+func (c *CompanyApp) DecomposeObjective(objectiveID string) ([]string, error) {
+	return c.company.DecomposeObjective(c.ctx, objectiveID)
+}
+
+func (c *CompanyApp) UpdateKeyResult(objectiveID, krID string, current float64) error {
+	return c.company.UpdateKeyResult(objectiveID, krID, current)
+}
+
+func (c *CompanyApp) DeleteObjective(id string) error {
+	return c.company.DeleteObjective(id)
+}
+
+// --- Budget operations ---
+
+func (c *CompanyApp) GetBudgetSummary() company.BudgetSummary {
+	return c.company.GetBudgetSummary()
+}
+
+func (c *CompanyApp) SetMonthlyBudget(tokenBudget int64) error {
+	return c.company.SetMonthlyBudget(tokenBudget)
+}
+
+// --- Worker pause/resume ---
+
+func (c *CompanyApp) PauseWorker(workerID string) error {
+	return c.company.PauseWorker(workerID)
+}
+
+func (c *CompanyApp) ResumeWorker(workerID string) error {
+	return c.company.ResumeWorker(c.ctx, workerID)
+}
+
+// --- Analytics ---
+
+func (c *CompanyApp) GetPerformanceHistory(workerID string) []company.PerformanceSnapshot {
+	return c.company.GetPerformanceHistory(workerID)
+}
+
+func (c *CompanyApp) GetCompanyOverview() company.CompanyOverview {
+	return c.company.GetCompanyOverview()
 }

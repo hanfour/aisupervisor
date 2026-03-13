@@ -6,6 +6,8 @@ export const companyStats = writable({ projects: 0, inProgress: 0, idleWorkers: 
 export const reviewQueue = writable([])
 export const trainingStats = writable({ totalPairs: 0, accepted: 0, rejected: 0, approvalRate: 0 })
 export const dashboardAlerts = writable({ stuckWorkers: 0, escalatedTasks: 0, pendingApprovals: 0 })
+export const budgetSummary = writable({ currentMonth: '', tokenBudget: 0, tokensUsed: 0, taskCount: 0, usagePercent: 0 })
+export const objectivesList = writable([])
 const MAX_EVENTS = 200
 
 export function initCompanyStore() {
@@ -81,6 +83,26 @@ export async function loadDashboardAlerts() {
   try {
     const result = await window.go.gui.CompanyApp.GetDashboardAlerts()
     dashboardAlerts.set(result || { stuckWorkers: 0, escalatedTasks: 0, pendingApprovals: 0 })
+  } catch {
+    // ignore
+  }
+}
+
+export async function loadBudgetSummary() {
+  if (!window.go?.gui?.CompanyApp) return
+  try {
+    const result = await window.go.gui.CompanyApp.GetBudgetSummary()
+    budgetSummary.set(result || { currentMonth: '', tokenBudget: 0, tokensUsed: 0, taskCount: 0, usagePercent: 0 })
+  } catch {
+    // ignore
+  }
+}
+
+export async function loadObjectivesList() {
+  if (!window.go?.gui?.CompanyApp) return
+  try {
+    const result = await window.go.gui.CompanyApp.ListObjectives()
+    objectivesList.set(result || [])
   } catch {
     // ignore
   }

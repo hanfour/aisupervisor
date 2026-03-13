@@ -137,8 +137,26 @@ func extractChatJSON(text string) string {
 	}
 
 	depth := 0
+	inString := false
+	escape := false
 	for i := start; i < len(text); i++ {
-		switch text[i] {
+		ch := text[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escape = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch ch {
 		case '{':
 			depth++
 		case '}':

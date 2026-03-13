@@ -12,8 +12,10 @@
 
   const navKeys = [
     { id: 'dashboard', key: 'nav.dashboard', icon: '⊞' },
+    { id: 'objectives', key: 'nav.objectives', icon: '◎' },
     { id: 'projects', key: 'nav.projects', icon: '◈' },
     { id: 'board', key: 'nav.board', icon: '▦' },
+    { id: 'boardOverview', key: 'nav.boardOverview', icon: '▩' },
     { id: 'workers', key: 'nav.workers', icon: '☺' },
     { id: 'hierarchy', key: 'nav.hierarchy', icon: '⊿' },
     { id: 'terminal', key: 'nav.terminal', icon: '⊟' },

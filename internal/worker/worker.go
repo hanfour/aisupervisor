@@ -10,6 +10,7 @@ const (
 	WorkerWaiting  WorkerStatus = "waiting"
 	WorkerFinished WorkerStatus = "finished"
 	WorkerError    WorkerStatus = "error"
+	WorkerPaused   WorkerStatus = "paused"
 )
 
 type WorkerGender string
@@ -63,6 +64,7 @@ type Worker struct {
 	CLITool       string       `yaml:"cli_tool,omitempty" json:"cliTool,omitempty"`
 	SkillProfile  string       `yaml:"skill_profile,omitempty" json:"skillProfile,omitempty"`
 	Role          WorkerRole   `yaml:"role,omitempty" json:"role,omitempty"`
+	Title         string       `yaml:"title,omitempty" json:"title,omitempty"`
 	Gender        WorkerGender    `yaml:"gender,omitempty" json:"gender,omitempty"`
 	Appearance    *WorkerAppearance `yaml:"appearance,omitempty" json:"appearance,omitempty"`
 	CreatedAt     time.Time       `yaml:"created_at" json:"createdAt"`

@@ -102,10 +102,21 @@ func (rp *ReviewPipeline) DrainQueue(ctx context.Context) {
 		return
 	}
 
+	// Take a snapshot of the queue and clear it to avoid races with concurrent DrainQueue calls
+	snapshot := make([]ReviewRequest, len(rp.reviewQueue))
+	copy(snapshot, rp.reviewQueue)
+	rp.reviewQueue = nil
+	rp.mu.Unlock()
+
 	var remaining []ReviewRequest
-	for _, req := range rp.reviewQueue {
+	for _, req := range snapshot {
+		// Check manager status under m.mu to get a consistent read
+		rp.mgr.mu.RLock()
 		managerWorker, ok := rp.mgr.workers[req.ManagerID]
-		if !ok || managerWorker.Status != worker.WorkerIdle {
+		idle := ok && managerWorker.Status == worker.WorkerIdle
+		rp.mgr.mu.RUnlock()
+
+		if !idle {
 			remaining = append(remaining, req)
 			continue
 		}
@@ -119,14 +130,17 @@ func (rp *ReviewPipeline) DrainQueue(ctx context.Context) {
 			continue
 		}
 
-		rp.mu.Unlock()
 		if err := rp.executeReview(ctx, req, managerWorker, t, p); err != nil {
 			remaining = append(remaining, req)
 		}
-		rp.mu.Lock()
 	}
-	rp.reviewQueue = remaining
-	rp.mu.Unlock()
+
+	// Put back any remaining items
+	if len(remaining) > 0 {
+		rp.mu.Lock()
+		rp.reviewQueue = append(rp.reviewQueue, remaining...)
+		rp.mu.Unlock()
+	}
 }
 
 func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, managerWorker *worker.Worker, t *project.Task, p *project.Project) error {
@@ -184,14 +198,34 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 
 	// Read manager's output to determine verdict
 	output := rp.captureManagerOutput(managerWorker)
-	approved := parseReviewVerdict(output)
-	log.Printf("HandleReviewResult: reviewTask=%s originalTask=%s approved=%v outputLen=%d output_tail=%q",
-		reviewTask.ID, originalTask.ID, approved, len(output), func() string {
+	verdict := parseReviewVerdict(output)
+	approved := verdict == verdictApproved
+	log.Printf("HandleReviewResult: reviewTask=%s originalTask=%s verdict=%d outputLen=%d output_tail=%q",
+		reviewTask.ID, originalTask.ID, verdict, len(output), func() string {
 			if len(output) > 300 {
 				return output[len(output)-300:]
 			}
 			return output
 		}())
+
+	// Inconclusive verdict: request human intervention instead of auto-rejecting
+	if verdict == verdictInconclusive {
+		rp.mgr.humanGate.createRequest(HumanGateRequest{
+			Reason:   "review_inconclusive",
+			TaskID:   originalTask.ID,
+			WorkerID: managerWorker.ID,
+			Message:  rp.mgr.msgf("Review of task %q by %s produced no clear verdict — please review manually", "管理員 %s 對任務 %q 的審查結果不明確，請手動審核", managerWorker.Name, originalTask.Title),
+			Blocking: true,
+		})
+		rp.mgr.emit(Event{
+			Type:      EventHumanInterventionRequired,
+			ProjectID: p.ID,
+			TaskID:    originalTask.ID,
+			WorkerID:  managerWorker.ID,
+			Message:   rp.mgr.msgf("Review inconclusive for task %q — awaiting human decision", "任務 %q 審查結果不明確，等待人工決定", originalTask.Title),
+		})
+		return
+	}
 
 	// Capture training data via collector
 	rp.captureTrainingData(originalTask, managerWorker, p, output, approved)
@@ -289,11 +323,19 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			Message:   rp.mgr.msgf("Task %q sent back for revision", "任務 %q 已退回修改", originalTask.Title),
 		})
 
-		// Update prompt with feedback and re-queue
+		// Update prompt with feedback and re-queue.
+		// Strip previous feedback sections to prevent unbounded prompt growth.
+		basePrompt := originalTask.Prompt
+		if idx := strings.Index(basePrompt, "\n\n--- Review Feedback ---\n"); idx != -1 {
+			basePrompt = basePrompt[:idx]
+		}
+		if idx := strings.Index(basePrompt, "\n\n--- 審查回饋 ---\n"); idx != -1 {
+			basePrompt = basePrompt[:idx]
+		}
 		if rp.mgr.GetLanguage() == "en" {
-			originalTask.Prompt = fmt.Sprintf("%s\n\n--- Review Feedback ---\n%s\n\nPlease address the above feedback and resubmit.", originalTask.Prompt, output)
+			originalTask.Prompt = fmt.Sprintf("%s\n\n--- Review Feedback (attempt %d) ---\n%s\n\nPlease address the above feedback and resubmit.", basePrompt, originalTask.RejectionCount, output)
 		} else {
-			originalTask.Prompt = fmt.Sprintf("%s\n\n--- 審查回饋 ---\n%s\n\n請針對以上回饋進行修改後重新提交。", originalTask.Prompt, output)
+			originalTask.Prompt = fmt.Sprintf("%s\n\n--- 審查回饋（第 %d 次）---\n%s\n\n請針對以上回饋進行修改後重新提交。", basePrompt, originalTask.RejectionCount, output)
 		}
 		originalTask.Status = project.TaskReady
 		rp.mgr.projectStore.SaveTask(originalTask)
@@ -429,15 +471,22 @@ func sanitizeForYAML(s string) string {
 		}
 	}
 
-	// Limit length to avoid bloating YAML
+	// Limit length to avoid bloating YAML — keep head + tail for context
 	if len(s) > 2000 {
-		s = s[len(s)-2000:]
+		head := s[:500]
+		tail := s[len(s)-1500:]
+		s = head + "\n\n[... truncated ...]\n\n" + tail
 	}
 
 	return s
 }
 
 func (rp *ReviewPipeline) buildReviewPrompt(t *project.Task, p *project.Project) string {
+	baseBranch := p.BaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
 	var sb strings.Builder
 	if rp.mgr.GetLanguage() == "en" {
 		sb.WriteString("IMPORTANT: Start reviewing IMMEDIATELY. No planning or preparation needed.\n\n")
@@ -447,8 +496,8 @@ func (rp *ReviewPipeline) buildReviewPrompt(t *project.Task, p *project.Project)
 			sb.WriteString(fmt.Sprintf("Description: %s\n", t.Description))
 		}
 		sb.WriteString("\nSteps:\n")
-		sb.WriteString(fmt.Sprintf("1. Run `git log main..%s --oneline` to see commits\n", t.BranchName))
-		sb.WriteString(fmt.Sprintf("2. Run `git diff main...%s` to review all changes\n", t.BranchName))
+		sb.WriteString(fmt.Sprintf("1. Run `git log %s..%s --oneline` to see commits\n", baseBranch, t.BranchName))
+		sb.WriteString(fmt.Sprintf("2. Run `git diff %s...%s` to review all changes\n", baseBranch, t.BranchName))
 		sb.WriteString("3. Check code quality, correctness, and test coverage\n")
 		sb.WriteString("4. End your response with EXACTLY one of:\n")
 		sb.WriteString("   APPROVED\n")
@@ -461,8 +510,8 @@ func (rp *ReviewPipeline) buildReviewPrompt(t *project.Task, p *project.Project)
 			sb.WriteString(fmt.Sprintf("描述：%s\n", t.Description))
 		}
 		sb.WriteString("\n步驟：\n")
-		sb.WriteString(fmt.Sprintf("1. 執行 `git log main..%s --oneline` 查看提交紀錄\n", t.BranchName))
-		sb.WriteString(fmt.Sprintf("2. 執行 `git diff main...%s` 審查所有變更\n", t.BranchName))
+		sb.WriteString(fmt.Sprintf("1. 執行 `git log %s..%s --oneline` 查看提交紀錄\n", baseBranch, t.BranchName))
+		sb.WriteString(fmt.Sprintf("2. 執行 `git diff %s...%s` 審查所有變更\n", baseBranch, t.BranchName))
 		sb.WriteString("3. 檢查程式碼品質、正確性和測試覆蓋率\n")
 		sb.WriteString("4. 在回覆最後務必使用以下其中一個結論：\n")
 		sb.WriteString("   APPROVED\n")
@@ -471,25 +520,38 @@ func (rp *ReviewPipeline) buildReviewPrompt(t *project.Task, p *project.Project)
 	return sb.String()
 }
 
-// parseReviewVerdict determines if a review output indicates approval.
-func parseReviewVerdict(output string) bool {
+// reviewVerdict represents the outcome of a review.
+type reviewVerdict int
+
+const (
+	verdictInconclusive reviewVerdict = iota
+	verdictApproved
+	verdictRejected
+)
+
+// parseReviewVerdict determines the review outcome from manager output.
+// Returns verdictInconclusive if neither APPROVED nor REJECTED is found.
+func parseReviewVerdict(output string) reviewVerdict {
 	lower := strings.ToLower(output)
 	// Check last 5000 bytes for the verdict.
-	// Must be large enough to account for UTF-8 multi-byte chars
-	// (CJK = 3 bytes each, box-drawing ─ = 3 bytes each)
-	// and scrollback content from Claude Code's verbose output.
 	if len(lower) > 5000 {
 		lower = lower[len(lower)-5000:]
 	}
-	if strings.Contains(lower, "approved") {
-		// Make sure it's not "not approved"
-		if strings.Contains(lower, "rejected") {
-			// If both present, last one wins
-			approvedIdx := strings.LastIndex(lower, "approved")
-			rejectedIdx := strings.LastIndex(lower, "rejected")
-			return approvedIdx > rejectedIdx
-		}
-		return true
+	hasApproved := strings.Contains(lower, "approved")
+	hasRejected := strings.Contains(lower, "rejected")
+
+	if !hasApproved && !hasRejected {
+		return verdictInconclusive
 	}
-	return false
+	if hasApproved && hasRejected {
+		// Both present: last one wins
+		if strings.LastIndex(lower, "approved") > strings.LastIndex(lower, "rejected") {
+			return verdictApproved
+		}
+		return verdictRejected
+	}
+	if hasApproved {
+		return verdictApproved
+	}
+	return verdictRejected
 }

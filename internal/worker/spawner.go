@@ -111,6 +111,9 @@ func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOve
 func (s *Spawner) buildSkillArgs(w *Worker) string {
 	sp, ok := s.skillProfiles[w.SkillProfile]
 	if !ok {
+		if w.SkillProfile != "" {
+			log.Printf("WARNING: skill profile %q not found for worker %s (%s), spawning without restrictions", w.SkillProfile, w.ID, w.Name)
+		}
 		return ""
 	}
 
@@ -265,9 +268,9 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 
 	s.tmuxClient.SendLiteralKeys(tmuxName, 0, 0, prompt)
 	// Wait for the CLI to finish rendering the pasted text before pressing Enter.
-	// Without this delay, Enter can be lost or misinterpreted, especially for
-	// large multi-line prompts (e.g. PRD prompts).
-	time.Sleep(1 * time.Second)
+	// Scale delay with prompt length to handle large multi-line prompts.
+	delay := promptRenderDelay(len(prompt))
+	time.Sleep(delay)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
 	// 8. Update worker state
@@ -304,6 +307,34 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 		go s.sup.Monitor(ctx, ms)
 	}
 
+	return nil
+}
+
+// promptRenderDelay returns how long to wait after SendLiteralKeys before pressing Enter.
+// Scales with prompt length: 1s base + 500ms per 2000 chars, capped at 5s.
+func promptRenderDelay(promptLen int) time.Duration {
+	base := 1 * time.Second
+	extra := time.Duration(promptLen/2000) * 500 * time.Millisecond
+	total := base + extra
+	if total > 5*time.Second {
+		total = 5 * time.Second
+	}
+	return total
+}
+
+// SendPromptToExisting sends a prompt to an already-running tmux session.
+// Used for resume after pause, where the session is still alive.
+func (s *Spawner) SendPromptToExisting(w *Worker, prompt string) error {
+	if w.TmuxSession == "" {
+		return fmt.Errorf("worker has no tmux session")
+	}
+	has, err := s.tmuxClient.HasSession(w.TmuxSession)
+	if err != nil || !has {
+		return fmt.Errorf("tmux session %s not found", w.TmuxSession)
+	}
+	s.tmuxClient.SendLiteralKeys(w.TmuxSession, w.Window, w.Pane, prompt)
+	time.Sleep(1 * time.Second)
+	s.tmuxClient.SendKeys(w.TmuxSession, w.Window, w.Pane, "Enter")
 	return nil
 }
 
@@ -508,6 +539,10 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 
 	if lang == "en" {
 		sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
+		sb.WriteString(fmt.Sprintf("Project: %s\n", p.Name))
+		if p.Description != "" {
+			sb.WriteString(fmt.Sprintf("Description: %s\n\n", p.Description))
+		}
 		sb.WriteString(t.Prompt)
 		if t.BranchName != "" {
 			sb.WriteString(fmt.Sprintf("\n\nYou are working on branch: %s", t.BranchName))
@@ -522,8 +557,22 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 		sb.WriteString("\n\n--- When Done ---\n")
 		sb.WriteString("1. Commit all changes with a descriptive message\n")
 		sb.WriteString("2. Type /stop to signal completion\n")
+		if tier == TierManager || tier == TierConsultant {
+			sb.WriteString("\n--- Delegation ---\n")
+			sb.WriteString("If you need to delegate sub-tasks to subordinates, output EXACTLY this JSON format:\n")
+			sb.WriteString(`{"delegate": [{"title": "Short task title", "prompt": "Detailed step-by-step instructions for the assignee", "priority": 1}]}`)
+			sb.WriteString("\nFields:\n")
+			sb.WriteString("- title (required): concise task name\n")
+			sb.WriteString("- prompt (required): full instructions the assignee will receive\n")
+			sb.WriteString("- priority (required): 1 = highest, 2 = normal, 3 = low\n")
+			sb.WriteString("Only output this JSON block when you have concrete work to delegate. Do NOT delegate if you can complete the task yourself.\n")
+		}
 	} else {
 		sb.WriteString("重要：請立即開始寫程式碼。不要建立規劃文件、設計文件或架構文件。直接寫程式碼。\n\n")
+		sb.WriteString(fmt.Sprintf("專案：%s\n", p.Name))
+		if p.Description != "" {
+			sb.WriteString(fmt.Sprintf("描述：%s\n\n", p.Description))
+		}
 		sb.WriteString(t.Prompt)
 		if t.BranchName != "" {
 			sb.WriteString(fmt.Sprintf("\n\n你正在分支上工作：%s", t.BranchName))
@@ -538,6 +587,16 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 		sb.WriteString("\n\n--- 完成時 ---\n")
 		sb.WriteString("1. 用描述性訊息提交所有變更\n")
 		sb.WriteString("2. 輸入 /stop 表示完成\n")
+		if tier == TierManager || tier == TierConsultant {
+			sb.WriteString("\n--- 委派 ---\n")
+			sb.WriteString("當你需要將工作委派給下屬時，請嚴格按照以下 JSON 格式輸出：\n")
+			sb.WriteString(`{"delegate": [{"title": "簡短任務標題", "prompt": "給被指派者的詳細步驟指示", "priority": 1}]}`)
+			sb.WriteString("\n欄位說明：\n")
+			sb.WriteString("- title（必填）：簡潔的任務名稱\n")
+			sb.WriteString("- prompt（必填）：被指派者將收到的完整指示\n")
+			sb.WriteString("- priority（必填）：1 = 最高、2 = 一般、3 = 低\n")
+			sb.WriteString("只有在你有具體工作需要委派時才輸出此 JSON。如果你自己能完成任務，請不要委派。\n")
+		}
 	}
 
 	return sb.String()

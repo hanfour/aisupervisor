@@ -107,6 +107,28 @@
     }
   }
 
+  async function handlePause() {
+    if (!worker) return
+    try {
+      await window.go.gui.CompanyApp.PauseWorker(worker.id)
+      await loadData(worker.id)
+      await loadWorkers()
+    } catch (e) {
+      addError('Pause failed: ' + (e.message || e))
+    }
+  }
+
+  async function handleResume() {
+    if (!worker) return
+    try {
+      await window.go.gui.CompanyApp.ResumeWorker(worker.id)
+      await loadData(worker.id)
+      await loadWorkers()
+    } catch (e) {
+      addError('Resume failed: ' + (e.message || e))
+    }
+  }
+
   async function handleDeleteWorker() {
     if (!worker) return
     if (!confirm($t('workerDetail.deleteConfirm').replace('{name}', worker.name))) return
@@ -176,10 +198,23 @@
           </div>
         {/if}
 
+        <!-- Title -->
+        {#if worker.title}
+          <div class="detail-row">
+            <span class="label">{$t('workerDetail.titleLabel')}</span>
+            <span class="value">{worker.title}</span>
+          </div>
+        {/if}
+
         <!-- Status -->
         <div class="detail-row">
           <span class="label">{$t('workerDetail.status')}</span>
           <span class="nes-badge"><span class="is-primary">{worker.status}</span></span>
+          {#if worker.status === 'working'}
+            <button class="nes-btn is-warning btn-sm" on:click={handlePause}>{$t('workers.pause')}</button>
+          {:else if worker.status === 'paused'}
+            <button class="nes-btn is-success btn-sm" on:click={handleResume}>{$t('workers.resume')}</button>
+          {/if}
         </div>
 
         <!-- IDs & Config -->

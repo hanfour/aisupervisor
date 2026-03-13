@@ -46,6 +46,12 @@ const (
 	EventPRDCompleted              EventType = "prd_completed"
 	EventPRDApproved               EventType = "prd_approved"
 	EventDesignCompleted           EventType = "design_completed"
+	EventObjectiveCreated          EventType = "objective_created"
+	EventDelegationCreated         EventType = "delegation_created"
+	EventWorkerPaused              EventType = "worker_paused"
+	EventWorkerResumed             EventType = "worker_resumed"
+	EventBudgetWarning             EventType = "budget_warning"
+	EventObjectiveCompleted        EventType = "objective_completed"
 )
 
 type Event struct {

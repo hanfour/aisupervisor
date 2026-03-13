@@ -42,6 +42,8 @@
   let RetroPage = null
   let ApprovalsPage = null
   let SkillProfilesPage = null
+  let ObjectivesPage = null
+  let BoardOverviewPage = null
 
   onMount(async () => {
     window.addEventListener('hashchange', onHashChange)
@@ -132,6 +134,16 @@
       const skillsMod = await import('./lib/pages/SkillProfilesPage.svelte')
       SkillProfilesPage = skillsMod.default
     } catch {}
+    // Objectives page
+    try {
+      const objMod = await import('./lib/pages/ObjectivesPage.svelte')
+      ObjectivesPage = objMod.default
+    } catch {}
+    // Board overview page
+    try {
+      const boardOverMod = await import('./lib/pages/BoardOverviewPage.svelte')
+      BoardOverviewPage = boardOverMod.default
+    } catch {}
   })
 
   function navigate(page, id) {
@@ -199,6 +211,10 @@
       <svelte:component this={ApprovalsPage} />
     {:else if currentPage === 'skills' && SkillProfilesPage}
       <svelte:component this={SkillProfilesPage} />
+    {:else if currentPage === 'objectives' && ObjectivesPage}
+      <svelte:component this={ObjectivesPage} onNavigate={navigate} />
+    {:else if currentPage === 'boardOverview' && BoardOverviewPage}
+      <svelte:component this={BoardOverviewPage} />
     {:else if currentPage === 'settings' && SettingsPage}
       <svelte:component this={SettingsPage} />
     {:else}

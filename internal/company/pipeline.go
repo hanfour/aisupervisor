@@ -102,6 +102,9 @@ When done:
 // handlePRDCompletion processes a completed PRD task.
 // Must be called with m.mu held. Releases m.mu before returning.
 func (m *Manager) handlePRDCompletion(w *worker.Worker, t *project.Task, p *project.Project) {
+	// Record token usage and analytics
+	m.recordCompletionMetrics(w, t, true)
+
 	// Mark task as done
 	if err := m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone); err != nil {
 		log.Printf("failed to update PRD task %s status: %v", t.ID, err)
@@ -164,6 +167,9 @@ func (m *Manager) handlePRDCompletion(w *worker.Worker, t *project.Task, p *proj
 // handleDesignCompletion processes a completed design task.
 // Must be called with m.mu held. Releases m.mu before returning.
 func (m *Manager) handleDesignCompletion(w *worker.Worker, t *project.Task, p *project.Project) {
+	// Record token usage and analytics
+	m.recordCompletionMetrics(w, t, true)
+
 	// Mark task as done (no gate for design)
 	if err := m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone); err != nil {
 		log.Printf("failed to update design task %s status: %v", t.ID, err)
@@ -269,6 +275,10 @@ func (m *Manager) advanceFromPRD(prdTaskID string) {
 	if err := m.DecomposeFromPRD(ctx, p.ID, prdContent); err != nil {
 		log.Printf("WARNING: DecomposeFromPRD failed for project %s: %v", p.ID, err)
 	}
+
+	// Engage idle workers with newly created tasks
+	go m.engageIdleManagers(context.Background(), p.ID)
+	go m.drainReadyQueue(context.Background())
 }
 
 // DecomposeFromPRD uses AI to break a PRD into actionable tasks.
@@ -385,15 +395,32 @@ func preferredProfiles(taskType project.TaskType) []string {
 	}
 }
 
+// tierCompatible checks if a worker tier is appropriate for a task type.
+// Managers should not do regular code tasks; engineers should not do management tasks.
+func tierCompatible(tier worker.WorkerTier, taskType project.TaskType) bool {
+	switch tier {
+	case worker.TierManager:
+		// Managers handle reviews (via review pipeline), PRD, admin, HR, and delegated code tasks
+		// but should not be auto-assigned regular code/research tasks
+		return taskType != project.TaskTypeCode && taskType != project.TaskTypeResearch
+	case worker.TierConsultant:
+		// Consultants can handle any task type
+		return true
+	default:
+		// Engineers handle code, research, design tasks
+		return taskType != project.TaskTypePRD && taskType != project.TaskTypeAdmin && taskType != project.TaskTypeHR
+	}
+}
+
 // matchWorker selects the best idle worker ID for a task using soft skill matching.
 // First tries to match preferred skill profiles, then falls back to any idle worker.
-// Returns empty string if no match found.
+// Filters by tier compatibility. Returns empty string if no match found.
 func matchWorker(t *project.Task, idle []idleWorkerSnapshot, assigned map[string]bool) string {
 	preferred := preferredProfiles(t.Type)
 
-	// First pass: find skill profile match
+	// First pass: find skill profile match with tier compatibility
 	for _, w := range idle {
-		if assigned[w.ID] {
+		if assigned[w.ID] || !tierCompatible(w.Tier, t.Type) {
 			continue
 		}
 		for _, pref := range preferred {
@@ -403,9 +430,9 @@ func matchWorker(t *project.Task, idle []idleWorkerSnapshot, assigned map[string
 		}
 	}
 
-	// Second pass: any idle worker (soft fallback)
+	// Second pass: any tier-compatible idle worker (soft fallback)
 	for _, w := range idle {
-		if assigned[w.ID] {
+		if assigned[w.ID] || !tierCompatible(w.Tier, t.Type) {
 			continue
 		}
 		return w.ID

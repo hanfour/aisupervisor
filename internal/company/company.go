@@ -58,6 +58,12 @@ type Manager struct {
 	commMatrix       *CommunicationMatrix
 	lastPaneContent  map[string]paneSnapshot
 	lastHealthReport *HealthReport
+	objectives       []Objective
+	objectivesPath   string
+	budgets          []MonthlyBudget
+	budgetsPath      string
+	analytics        []PerformanceSnapshot
+	draining         atomic.Bool // debounce flag for drainReadyQueue
 }
 
 type workersFile struct {
@@ -121,6 +127,8 @@ func New(
 		ollamaEndpoint:   ollamaEndpoint,
 		ollamaModel:      ollamaModel,
 		lastPaneContent:  make(map[string]paneSnapshot),
+		objectivesPath:   objectivesFilePath(dataDir),
+		budgetsPath:      budgetsFilePath(dataDir),
 	}
 	m.review = newReviewPipeline(m)
 	m.modelStrategy = NewModelStrategy()
@@ -133,6 +141,12 @@ func New(
 
 	if err := m.loadWorkers(); err != nil && !os.IsNotExist(err) {
 		return nil, err
+	}
+	if err := m.loadObjectives(); err != nil {
+		log.Printf("warning: failed to load objectives: %v", err)
+	}
+	if err := m.loadBudgets(); err != nil {
+		log.Printf("warning: failed to load budgets: %v", err)
 	}
 
 	// Recovery: reset workers with stale tmux sessions to idle
@@ -714,6 +728,11 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 	}
 	if err := m.spawner.SpawnForTask(ctx, w, t, p); err != nil {
 		m.projectStore.UpdateTaskStatus(taskID, project.TaskReady)
+		// Schedule a delayed retry via drainReadyQueue
+		go func() {
+			time.Sleep(10 * time.Second)
+			m.drainReadyQueue(context.Background())
+		}()
 		return fmt.Errorf("spawning worker: %w", err)
 	}
 
@@ -760,7 +779,16 @@ func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *proj
 
 	result, err := m.monitor.WatchForCompletion(ctx, w)
 	if err != nil {
-		// Context cancelled — not an error
+		// Context cancelled (shutdown or manual pause) — reset worker to idle
+		// so it doesn't remain stuck in "working" state
+		m.mu.Lock()
+		if w.Status == worker.WorkerWorking {
+			w.Status = worker.WorkerIdle
+			w.CurrentTaskID = ""
+			m.saveWorkers()
+			m.projectStore.UpdateTaskStatus(t.ID, project.TaskReady)
+		}
+		m.mu.Unlock()
 		return
 	}
 
@@ -798,6 +826,9 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	if result.Success {
 		// Check if this is a review task (has a parent task)
 		if t.ParentTaskID != "" {
+			// Record token usage and analytics for review sub-task
+			m.recordCompletionMetrics(w, t, true)
+
 			// Reset manager to idle
 			w.Status = worker.WorkerIdle
 			w.CurrentTaskID = ""
@@ -833,6 +864,9 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		// Check if engineer with a parent → route to manager review
 		// Guard: skip review for tasks that are themselves review sub-tasks (have ParentTaskID)
 		if w.EffectiveTier() == worker.TierEngineer && w.ParentID != "" && t.ParentTaskID == "" {
+			// Record token usage and analytics before routing to review
+			m.recordCompletionMetrics(w, t, true)
+
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskCodeReview)
 
 			m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
@@ -898,7 +932,7 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			Message:   m.msgf("Task %q completed (reason: %s)", "任務 %q 已完成（原因：%s）", t.Title, result.Reason),
 		})
 	} else {
-		m.projectStore.UpdateTaskStatus(t.ID, project.TaskFailed)
+		const maxRetries = 2
 
 		m.personalityStore.UpdateProfile(w.ID, func(prof *personality.CharacterProfile) {
 			personality.ApplyEvent(prof, personality.EventTaskFailed)
@@ -910,13 +944,36 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 			Message:  fmt.Sprintf("Mood changed for %s", w.Name),
 		})
 
-		m.emit(Event{
-			Type:      EventTaskFailed,
-			ProjectID: p.ID,
-			TaskID:    t.ID,
-			WorkerID:  w.ID,
-			Message:   m.msgf("Task %q failed", "任務 %q 失敗", t.Title),
-		})
+		// Auto-retry if under the retry limit
+		if t.RetryCount < maxRetries {
+			t.RetryCount++
+			m.projectStore.SaveTask(t)
+			m.projectStore.UpdateTaskStatus(t.ID, project.TaskReady)
+			m.emit(Event{
+				Type:      EventTaskFailed,
+				ProjectID: p.ID,
+				TaskID:    t.ID,
+				WorkerID:  w.ID,
+				Message:   m.msgf("Task %q failed, auto-retrying (%d/%d)", "任務 %q 失敗，自動重試（%d/%d）", t.Title, t.RetryCount, maxRetries),
+			})
+		} else {
+			m.projectStore.UpdateTaskStatus(t.ID, project.TaskFailed)
+			m.emit(Event{
+				Type:      EventTaskFailed,
+				ProjectID: p.ID,
+				TaskID:    t.ID,
+				WorkerID:  w.ID,
+				Message:   m.msgf("Task %q failed after %d retries", "任務 %q 重試 %d 次後仍然失敗", t.Title, maxRetries),
+			})
+		}
+	}
+
+	// Record token usage, analytics, and budget checks
+	m.recordCompletionMetrics(w, t, result.Success)
+
+	// Check for delegation output from managers
+	if result.Success && (w.EffectiveTier() == worker.TierManager || w.EffectiveTier() == worker.TierConsultant) {
+		m.handleDelegationOutput(w, t, p)
 	}
 
 	// Reset worker to idle
@@ -961,6 +1018,42 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	go m.checkProjectCompletion(projectID)
 }
 
+// recordCompletionMetrics captures token usage, analytics snapshot, and budget checks.
+// Must be called with m.mu held.
+func (m *Manager) recordCompletionMetrics(w *worker.Worker, t *project.Task, success bool) {
+	if w.TmuxSession != "" && m.tmuxClient != nil {
+		paneOut, err := m.tmuxClient.CapturePane(w.TmuxSession, w.Window, w.Pane, 500)
+		if err == nil {
+			tokens := worker.ParseTokenUsage(paneOut)
+			if tokens > 0 {
+				m.RecordTokenUsage(t.ID, tokens)
+			}
+		}
+	}
+	m.recordAnalyticsSnapshot(w.ID, success)
+
+	// Reload task to get updated TokensConsumed after RecordTokenUsage
+	if updated, ok := m.projectStore.GetTask(t.ID); ok {
+		if updated.BudgetLimit > 0 {
+			if m.circuitBreaker.CheckBudget(updated) {
+				m.emit(Event{
+					Type:      EventTaskEscalated,
+					ProjectID: t.ProjectID,
+					TaskID:    t.ID,
+					Message:   m.msgf("Task %q exceeded budget limit", "任務 %q 已超出預算上限", t.Title),
+				})
+			} else if m.circuitBreaker.BudgetWarning(updated) {
+				m.emit(Event{
+					Type:      EventBudgetWarning,
+					ProjectID: t.ProjectID,
+					TaskID:    t.ID,
+					Message:   m.msgf("Task %q approaching budget limit (>80%% used)", "任務 %q 即將達到預算上限（已使用 >80%%）", t.Title),
+				})
+			}
+		}
+	}
+}
+
 // handleResearchCompletion processes a completed research task: extracts the JSON
 // report from the tmux pane output, saves it, and marks the task as done.
 // Must be called with m.mu held. Releases m.mu before returning (does not re-acquire).
@@ -984,6 +1077,9 @@ func (m *Manager) handleResearchCompletion(w *worker.Worker, t *project.Task, p 
 	if err := m.projectStore.SaveReport(report); err != nil {
 		log.Printf("failed to save research report for task %s: %v", t.ID, err)
 	}
+
+	// Record token usage and analytics
+	m.recordCompletionMetrics(w, t, true)
 
 	// Mark task as done (research tasks skip review)
 	if err := m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone); err != nil {
@@ -1123,21 +1219,28 @@ func extractJSON(text string) string {
 type idleWorkerSnapshot struct {
 	ID           string
 	SkillProfile string
+	Tier         worker.WorkerTier
 }
 
 // drainReadyQueue assigns ready tasks to idle workers until no more matches.
 func (m *Manager) drainReadyQueue(ctx context.Context) {
+	// Debounce: only one drain can run at a time
+	if !m.draining.CompareAndSwap(false, true) {
+		return
+	}
+	defer m.draining.Store(false)
+
 	readyTasks := m.projectStore.ReadyTasksByPriority()
 	if len(readyTasks) == 0 {
 		return
 	}
 
-	// Snapshot idle workers (IDs and skill profiles only)
+	// Snapshot idle workers (IDs, skill profiles, and tiers)
 	m.mu.RLock()
 	var idle []idleWorkerSnapshot
 	for _, w := range m.workers {
 		if w.Status == worker.WorkerIdle {
-			idle = append(idle, idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile})
+			idle = append(idle, idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile, Tier: w.EffectiveTier()})
 		}
 	}
 	m.mu.RUnlock()
@@ -1369,9 +1472,9 @@ func (m *Manager) ProjectProgress(projectID string) ProgressDTO {
 	dto := ProgressDTO{Total: len(tasks)}
 	for _, t := range tasks {
 		switch t.Status {
-		case project.TaskDone:
+		case project.TaskDone, project.TaskDeployed:
 			dto.Done++
-		case project.TaskInProgress, project.TaskAssigned:
+		case project.TaskInProgress, project.TaskAssigned, project.TaskCodeReview, project.TaskReview, project.TaskTesting, project.TaskRevision:
 			dto.InProgress++
 		case project.TaskFailed:
 			dto.Failed++
@@ -1411,6 +1514,9 @@ func (m *Manager) checkProjectCompletion(projectID string) {
 		ProjectID: projectID,
 		Message:   m.msgf("Project %q completed (%d done, %d failed)", "專案「%s」已完成（%d 完成、%d 失敗）", p.Name, progress.Done, progress.Failed),
 	})
+
+	// Auto-update linked objective progress
+	m.updateObjectiveProgress(projectID)
 
 	// Trigger retro automatically
 	go func() {
@@ -1729,6 +1835,132 @@ func (m *Manager) ResetWorker(workerID string) error {
 		Type:     EventWorkerIdle,
 		WorkerID: workerID,
 		Message:  m.msgf("Worker %s has been reset to idle", "員工 %s 已重設為閒置", w.Name),
+	})
+	return nil
+}
+
+// PauseWorker sends Ctrl+C to the worker's tmux pane, cancels the monitor, and sets status to paused.
+func (m *Manager) PauseWorker(workerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	w, ok := m.workers[workerID]
+	if !ok {
+		return fmt.Errorf("worker %s not found", workerID)
+	}
+	if w.Status != worker.WorkerWorking {
+		return fmt.Errorf("worker %s is not working (status: %s)", workerID, w.Status)
+	}
+
+	// Cancel completion monitor
+	if cancel, ok := m.cancels[workerID]; ok {
+		cancel()
+		delete(m.cancels, workerID)
+	}
+
+	// Send Ctrl+C to tmux pane and verify it stopped
+	if w.TmuxSession != "" && m.tmuxClient != nil {
+		_ = m.tmuxClient.SendKeys(w.TmuxSession, w.Window, w.Pane, "C-c")
+		// Send a second Ctrl+C after a short delay to handle cases where the first
+		// is caught (e.g., during file writes)
+		time.Sleep(500 * time.Millisecond)
+		_ = m.tmuxClient.SendKeys(w.TmuxSession, w.Window, w.Pane, "C-c")
+	}
+
+	w.Status = worker.WorkerPaused
+	m.saveWorkers()
+
+	m.emit(Event{
+		Type:     EventWorkerPaused,
+		WorkerID: workerID,
+		Message:  m.msgf("Worker %s has been paused", "員工 %s 已暫停", w.Name),
+	})
+	return nil
+}
+
+// ResumeWorker re-sends the task prompt to a paused worker and restarts the monitor.
+func (m *Manager) ResumeWorker(ctx context.Context, workerID string) error {
+	m.mu.Lock()
+
+	w, ok := m.workers[workerID]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("worker %s not found", workerID)
+	}
+	if w.Status != worker.WorkerPaused {
+		m.mu.Unlock()
+		return fmt.Errorf("worker %s is not paused (status: %s)", workerID, w.Status)
+	}
+
+	taskID := w.CurrentTaskID
+	w.Status = worker.WorkerWorking
+	m.saveWorkers()
+	m.mu.Unlock()
+
+	// Get the task and project to rebuild the prompt
+	t, ok := m.projectStore.GetTask(taskID)
+	if !ok {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+	p, ok := m.projectStore.GetProject(t.ProjectID)
+	if !ok {
+		return fmt.Errorf("project %s not found", t.ProjectID)
+	}
+
+	// Try to resume in the existing tmux session first.
+	// If session is still alive, re-send the prompt directly instead of spawning a new session.
+	sessionAlive := false
+	if w.TmuxSession != "" && m.tmuxClient != nil {
+		if exists, _ := m.tmuxClient.HasSession(w.TmuxSession); exists {
+			sessionAlive = true
+		}
+	}
+
+	if sessionAlive {
+		// Existing session still alive — re-send the prompt to continue
+		resumePrompt := t.Prompt
+		if m.GetLanguage() == "en" {
+			resumePrompt = "RESUME: You were previously interrupted. Continue the following task from where you left off.\n\n" + resumePrompt
+		} else {
+			resumePrompt = "繼續：你先前被中斷了。請從上次中斷的地方繼續以下任務。\n\n" + resumePrompt
+		}
+		if err := m.spawner.SendPromptToExisting(w, resumePrompt); err != nil {
+			// Fall through to full re-spawn
+			sessionAlive = false
+		}
+	}
+
+	if !sessionAlive {
+		// Session dead or prompt send failed — full re-spawn
+		if err := m.spawner.SpawnForTask(ctx, w, t, p); err != nil {
+			m.mu.Lock()
+			w.Status = worker.WorkerPaused
+			m.saveWorkers()
+			m.mu.Unlock()
+			return fmt.Errorf("resume worker: %w", err)
+		}
+	}
+
+	// Restart completion monitor (use background context so it survives frontend reloads)
+	monCtx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	m.cancels[workerID] = cancel
+	m.mu.Unlock()
+
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		result, err := m.monitor.WatchForCompletion(monCtx, w)
+		if err != nil {
+			return
+		}
+		m.handleTaskCompletion(w, t, p, result)
+	}()
+
+	m.emit(Event{
+		Type:     EventWorkerResumed,
+		WorkerID: workerID,
+		Message:  m.msgf("Worker %s has been resumed", "員工 %s 已恢復", w.Name),
 	})
 	return nil
 }

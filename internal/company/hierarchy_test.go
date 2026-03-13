@@ -229,14 +229,14 @@ func TestWorkerTierPersistence(t *testing.T) {
 func TestReviewVerdictParsing(t *testing.T) {
 	tests := []struct {
 		output   string
-		expected bool
+		expected reviewVerdict
 	}{
-		{"The code looks great. APPROVED", true},
-		{"REJECTED: needs more tests", false},
-		{"I think this is APPROVED after review", true},
-		{"First I thought APPROVED but then REJECTED", false},
-		{"No clear verdict in this text", false},
-		{"approved by reviewer", true},
+		{"The code looks great. APPROVED", verdictApproved},
+		{"REJECTED: needs more tests", verdictRejected},
+		{"I think this is APPROVED after review", verdictApproved},
+		{"First I thought APPROVED but then REJECTED", verdictRejected},
+		{"No clear verdict in this text", verdictInconclusive},
+		{"approved by reviewer", verdictApproved},
 	}
 	for _, tt := range tests {
 		got := parseReviewVerdict(tt.output)

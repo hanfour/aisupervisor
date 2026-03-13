@@ -197,6 +197,20 @@ func (s *Store) GetTask(id string) (*Task, bool) {
 }
 
 // TasksForProject returns all tasks belonging to a project.
+// ListTasks returns all tasks, or tasks for a specific project if projectID is non-empty.
+func (s *Store) ListTasks(projectID string) []*Task {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*Task
+	for _, t := range s.tasks {
+		if projectID == "" || t.ProjectID == projectID {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
 func (s *Store) TasksForProject(projectID string) []*Task {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -309,6 +323,19 @@ func (s *Store) UpdateTaskAssignee(taskID, assigneeID string) error {
 		return fmt.Errorf("task %q not found", taskID)
 	}
 	t.AssigneeID = assigneeID
+	return s.saveTasks()
+}
+
+// UpdateTaskTokens adds token usage to a task's TokensConsumed field.
+func (s *Store) UpdateTaskTokens(taskID string, tokens int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return fmt.Errorf("task %q not found", taskID)
+	}
+	t.TokensConsumed += tokens
 	return s.saveTasks()
 }
 

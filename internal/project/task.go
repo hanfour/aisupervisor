@@ -48,6 +48,7 @@ type Task struct {
 	BounceHistory    []BounceRecord `yaml:"bounce_history,omitempty" json:"bounceHistory,omitempty"`
 	TokensConsumed   int64          `yaml:"tokens_consumed,omitempty" json:"tokensConsumed,omitempty"`
 	BudgetLimit      int64          `yaml:"budget_limit,omitempty" json:"budgetLimit,omitempty"`
+	RetryCount       int            `yaml:"retry_count,omitempty" json:"retryCount,omitempty"`
 	CreatedAt        time.Time      `yaml:"created_at" json:"createdAt"`
 	StartedAt        *time.Time     `yaml:"started_at,omitempty" json:"startedAt,omitempty"`
 	CompletedAt      *time.Time     `yaml:"completed_at,omitempty" json:"completedAt,omitempty"`

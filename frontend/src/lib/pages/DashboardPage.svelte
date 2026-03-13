@@ -7,7 +7,7 @@
   import ReviewQueuePanel from '../components/ReviewQueuePanel.svelte'
   import TrainingStatsPanel from '../components/TrainingStatsPanel.svelte'
   import { events } from '../stores/events.js'
-  import { companyStats, loadCompanyStats, loadReviewQueue, loadTrainingStats, dashboardAlerts, loadDashboardAlerts } from '../stores/company.js'
+  import { companyStats, loadCompanyStats, loadReviewQueue, loadTrainingStats, dashboardAlerts, loadDashboardAlerts, budgetSummary, loadBudgetSummary, objectivesList, loadObjectivesList } from '../stores/company.js'
   import { t } from '../stores/i18n.js'
 
   export let onNavigate = () => {}
@@ -29,6 +29,8 @@
     loadReviewQueue()
     loadTrainingStats()
     loadDashboardAlerts()
+    loadBudgetSummary()
+    loadObjectivesList()
   })
 
   function handleApprove() {
@@ -93,6 +95,36 @@
       </div>
     </div>
   </section>
+
+  {#if $budgetSummary.tokensUsed > 0 || $budgetSummary.tokenBudget > 0}
+  <section class="nes-container with-title is-dark">
+    <p class="title">{$t('dashboard.budget')}</p>
+    <div class="budget-row">
+      <span class="budget-text">{$t('dashboard.tokensUsed')}: {($budgetSummary.tokensUsed || 0).toLocaleString()}</span>
+      {#if $budgetSummary.tokenBudget > 0}
+        <span class="budget-text">/ {$budgetSummary.tokenBudget.toLocaleString()}</span>
+        <div class="budget-bar-wrap">
+          <div class="budget-bar" style="width: {$budgetSummary.usagePercent || 0}%"
+               class:warn={$budgetSummary.usagePercent > 80}></div>
+        </div>
+      {/if}
+    </div>
+  </section>
+  {/if}
+
+  {#if $objectivesList.length > 0}
+  <section class="nes-container with-title is-dark">
+    <p class="title">{$t('dashboard.objectiveProgress')}</p>
+    <div class="obj-overview">
+      {#each $objectivesList.filter(o => o.status === 'active').slice(0, 3) as obj}
+        <div class="obj-mini">
+          <span class="obj-mini-title">{obj.title}</span>
+          <span class="obj-mini-projects">{(obj.projectIds || []).length} {$t('boardOverview.projects')}</span>
+        </div>
+      {/each}
+    </div>
+  </section>
+  {/if}
 
   <section class="nes-container with-title is-dark">
     <p class="title">{$t('dashboard.reviewQueue')}</p>
@@ -218,5 +250,59 @@
 
   .alert-yellow:hover {
     background: rgba(240, 192, 64, 0.1);
+  }
+
+  .budget-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .budget-text {
+    font-size: 10px;
+  }
+
+  .budget-bar-wrap {
+    flex: 1;
+    min-width: 80px;
+    height: 10px;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid var(--border-color);
+  }
+
+  .budget-bar {
+    height: 100%;
+    background: var(--accent-green);
+    transition: width 0.3s;
+  }
+
+  .budget-bar.warn {
+    background: #e74c3c;
+  }
+
+  .obj-overview {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .obj-mini {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    min-width: 120px;
+  }
+
+  .obj-mini-title {
+    font-size: 10px;
+    color: var(--accent-green);
+  }
+
+  .obj-mini-projects {
+    font-size: 8px;
+    color: var(--text-secondary);
   }
 </style>

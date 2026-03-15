@@ -35,15 +35,14 @@
   </div>
   <ul class="nes-list is-disc">
     {#each navKeys as item}
-      <li
-        class:active={currentPage === item.id}
-        on:click={() => { currentPage = item.id; window.location.hash = item.id }}
-        on:keydown={(e) => { if (e.key === 'Enter') { currentPage = item.id; window.location.hash = item.id } }}
-        role="button"
-        tabindex="0"
-      >
-        <span class="nav-icon">{item.icon}</span>
-        <span class="nav-label">{$t(item.key)}</span>
+      <li class:active={currentPage === item.id}>
+        <button
+          class="nav-btn"
+          on:click={() => { currentPage = item.id; window.location.hash = item.id }}
+        >
+          <span class="nav-icon">{item.icon}</span>
+          <span class="nav-label">{$t(item.key)}</span>
+        </button>
       </li>
     {/each}
   </ul>
@@ -87,21 +86,29 @@
   }
 
   li {
-    padding: 10px 8px;
     margin: 4px 0;
+  }
+
+  .nav-btn {
+    padding: 10px 8px;
+    width: 100%;
     cursor: pointer;
     display: flex;
     align-items: center;
     gap: 8px;
     border: 2px solid transparent;
     transition: border-color 0.1s;
+    background: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
   }
 
-  li:hover {
+  .nav-btn:hover {
     border-color: var(--accent-blue);
   }
 
-  li.active {
+  li.active .nav-btn {
     border-color: var(--accent-green);
     color: var(--accent-green);
   }

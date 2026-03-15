@@ -91,7 +91,7 @@
           bind:value={inputText}
           on:keydown={handleKeydown}
           on:compositionstart={() => composing = true}
-          on:compositionend={() => composing = false}
+          on:compositionend={() => setTimeout(() => composing = false, 100)}
           disabled={$chatLoading}
         />
         <button class="nes-btn is-primary btn-sm" on:click={handleSend} disabled={$chatLoading || !inputText.trim()}>

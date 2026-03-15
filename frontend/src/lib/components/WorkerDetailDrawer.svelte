@@ -346,11 +346,11 @@
 
           <h4 style="font-size: 11px; margin-top: 8px;">{$t('workerDetail.mood')}</h4>
           <div style="font-size: 10px;">
-            <label>{$t('workerDetail.moodCurrent')} {profile.mood?.current || 'neutral'}</label>
+            <span class="mood-label">{$t('workerDetail.moodCurrent')} {profile.mood?.current || 'neutral'}</span>
             <progress class="nes-progress is-primary" value={profile.mood?.energy || 0} max="100" style="height: 12px;"></progress>
-            <label>{$t('workerDetail.energy')} {profile.mood?.energy || 0}%</label>
+            <span class="mood-label">{$t('workerDetail.energy')} {profile.mood?.energy || 0}%</span>
             <progress class="nes-progress is-success" value={profile.mood?.morale || 0} max="100" style="height: 12px;"></progress>
-            <label>{$t('workerDetail.morale')} {profile.mood?.morale || 0}%</label>
+            <span class="mood-label">{$t('workerDetail.morale')} {profile.mood?.morale || 0}%</span>
           </div>
 
           <h4 style="font-size: 11px; margin-top: 8px;">{$t('workerDetail.traits')}</h4>
@@ -537,10 +537,6 @@
     border-bottom: 2px solid var(--border-color);
   }
 
-  .avatar-large {
-    font-size: 32px;
-  }
-
   .identity-info {
     display: flex;
     flex-direction: column;
@@ -653,6 +649,12 @@
     color: var(--text-primary);
     border: 2px solid var(--border-color);
     max-width: 120px;
+  }
+
+  .mood-label {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 10px;
   }
 
   .skill-description {

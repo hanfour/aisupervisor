@@ -92,8 +92,9 @@
         </div>
         {#if existingTasks.length > 0}
           <div class="nes-field">
+            <!-- svelte-ignore a11y-label-has-associated-control -->
             <label>{$t('taskForm.dependencies')}</label>
-            <div class="deps-list">
+            <div class="deps-list" role="group">
               {#each existingTasks as t}
                 <label class="dep-item">
                   <input

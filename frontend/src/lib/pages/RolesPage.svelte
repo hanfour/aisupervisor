@@ -73,9 +73,9 @@
 
     {#if $sessions.length > 0}
       <div class="session-selector">
-        <label>{$t('roles.session')}</label>
+        <label for="role-session-select">{$t('roles.session')}</label>
         <div class="nes-select is-dark">
-          <select bind:value={selectedSessionId}>
+          <select id="role-session-select" bind:value={selectedSessionId}>
             {#each $sessions as s}
               <option value={s.id}>{s.name || s.id}</option>
             {/each}

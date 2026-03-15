@@ -14,16 +14,19 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/updater"
 	anthropicBackend "github.com/hanfourmini/aisupervisor/internal/ai/anthropic"
+	geminiBackend "github.com/hanfourmini/aisupervisor/internal/ai/gemini"
 	ollamaBackend "github.com/hanfourmini/aisupervisor/internal/ai/ollama"
 	openaiBackend "github.com/hanfourmini/aisupervisor/internal/ai/openai"
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
+	"github.com/hanfourmini/aisupervisor/internal/installer"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/skillsmp"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // CompanyApp is the Wails binding for the company management system.
@@ -209,6 +212,102 @@ func (c *CompanyApp) ChatCreateProject(messages []ChatMessageDTO) (*ChatProjectR
 		RepoPath:    resp.RepoPath,
 		BaseBranch:  resp.BaseBranch,
 		Goals:       resp.Goals,
+	}, nil
+}
+
+// SetupChatBackendFromKey configures a chat provider from a raw API key during onboarding.
+// provider must be one of: "openai", "anthropic", "gemini".
+func (c *CompanyApp) SetupChatBackendFromKey(provider, apiKey string) error {
+	if apiKey == "" {
+		return fmt.Errorf("API key is required")
+	}
+
+	var chatProv ai.ChatProvider
+	var backendName, backendType, model, apiKeyEnv string
+
+	switch provider {
+	case "openai":
+		backendName = "openai-onboarding"
+		backendType = "openai"
+		model = "gpt-4o-mini"
+		apiKeyEnv = "OPENAI_API_KEY"
+		os.Setenv("OPENAI_API_KEY", apiKey)
+		chatProv = openaiBackend.NewBackend(backendName, apiKey, model)
+	case "anthropic":
+		backendName = "anthropic-onboarding"
+		backendType = "anthropic_api"
+		model = "claude-sonnet-4-6-20260301"
+		apiKeyEnv = "ANTHROPIC_API_KEY"
+		os.Setenv("ANTHROPIC_API_KEY", apiKey)
+		chatProv = anthropicBackend.NewAPIBackend(backendName, apiKey, model)
+	case "gemini":
+		backendName = "gemini-onboarding"
+		backendType = "gemini"
+		model = "gemini-2.0-flash"
+		apiKeyEnv = "GEMINI_API_KEY"
+		os.Setenv("GEMINI_API_KEY", apiKey)
+		g, err := geminiBackend.NewBackend(backendName, apiKey, model)
+		if err != nil {
+			return fmt.Errorf("failed to create Gemini backend: %w", err)
+		}
+		chatProv = g
+	default:
+		return fmt.Errorf("unsupported provider: %s", provider)
+	}
+
+	c.company.SetChatProvider(chatProv)
+
+	// Persist to config
+	cfg, err := config.Load("")
+	if err != nil {
+		return err
+	}
+	// Add or update the backend entry
+	found := false
+	for i, bc := range cfg.Backends {
+		if bc.Name == backendName {
+			cfg.Backends[i] = config.BackendConfig{Name: backendName, Type: backendType, Model: model, APIKeyEnv: apiKeyEnv}
+			found = true
+			break
+		}
+	}
+	if !found {
+		cfg.Backends = append(cfg.Backends, config.BackendConfig{Name: backendName, Type: backendType, Model: model, APIKeyEnv: apiKeyEnv})
+	}
+	cfg.ChatBackend = backendName
+	return cfg.Save("")
+}
+
+// ChatOnboarding uses AI to guide the user through onboarding team setup.
+func (c *CompanyApp) ChatOnboarding(messages []ChatMessageDTO) (*ChatOnboardingResponseDTO, error) {
+	chatMessages := make([]company.ChatMessage, len(messages))
+	for i, m := range messages {
+		chatMessages[i] = company.ChatMessage{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+
+	resp, err := c.company.ChatOnboarding(c.ctx, chatMessages)
+	if err != nil {
+		return nil, err
+	}
+
+	workers := make([]OnboardingWorkerDTO, len(resp.Workers))
+	for i, w := range resp.Workers {
+		workers[i] = OnboardingWorkerDTO{
+			Name:         w.Name,
+			SkillProfile: w.SkillProfile,
+			Tier:         w.Tier,
+			Gender:       w.Gender,
+		}
+	}
+
+	return &ChatOnboardingResponseDTO{
+		Status:  resp.Status,
+		Message: resp.Message,
+		HRName:  resp.HRName,
+		Workers: workers,
 	}, nil
 }
 
@@ -641,7 +740,7 @@ func (c *CompanyApp) GenerateNarrative(workerID string) error {
 	}
 	narrator := c.company.GetNarrator()
 	if narrator == nil {
-		return fmt.Errorf("narrator not available (Ollama not configured)")
+		return fmt.Errorf("narrator not available (no AI backend configured)")
 	}
 	w, ok := c.company.GetWorker(workerID)
 	name := workerID
@@ -730,6 +829,43 @@ func (c *CompanyApp) GetHealthReport() *company.HealthReport {
 // CheckDependencies returns missing external dependency names.
 func (c *CompanyApp) CheckDependencies() []string {
 	return company.CheckDependencies()
+}
+
+// GetDependencyStatus returns detailed status for all required dependencies.
+func (c *CompanyApp) GetDependencyStatus() []installer.DepStatus {
+	return installer.CheckAll()
+}
+
+// InstallDependency installs a single dependency by name.
+// Progress is emitted via "setup:progress" Wails events.
+func (c *CompanyApp) InstallDependency(name string) error {
+	onProgress := func(p installer.InstallProgress) {
+		wailsRuntime.EventsEmit(c.ctx, "setup:progress", p)
+	}
+	ctx := c.ctx
+	switch name {
+	case "git":
+		return installer.InstallGit(ctx, onProgress)
+	case "brew":
+		return installer.InstallHomebrew(ctx, onProgress)
+	case "tmux":
+		return installer.InstallTmux(ctx, onProgress)
+	case "node":
+		return installer.InstallNode(ctx, onProgress)
+	case "claude":
+		return installer.InstallClaude(ctx, onProgress)
+	default:
+		return fmt.Errorf("unknown dependency: %s", name)
+	}
+}
+
+// InstallAllDependencies installs all missing dependencies in order.
+// Progress is emitted via "setup:progress" Wails events.
+func (c *CompanyApp) InstallAllDependencies() error {
+	onProgress := func(p installer.InstallProgress) {
+		wailsRuntime.EventsEmit(c.ctx, "setup:progress", p)
+	}
+	return installer.InstallAll(c.ctx, onProgress)
 }
 
 // NeedsOnboarding returns true if no workers exist (first-time setup needed).

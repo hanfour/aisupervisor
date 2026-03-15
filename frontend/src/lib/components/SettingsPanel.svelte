@@ -39,9 +39,9 @@
   <div class="setting-group nes-container with-title is-dark">
     <p class="title">{$t('settings.chatBackend')}</p>
     <div class="field">
-      <label>{$t('settings.chatBackend')}:</label>
+      <label for="chat-backend-select">{$t('settings.chatBackend')}:</label>
       {#if availableChatBackends.length > 0}
-        <select class="nes-select is-dark chat-select" value={chatBackend} on:change={onChatBackendChange}>
+        <select id="chat-backend-select" class="nes-select is-dark chat-select" value={chatBackend} on:change={onChatBackendChange}>
           {#each availableChatBackends as backend}
             <option value={backend}>{backend}</option>
           {/each}
@@ -55,11 +55,11 @@
   <div class="setting-group nes-container with-title is-dark">
     <p class="title">Polling</p>
     <div class="field">
-      <label>Interval (ms):</label>
+      <span class="field-label">Interval (ms):</span>
       <span class="value">{polling.interval_ms || 500}</span>
     </div>
     <div class="field">
-      <label>Context Lines:</label>
+      <span class="field-label">Context Lines:</span>
       <span class="value">{polling.context_lines || 100}</span>
     </div>
   </div>
@@ -67,11 +67,11 @@
   <div class="setting-group nes-container with-title is-dark">
     <p class="title">Decision</p>
     <div class="field">
-      <label>Confidence Threshold:</label>
+      <span class="field-label">Confidence Threshold:</span>
       <span class="value">{decision.confidence_threshold || 0.7}</span>
     </div>
     <div class="field">
-      <label>Timeout (s):</label>
+      <span class="field-label">Timeout (s):</span>
       <span class="value">{decision.timeout_seconds || 30}</span>
     </div>
   </div>
@@ -79,15 +79,15 @@
   <div class="setting-group nes-container with-title is-dark">
     <p class="title">Context</p>
     <div class="field">
-      <label>Enabled:</label>
+      <span class="field-label">Enabled:</span>
       <span class="value">{context.enabled ? 'Yes' : 'No'}</span>
     </div>
     <div class="field">
-      <label>Max Decisions:</label>
+      <span class="field-label">Max Decisions:</span>
       <span class="value">{context.max_decisions || 20}</span>
     </div>
     <div class="field">
-      <label>Token Budget:</label>
+      <span class="field-label">Token Budget:</span>
       <span class="value">{context.token_budget || 2000}</span>
     </div>
   </div>
@@ -112,7 +112,7 @@
     border-bottom: 1px solid var(--border-color);
   }
 
-  label {
+  label, .field-label {
     color: var(--text-secondary);
   }
 

@@ -60,6 +60,43 @@ func (b *Backend) Analyze(ctx context.Context, req ai.AnalysisRequest) (*ai.Deci
 	return parseDecision(text, req)
 }
 
+// Chat implements ai.ChatProvider using the Gemini API.
+func (b *Backend) Chat(ctx context.Context, messages []ai.ChatMessage) (string, error) {
+	var systemPrompt string
+	var parts []string
+	for _, m := range messages {
+		switch m.Role {
+		case "system":
+			systemPrompt = m.Content
+		case "assistant":
+			parts = append(parts, "[Assistant]: "+m.Content)
+		default:
+			if m.Content != "" {
+				parts = append(parts, m.Content)
+			}
+		}
+	}
+
+	userText := "Start"
+	if len(parts) > 0 {
+		userText = parts[len(parts)-1]
+	}
+
+	var cfg *genai.GenerateContentConfig
+	if systemPrompt != "" {
+		cfg = &genai.GenerateContentConfig{
+			SystemInstruction: genai.NewContentFromText(systemPrompt, "user"),
+		}
+	}
+
+	resp, err := b.client.Models.GenerateContent(ctx, b.model, genai.Text(userText), cfg)
+	if err != nil {
+		return "", fmt.Errorf("gemini chat: %w", err)
+	}
+
+	return resp.Text(), nil
+}
+
 func (b *Backend) Healthy(ctx context.Context) error {
 	_, err := b.client.Models.GenerateContent(ctx, b.model, genai.Text("ping"), nil)
 	return err

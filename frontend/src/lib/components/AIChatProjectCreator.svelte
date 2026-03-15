@@ -141,7 +141,7 @@
             bind:value={userInput}
             on:keydown={handleKeydown}
             on:compositionstart={() => composing = true}
-            on:compositionend={() => composing = false}
+            on:compositionend={() => setTimeout(() => composing = false, 100)}
             placeholder={$t('aiChat.placeholder')}
             rows="2"
             disabled={loading}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
+	"github.com/hanfourmini/aisupervisor/internal/ai/claudecli"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
@@ -97,7 +98,7 @@ func New(
 		// Just log, don't fail startup
 	}
 
-	// Initialize Ollama narrator
+	// Initialize narrator: prefer chatProvider > Claude CLI > Ollama
 	ollamaEndpoint := os.Getenv("OLLAMA_ENDPOINT")
 	ollamaModel := os.Getenv("OLLAMA_MODEL")
 	if ollamaEndpoint == "" {
@@ -106,8 +107,15 @@ func New(
 	if ollamaModel == "" {
 		ollamaModel = "llama3.2"
 	}
-	adapter := personality.NewOllamaAdapter(ollamaEndpoint, ollamaModel)
-	narrator := personality.NewNarrator(adapter)
+	var aiGen personality.AIGenerator
+	if chatProvider != nil {
+		aiGen = personality.NewChatAdapter(chatProvider)
+	} else if cli := claudecli.New(); cli != nil {
+		aiGen = personality.NewChatAdapter(cli)
+	} else {
+		aiGen = personality.NewOllamaAdapter(ollamaEndpoint, ollamaModel)
+	}
+	narrator := personality.NewNarrator(aiGen)
 
 	m := &Manager{
 		projectStore:     projectStore,

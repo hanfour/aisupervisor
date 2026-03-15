@@ -165,8 +165,9 @@
           </div>
 
           <div class="nes-field">
+            <!-- svelte-ignore a11y-label-has-associated-control -->
             <label>{$t('workers.avatar')}</label>
-            <div class="avatar-grid">
+            <div class="avatar-grid" role="radiogroup">
               {#each avatarOptions as opt}
                 <label class="avatar-option" class:selected={newAvatar === opt.id}>
                   <input type="radio" class="nes-radio is-dark" name="avatar" value={opt.id} bind:group={newAvatar} />
@@ -177,8 +178,9 @@
           </div>
 
           <div class="nes-field">
+            <!-- svelte-ignore a11y-label-has-associated-control -->
             <label>{$t('workers.gender')}</label>
-            <div class="gender-grid">
+            <div class="gender-grid" role="radiogroup">
               <label class="avatar-option" class:selected={newGender === 'male'}>
                 <input type="radio" class="nes-radio is-dark" name="gender" value="male" bind:group={newGender} />
                 <span>♂ {$t('gender.male')}</span>

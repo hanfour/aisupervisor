@@ -1,4 +1,4 @@
-.PHONY: build build-gui build-all test lint clean install dev-gui package-mac package-mac-signed sign notarize package-dmg release
+.PHONY: build build-gui build-all test lint clean install dev-gui frontend-build package-mac package-mac-signed sign notarize package-dmg release install-mac
 
 BINARY := aisupervisor
 BUILD_DIR := ./build
@@ -61,14 +61,18 @@ config-init:
 config-show:
 	go run $(CMD) config show
 
-package-mac:
-	cd $(CMD_GUI) && ~/go/bin/wails build -platform darwin/universal -ldflags "$(LDFLAGS)"
-	@echo "Built: $(CMD_GUI)/build/bin/aisupervisor-gui.app"
+package-mac: frontend-build
+	cd $(CMD_GUI) && ~/go/bin/wails build -s -platform darwin/universal -ldflags "$(LDFLAGS)"
+	@echo "Built: $(CMD_GUI)/build/bin/aisupervisor.app"
 
-package-mac-signed:
-	cd $(CMD_GUI) && ~/go/bin/wails build -platform darwin/universal -ldflags "$(LDFLAGS)"
-	codesign --force --deep --sign - $(CMD_GUI)/build/bin/aisupervisor-gui.app
-	@echo "Built and signed: $(CMD_GUI)/build/bin/aisupervisor-gui.app"
+package-mac-signed: frontend-build
+	cd $(CMD_GUI) && ~/go/bin/wails build -s -platform darwin/universal -ldflags "$(LDFLAGS)"
+	codesign --force --deep --sign - $(CMD_GUI)/build/bin/aisupervisor.app
+	@echo "Built and signed: $(CMD_GUI)/build/bin/aisupervisor.app"
+
+frontend-build:
+	cd frontend && npm run build
+	@echo "Frontend built: $(CMD_GUI)/frontend/dist/"
 
 APP_PATH := $(CMD_GUI)/build/bin/aisupervisor.app
 DMG_PATH := build/aisupervisor-$(VERSION).dmg
@@ -101,6 +105,14 @@ package-dmg:
 		$(DMG_PATH) \
 		$(APP_PATH)
 	@echo "DMG created: $(DMG_PATH)"
+
+INSTALL_DIR ?= /Volumes/SATECHI DISK Media/Applications
+
+install-mac: package-mac
+	@rm -rf "$(INSTALL_DIR)/aisupervisor.app"
+	@cp -R $(APP_PATH) "$(INSTALL_DIR)/aisupervisor.app"
+	@codesign --force --deep --sign - "$(INSTALL_DIR)/aisupervisor.app"
+	@echo "Installed: $(INSTALL_DIR)/aisupervisor.app"
 
 release: build-gui bundle-deps sign package-dmg notarize
 	@echo "Release $(VERSION) complete: $(DMG_PATH)"

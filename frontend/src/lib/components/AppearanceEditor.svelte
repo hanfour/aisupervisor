@@ -122,7 +122,7 @@
   </div>
 
   <div class="option-section">
-    <label class="option-label">{$t('appearance.skin')}</label>
+    <span class="option-label">{$t('appearance.skin')}</span>
     <div class="option-row">
       {#each SKIN_COLORS as color, i}
         <button
@@ -137,7 +137,7 @@
   </div>
 
   <div class="option-section">
-    <label class="option-label">{$t('appearance.outfit')}</label>
+    <span class="option-label">{$t('appearance.outfit')}</span>
     <div class="option-row">
       {#each OUTFITS as o, i}
         <button
@@ -152,7 +152,7 @@
   </div>
 
   <div class="option-section">
-    <label class="option-label">{$t('appearance.hair')}</label>
+    <span class="option-label">{$t('appearance.hair')}</span>
     <div class="option-row">
       {#each HAIRS as h, i}
         <button

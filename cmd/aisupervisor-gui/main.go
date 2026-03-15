@@ -68,12 +68,12 @@ func main() {
 
 	tmuxClient, err := tmux.NewClient()
 	if err != nil {
-		log.Fatalf("connecting to tmux: %v", err)
+		log.Printf("WARNING: tmux not available: %v (setup wizard will guide)", err)
 	}
 
 	backend, err := setupBackend(cfg)
 	if err != nil {
-		log.Fatalf("setting up backend: %v", err)
+		log.Printf("WARNING: backend not configured: %v (setup wizard will guide)", err)
 	}
 
 	auditor, err := audit.NewLogger(cfg.Audit.Path, cfg.Audit.Enabled)

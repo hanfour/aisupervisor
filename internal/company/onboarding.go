@@ -54,13 +54,27 @@ var fullTeam = []teamMember{
 }
 
 // ApplyOnboarding sets up the team based on the wizard configuration.
+// It clears any existing workers first to avoid duplicates on re-run.
 func (m *Manager) ApplyOnboarding(cfg OnboardingConfig) error {
 	// 1. Set language
 	if cfg.Language != "" {
 		m.SetLanguage(cfg.Language)
 	}
 
-	// 2. Select team template
+	// 2. Clear existing workers to prevent duplicates when wizard is re-run
+	for _, w := range m.ListWorkers() {
+		// Force idle so DeleteWorker doesn't reject
+		m.mu.Lock()
+		if existing, ok := m.workers[w.ID]; ok {
+			existing.Status = "idle"
+			existing.TmuxSession = ""
+			existing.CurrentTaskID = ""
+		}
+		m.mu.Unlock()
+		_ = m.DeleteWorker(w.ID) // best-effort
+	}
+
+	// 3. Select team template
 	var team []teamMember
 	switch cfg.TeamTemplate {
 	case "starter":
@@ -74,7 +88,7 @@ func (m *Manager) ApplyOnboarding(cfg OnboardingConfig) error {
 		return fmt.Errorf("unknown team template %q", cfg.TeamTemplate)
 	}
 
-	// 3. Create workers with hierarchy: managers report to consultant, engineers report to first manager
+	// 4. Create workers with hierarchy: managers report to consultant, engineers report to first manager
 	var consultantID, firstManagerID string
 
 	for _, tm := range team {

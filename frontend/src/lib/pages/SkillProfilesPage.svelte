@@ -212,9 +212,9 @@
 </div>
 
 {#if showModal}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="modal-overlay" on:click|self={() => showModal = false} role="dialog">
-    <div class="nes-container is-dark is-rounded modal-box">
+  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+  <div class="modal-overlay" on:click|self={() => showModal = false} role="presentation">
+    <div class="nes-container is-dark is-rounded modal-box" role="dialog">
       <h3>{editing ? $t('skills.editProfile') : $t('skills.newProfileTitle')}</h3>
       <div class="form-grid">
         <div class="nes-field">
@@ -283,9 +283,9 @@
 {/if}
 
 {#if showSearchModal}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="modal-overlay" on:click|self={() => showSearchModal = false} role="dialog">
-    <div class="nes-container is-dark is-rounded modal-box search-modal">
+  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+  <div class="modal-overlay" on:click|self={() => showSearchModal = false} role="presentation">
+    <div class="nes-container is-dark is-rounded modal-box search-modal" role="dialog">
       <h3>{$t('skills.searchMP')}</h3>
 
       <div class="search-bar">

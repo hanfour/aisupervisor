@@ -91,59 +91,7 @@
       addError('Failed to load roles: ' + e.message)
     }
 
-    // Dynamically import Phase 5 pages if available
-    try {
-      const rolesModule = await import('./lib/pages/RolesPage.svelte')
-      RolesPage = rolesModule.default
-    } catch {}
-    try {
-      const groupsModule = await import('./lib/pages/GroupsPage.svelte')
-      GroupsPage = groupsModule.default
-    } catch {}
-    try {
-      const settingsModule = await import('./lib/pages/SettingsPage.svelte')
-      SettingsPage = settingsModule.default
-    } catch {}
-    // Company board page
-    try {
-      const boardModule = await import('./lib/pages/ProjectBoardPage.svelte')
-      ProjectBoardPage = boardModule.default
-    } catch {}
-    // Hierarchy page
-    try {
-      const hierarchyModule = await import('./lib/pages/HierarchyPage.svelte')
-      HierarchyPage = hierarchyModule.default
-    } catch {}
-    // Office page
-    try {
-      const officeModule = await import('./lib/pages/OfficePage.svelte')
-      OfficePage = officeModule.default
-    } catch {}
-    // Retro page
-    try {
-      const retroModule = await import('./lib/pages/RetroPage.svelte')
-      RetroPage = retroModule.default
-    } catch {}
-    // Approvals page
-    try {
-      const approvalsModule = await import('./lib/pages/ApprovalsPage.svelte')
-      ApprovalsPage = approvalsModule.default
-    } catch {}
-    // Skill profiles page
-    try {
-      const skillsMod = await import('./lib/pages/SkillProfilesPage.svelte')
-      SkillProfilesPage = skillsMod.default
-    } catch {}
-    // Objectives page
-    try {
-      const objMod = await import('./lib/pages/ObjectivesPage.svelte')
-      ObjectivesPage = objMod.default
-    } catch {}
-    // Board overview page
-    try {
-      const boardOverMod = await import('./lib/pages/BoardOverviewPage.svelte')
-      BoardOverviewPage = boardOverMod.default
-    } catch {}
+    await loadLazyPages()
   })
 
   function navigate(page, id) {
@@ -159,14 +107,29 @@
     if (page !== currentPage) currentPage = page
   }
 
-  function handleSetupComplete() {
+  async function handleSetupComplete() {
     showSetup = false
     initEventStore()
     initDiscussionStore()
     initCompanyStore()
     loadSessions().catch(() => {})
     loadRoles().catch(() => {})
+    await loadLazyPages()
     currentPage = 'dashboard'
+  }
+
+  async function loadLazyPages() {
+    try { RolesPage = (await import('./lib/pages/RolesPage.svelte')).default } catch {}
+    try { GroupsPage = (await import('./lib/pages/GroupsPage.svelte')).default } catch {}
+    try { SettingsPage = (await import('./lib/pages/SettingsPage.svelte')).default } catch {}
+    try { ProjectBoardPage = (await import('./lib/pages/ProjectBoardPage.svelte')).default } catch {}
+    try { HierarchyPage = (await import('./lib/pages/HierarchyPage.svelte')).default } catch {}
+    try { OfficePage = (await import('./lib/pages/OfficePage.svelte')).default } catch {}
+    try { RetroPage = (await import('./lib/pages/RetroPage.svelte')).default } catch {}
+    try { ApprovalsPage = (await import('./lib/pages/ApprovalsPage.svelte')).default } catch {}
+    try { SkillProfilesPage = (await import('./lib/pages/SkillProfilesPage.svelte')).default } catch {}
+    try { ObjectivesPage = (await import('./lib/pages/ObjectivesPage.svelte')).default } catch {}
+    try { BoardOverviewPage = (await import('./lib/pages/BoardOverviewPage.svelte')).default } catch {}
   }
 </script>
 

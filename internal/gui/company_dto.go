@@ -459,6 +459,14 @@ type SkillsMPMergeRequestDTO struct {
 	TargetProfileName string `json:"targetProfileName"`
 }
 
+// ChatOnboardingResponseDTO is the response from onboarding chat.
+type ChatOnboardingResponseDTO struct {
+	Status  string                `json:"status"`
+	Message string                `json:"message"`
+	HRName  string                `json:"hrName,omitempty"`
+	Workers []OnboardingWorkerDTO `json:"workers,omitempty"`
+}
+
 type SkillProfileOverrideDTO struct {
 	ExtraPrompt   string   `json:"extraPrompt,omitempty"`
 	AddTools      []string `json:"addTools,omitempty"`

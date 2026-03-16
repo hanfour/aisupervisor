@@ -270,9 +270,9 @@ func (m *Manager) autoRecover(w *worker.Worker) bool {
 	if prev, exists := m.lastPaneContent[w.ID]; exists {
 		lastOutput = prev.content
 	}
-	// Truncate to 2000 bytes for context
-	if len(lastOutput) > 2000 {
-		lastOutput = lastOutput[len(lastOutput)-2000:]
+	// Truncate to ~2000 runes for context (rune-safe to avoid splitting UTF-8)
+	if rs := []rune(lastOutput); len(rs) > 2000 {
+		lastOutput = string(rs[len(rs)-2000:])
 	}
 
 	// Cancel existing monitor

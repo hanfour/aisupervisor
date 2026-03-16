@@ -1410,7 +1410,7 @@ func (m *Manager) verifyAndIterate(w *worker.Worker, t *project.Task, p *project
 		ProjectID: p.ID,
 		TaskID:    t.ID,
 		WorkerID:  w.ID,
-		Message:   m.msgf("Re-assigning for iteration %d/%d (score %.4f)", "重新分配進行迭代 %d/%d（分數 %.4f）", t.IterationCount+1, maxIter, score),
+		Message:   m.msgf("Re-assigning for iteration %d/%d (score %.4f)", "重新分配進行迭代 %d/%d（分數 %.4f）", iterCount+1, maxIter, score),
 	})
 
 	// Re-assign task to same worker for next iteration
@@ -2464,8 +2464,8 @@ func (m *Manager) handoffContext(t *project.Task) string {
 		if depTask.AssigneeID != "" {
 			if snap, exists := m.lastPaneContent[depTask.AssigneeID]; exists && snap.content != "" {
 				summary := snap.content
-				if len(summary) > 1000 {
-					summary = summary[len(summary)-1000:]
+				if rs := []rune(summary); len(rs) > 1000 {
+					summary = string(rs[len(rs)-1000:])
 				}
 				contexts = append(contexts, fmt.Sprintf("[%s] %s", depTask.Title, summary))
 			}
@@ -2627,13 +2627,20 @@ func (m *Manager) proactiveTaskDiscovery() {
 func (m *Manager) GetWorkerActivity(workerID string) string {
 	m.mu.RLock()
 	w, ok := m.workers[workerID]
+	var session string
+	var window, pane int
+	if ok {
+		session = w.TmuxSession
+		window = w.Window
+		pane = w.Pane
+	}
 	m.mu.RUnlock()
 
-	if !ok || w.TmuxSession == "" || m.tmuxClient == nil {
+	if !ok || session == "" || m.tmuxClient == nil {
 		return ""
 	}
 
-	content, err := m.tmuxClient.CapturePane(w.TmuxSession, w.Window, w.Pane, 10)
+	content, err := m.tmuxClient.CapturePane(session, window, pane, 10)
 	if err != nil {
 		return ""
 	}

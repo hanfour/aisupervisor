@@ -857,9 +857,6 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	// Record growth log for every completion (before locking)
 	m.updateWorkerGrowth(w, t, result.Success)
 
-	// Reset recovery attempts on successful completion
-	w.RecoveryAttempts = 0
-
 	// Track completed tasks for micro-retro trigger
 	if result.Success && t.ParentTaskID == "" {
 		m.mu.Lock()
@@ -873,6 +870,8 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	}
 
 	m.mu.Lock()
+	// Reset recovery attempts on completion (under lock to avoid data race)
+	w.RecoveryAttempts = 0
 
 	if result.Success && t.Type == project.TaskTypeTraining {
 		m.handleTrainingIteration(w, t, p)
@@ -1218,7 +1217,7 @@ func (m *Manager) handleTrainingIteration(w *worker.Worker, t *project.Task, p *
 
 		go func() {
 			ctx := context.Background()
-			if err := m.AssignTask(ctx, t.ID, w.ID); err != nil {
+			if err := m.AssignTask(ctx, w.ID, t.ID); err != nil {
 				log.Printf("training: failed to re-assign task %s to %s: %v", t.ID, w.ID, err)
 			}
 		}()
@@ -1385,6 +1384,7 @@ func (m *Manager) verifyAndIterate(w *worker.Worker, t *project.Task, p *project
 	// More iterations available — re-assign with feedback (replace, not append)
 	t.Prompt = fmt.Sprintf("%s\n\n--- 驗證反饋 / Verification Feedback ---\n驗證分數 Score: %.4f (目標 target: 1.0)\n迭代 Iteration: %d/%d\n驗證輸出 Output:\n%s\n\n請根據驗證結果修正程式碼，再次提交。\nPlease fix the code based on verification output and commit again.",
 		t.OriginalPrompt, score, t.IterationCount, maxIter, truncate(output, 2000))
+	m.projectStore.ForceUpdateTaskStatus(t.ID, project.TaskReady)
 	m.projectStore.SaveTask(t)
 
 	w.Status = worker.WorkerIdle
@@ -1403,7 +1403,7 @@ func (m *Manager) verifyAndIterate(w *worker.Worker, t *project.Task, p *project
 	// Re-assign task to same worker for next iteration
 	go func() {
 		ctx := context.Background()
-		if err := m.AssignTask(ctx, t.ID, w.ID); err != nil {
+		if err := m.AssignTask(ctx, w.ID, t.ID); err != nil {
 			log.Printf("verify: failed to re-assign task %s to %s: %v", t.ID, w.ID, err)
 		}
 	}()
@@ -2628,8 +2628,9 @@ func (m *Manager) GetWorkerActivity(workerID string) string {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }

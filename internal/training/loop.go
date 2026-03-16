@@ -84,12 +84,15 @@ func (l *TrainingLoop) EvaluateAndDecide(ctx context.Context, repoPath, branchNa
 		BenchmarkScore: benchScore,
 	}
 
-	// Plateau detection: check consecutive non-improving iterations
+	// Plateau detection: include current score before checking
+	// (ScoreHistory is appended by the caller after EvaluateAndDecide returns,
+	// so we check with the current score appended to get accurate detection)
 	plateauLimit := cfg.PlateauLimit
 	if plateauLimit <= 0 {
 		plateauLimit = 3
 	}
-	if isPlateaued(cfg.ScoreHistory, cfg.BestScore, plateauLimit) {
+	historyWithCurrent := append(cfg.ScoreHistory, score)
+	if isPlateaued(historyWithCurrent, cfg.BestScore, plateauLimit) {
 		result.Plateau = true
 	}
 

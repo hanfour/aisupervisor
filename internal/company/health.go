@@ -309,14 +309,11 @@ func (m *Manager) respawnWorker(w *worker.Worker, t *project.Task, p *project.Pr
 		recoveryPrefix = fmt.Sprintf("注意：你之前的工作階段中斷了。以下是最後捕捉到的進度：\n\n%s\n\n--- 請從中斷處繼續 ---\n\n", lastOutput)
 	}
 
-	// Prepend recovery context to prompt
-	originalPrompt := t.Prompt
-	t.Prompt = recoveryPrefix + originalPrompt
+	// Use a shallow copy of the task to avoid mutating shared state
+	taskCopy := *t
+	taskCopy.Prompt = recoveryPrefix + t.Prompt
 
-	err := m.spawner.SpawnForTask(ctx, w, t, p)
-
-	// Restore original prompt
-	t.Prompt = originalPrompt
+	err := m.spawner.SpawnForTask(ctx, w, &taskCopy, p)
 
 	if err != nil {
 		log.Printf("HEALTH: respawn failed for worker %s: %v", w.ID, err)
@@ -380,11 +377,11 @@ func (m *Manager) autoRecoverStuck(w *worker.Worker, content string) {
 		m.tmuxClient.SendKeys(w.TmuxSession, w.Window, w.Pane, "Enter")
 
 	default:
-		// Third attempt: kill session and respawn
-		log.Printf("HEALTH: worker %s stuck for too long — killing and respawning (attempt %d)", w.ID, w.RecoveryAttempts)
+		// Third+ attempt: kill session; next health cycle will detect the missing
+		// session via autoRecover(), which handles respawn or marks task failed.
+		log.Printf("HEALTH: worker %s stuck for too long — killing session (attempt %d)", w.ID, w.RecoveryAttempts)
 		m.tmuxClient.KillSession(w.TmuxSession)
 		w.TmuxSession = ""
-		// autoRecover will handle respawn on next cycle since session is gone
 	}
 }
 
@@ -412,6 +409,24 @@ func (m *Manager) checkReviewTimeouts() {
 
 			// Auto-approve the task
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
+
+			// Reset the reviewer worker if it's still working on this review
+			if t.AssigneeID != "" {
+				if rw, ok := m.workers[t.AssigneeID]; ok && rw.CurrentTaskID == t.ID {
+					if cancel, ok := m.cancels[rw.ID]; ok {
+						cancel()
+						delete(m.cancels, rw.ID)
+					}
+					rw.Status = worker.WorkerIdle
+					rw.CurrentTaskID = ""
+					if rw.TmuxSession != "" {
+						m.tmuxClient.KillSession(rw.TmuxSession)
+						rw.TmuxSession = ""
+						rw.SessionID = ""
+					}
+					m.saveWorkers()
+				}
+			}
 
 			m.emit(Event{
 				Type:      EventReviewTimeout,

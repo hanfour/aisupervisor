@@ -288,17 +288,45 @@ func (m *Manager) autoRecover(w *worker.Worker) bool {
 
 	log.Printf("HEALTH: respawning worker %s for task %s (attempt %d)", w.ID, t.ID, w.RecoveryAttempts)
 
+	// Capture IDs before releasing lock — respawnWorker will re-acquire lock and
+	// look up the worker/task fresh to avoid data races on shared pointers.
+	workerID := w.ID
+	taskID := t.ID
+	projectID := p.ID
+
 	// Respawn in a goroutine (we hold m.mu, spawner needs it released)
 	go func() {
-		m.respawnWorker(w, t, p, lastOutput)
+		m.respawnWorkerByID(workerID, taskID, projectID, lastOutput)
 	}()
 
 	return true
 }
 
-// respawnWorker re-spawns a worker for a task with recovery context.
-func (m *Manager) respawnWorker(w *worker.Worker, t *project.Task, p *project.Project, lastOutput string) {
+// respawnWorkerByID re-spawns a worker by looking up fresh references under lock.
+// This avoids data races from holding stale pointers across goroutine boundaries.
+func (m *Manager) respawnWorkerByID(workerID, taskID, projectID, lastOutput string) {
 	ctx := context.Background()
+
+	// Look up fresh references under lock
+	m.mu.RLock()
+	w, wOK := m.workers[workerID]
+	m.mu.RUnlock()
+	if !wOK {
+		log.Printf("HEALTH: respawn aborted — worker %s no longer exists", workerID)
+		return
+	}
+
+	t, tOK := m.projectStore.GetTask(taskID)
+	if !tOK {
+		log.Printf("HEALTH: respawn aborted — task %s no longer exists", taskID)
+		return
+	}
+
+	p, pOK := m.projectStore.GetProject(projectID)
+	if !pOK {
+		log.Printf("HEALTH: respawn aborted — project %s no longer exists", projectID)
+		return
+	}
 
 	// Build recovery prompt prefix
 	recoveryPrefix := ""
@@ -316,19 +344,19 @@ func (m *Manager) respawnWorker(w *worker.Worker, t *project.Task, p *project.Pr
 	err := m.spawner.SpawnForTask(ctx, w, &taskCopy, p)
 
 	if err != nil {
-		log.Printf("HEALTH: respawn failed for worker %s: %v", w.ID, err)
+		log.Printf("HEALTH: respawn failed for worker %s: %v", workerID, err)
 		m.mu.Lock()
 		w.Status = worker.WorkerIdle
 		w.CurrentTaskID = ""
 		w.RecoveryAttempts = 0
 		m.saveWorkers()
-		m.projectStore.ForceUpdateTaskStatus(t.ID, project.TaskReady)
+		m.projectStore.ForceUpdateTaskStatus(taskID, project.TaskReady)
 		m.mu.Unlock()
 
 		m.emit(Event{
 			Type:     EventWorkerRecoveryFailed,
-			WorkerID: w.ID,
-			TaskID:   t.ID,
+			WorkerID: workerID,
+			TaskID:   taskID,
 			Message:  m.msgf("Worker %s respawn failed: %v", "員工 %s 重新啟動失敗：%v", w.Name, err),
 		})
 		return
@@ -340,15 +368,15 @@ func (m *Manager) respawnWorker(w *worker.Worker, t *project.Task, p *project.Pr
 
 	m.emit(Event{
 		Type:     EventWorkerRecovered,
-		WorkerID: w.ID,
-		TaskID:   t.ID,
+		WorkerID: workerID,
+		TaskID:   taskID,
 		Message:  m.msgf("Worker %s auto-recovered (attempt %d)", "員工 %s 已自動恢復（第 %d 次）", w.Name, w.RecoveryAttempts),
 	})
 
 	// Start new completion monitoring
 	workerCtx, cancel := context.WithCancel(ctx)
 	m.mu.Lock()
-	m.cancels[w.ID] = cancel
+	m.cancels[workerID] = cancel
 	m.mu.Unlock()
 
 	m.wg.Add(1)
@@ -366,7 +394,7 @@ func (m *Manager) autoRecoverStuck(w *worker.Worker, content string) {
 		log.Printf("HEALTH: worker %s stuck — sending Enter key (attempt 1)", w.ID)
 		m.tmuxClient.SendKeys(w.TmuxSession, w.Window, w.Pane, "Enter")
 		m.emit(Event{
-			Type:     EventWorkerRecovered,
+			Type:     EventHumanInterventionRequired,
 			WorkerID: w.ID,
 			Message:  m.msgf("Worker %s may be stuck — sent Enter key to wake up", "員工 %s 可能卡住了 — 已送出 Enter 喚醒", w.Name),
 		})
@@ -410,9 +438,10 @@ func (m *Manager) checkReviewTimeouts() {
 			// Auto-approve the task
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
 
-			// Reset the reviewer worker if it's still working on this review
-			if t.AssigneeID != "" {
-				if rw, ok := m.workers[t.AssigneeID]; ok && rw.CurrentTaskID == t.ID {
+			// Reset the reviewer worker (not the original assignee)
+			reviewerID := t.ReviewerID
+			if reviewerID != "" {
+				if rw, ok := m.workers[reviewerID]; ok && rw.Status == worker.WorkerWorking {
 					if cancel, ok := m.cancels[rw.ID]; ok {
 						cancel()
 						delete(m.cancels, rw.ID)
@@ -446,7 +475,16 @@ func (m *Manager) checkReviewTimeouts() {
 				})
 			}
 
-			go m.checkProjectCompletion(p.ID)
+			// Also mark any review sub-tasks for this task as done
+			for _, st := range m.projectStore.TasksForProject(p.ID) {
+				if st.ParentTaskID == t.ID && st.Status != project.TaskDone && st.Status != project.TaskFailed {
+					m.projectStore.UpdateTaskStatus(st.ID, project.TaskDone)
+				}
+			}
+
+			// checkProjectCompletion reads from projectStore (no mu needed), safe to call in goroutine
+			projectID := p.ID
+			go m.checkProjectCompletion(projectID)
 		}
 	}
 }

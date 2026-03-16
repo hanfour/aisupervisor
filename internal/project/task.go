@@ -85,6 +85,8 @@ type Task struct {
 	OriginalPrompt string `yaml:"original_prompt,omitempty" json:"-"`
 	// PreTaskCommit is the HEAD commit before the worker started, used for rollback.
 	PreTaskCommit string `yaml:"pre_task_commit,omitempty" json:"-"`
+	// HelpRequestHandled stores the help content already processed, to prevent duplicate handling.
+	HelpRequestHandled string `yaml:"help_request_handled,omitempty" json:"-"`
 
 	RetryCount       int            `yaml:"retry_count,omitempty" json:"retryCount,omitempty"`
 	CreatedAt        time.Time      `yaml:"created_at" json:"createdAt"`

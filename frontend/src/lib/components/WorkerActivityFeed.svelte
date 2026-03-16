@@ -18,12 +18,14 @@
 
   async function refreshAll() {
     const working = workers.filter(w => w.status === 'working' || w.status === 'waiting')
-    for (const w of working) {
+    const results = await Promise.all(working.map(async w => {
       const output = await fetchActivity(w.id)
+      return { id: w.id, output }
+    }))
+    for (const { id, output } of results) {
       if (output) {
-        // Extract last 3 non-empty lines
         const lines = output.split('\n').filter(l => l.trim()).slice(-3)
-        activities[w.id] = lines.join('\n')
+        activities[id] = lines.join('\n')
       }
     }
     activities = { ...activities }

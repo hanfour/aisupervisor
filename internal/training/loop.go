@@ -91,8 +91,11 @@ func (l *TrainingLoop) EvaluateAndDecide(ctx context.Context, repoPath, branchNa
 	if plateauLimit <= 0 {
 		plateauLimit = 3
 	}
-	historyWithCurrent := append(cfg.ScoreHistory, score)
-	if isPlateaued(historyWithCurrent, cfg.BestScore, plateauLimit) {
+	// Defensive copy to avoid mutating cfg.ScoreHistory's backing array
+	historyWithCurrent := make([]float64, len(cfg.ScoreHistory)+1)
+	copy(historyWithCurrent, cfg.ScoreHistory)
+	historyWithCurrent[len(cfg.ScoreHistory)] = score
+	if cfg.BestScore > 0 && isPlateaued(historyWithCurrent, cfg.BestScore, plateauLimit) {
 		result.Plateau = true
 	}
 
@@ -243,8 +246,9 @@ func ParseScore(output string, exitCode int) float64 {
 }
 
 func truncateOutput(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[len(s)-maxLen:]
+	return string(runes[len(runes)-maxLen:])
 }

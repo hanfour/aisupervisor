@@ -842,7 +842,11 @@ func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *proj
 	}
 
 	// Handle help request — create research sub-task and resume monitoring
-	if result.HelpRequest != "" {
+	// Only process once per task to prevent unbounded goroutine spawning
+	// if the HELP_NEEDED keyword persists in scrollback.
+	if result.HelpRequest != "" && t.HelpRequestHandled == "" {
+		t.HelpRequestHandled = result.HelpRequest
+		m.projectStore.SaveTask(t)
 		m.handleHelpRequest(w, result.HelpRequest)
 		// Continue monitoring — the worker is still working
 		m.wg.Add(1)
@@ -1317,29 +1321,39 @@ func (m *Manager) verifyAndIterate(w *worker.Worker, t *project.Task, p *project
 		t.BestVerifyScore = score
 		t.BestVerifyCommit = currentCommit // store the worker's commit as best
 		m.projectStore.SaveTask(t)
+	} else {
+		m.projectStore.SaveTask(t)
+	}
 
+	// Capture state needed for git operations, then release lock before blocking I/O
+	bestCommit := t.BestVerifyCommit
+	bestScore := t.BestVerifyScore
+	repoPath := p.RepoPath
+	iterCount := t.IterationCount
+	origPrompt := t.OriginalPrompt
+	m.mu.Unlock()
+
+	if improved {
 		m.emit(Event{
 			Type:      EventVerificationPassed,
 			ProjectID: p.ID,
 			TaskID:    t.ID,
 			WorkerID:  w.ID,
-			Message:   m.msgf("Verification passed: score %.4f (iteration %d/%d)", "驗證通過：分數 %.4f（迭代 %d/%d）", score, t.IterationCount, maxIter),
+			Message:   m.msgf("Verification passed: score %.4f (iteration %d/%d)", "驗證通過：分數 %.4f（迭代 %d/%d）", score, iterCount, maxIter),
 		})
 	} else {
-		m.projectStore.SaveTask(t)
-
 		m.emit(Event{
 			Type:      EventVerificationFailed,
 			ProjectID: p.ID,
 			TaskID:    t.ID,
 			WorkerID:  w.ID,
-			Message:   m.msgf("Verification failed: score %.4f <= best %.4f (iteration %d/%d)", "驗證失敗：分數 %.4f <= 最佳 %.4f（迭代 %d/%d）", score, t.BestVerifyScore, t.IterationCount, maxIter),
+			Message:   m.msgf("Verification failed: score %.4f <= best %.4f (iteration %d/%d)", "驗證失敗：分數 %.4f <= 最佳 %.4f（迭代 %d/%d）", score, bestScore, iterCount, maxIter),
 		})
 
-		// Rollback to best commit if we have one
-		if t.BestVerifyCommit != "" && p.RepoPath != "" {
-			resetCmd := exec.Command("git", "reset", "--hard", t.BestVerifyCommit)
-			resetCmd.Dir = p.RepoPath
+		// Rollback to best commit if we have one (outside lock — blocking I/O)
+		if bestCommit != "" && repoPath != "" {
+			resetCmd := exec.Command("git", "reset", "--hard", bestCommit)
+			resetCmd.Dir = repoPath
 			if resetOut, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
 				log.Printf("verify: rollback failed for task %s: %s %v", t.ID, string(resetOut), resetErr)
 			} else {
@@ -1348,7 +1362,7 @@ func (m *Manager) verifyAndIterate(w *worker.Worker, t *project.Task, p *project
 					ProjectID: p.ID,
 					TaskID:    t.ID,
 					WorkerID:  w.ID,
-					Message:   m.msgf("Rolled back to best commit %s", "已回退至最佳提交 %s", truncate(t.BestVerifyCommit, 8)),
+					Message:   m.msgf("Rolled back to best commit %s", "已回退至最佳提交 %s", truncate(bestCommit, 8)),
 				})
 			}
 		}
@@ -1356,16 +1370,15 @@ func (m *Manager) verifyAndIterate(w *worker.Worker, t *project.Task, p *project
 
 	// Check if verification passed (score == 1.0 means all tests pass)
 	if score >= 1.0 {
-		m.mu.Unlock()
 		return "continue" // fully passed, proceed to normal flow
 	}
 
 	// Check iteration budget
-	if t.IterationCount >= maxIter {
-		// Out of iterations — reset to best known commit
-		if t.BestVerifyCommit != "" && p.RepoPath != "" && !improved {
-			resetCmd := exec.Command("git", "reset", "--hard", t.BestVerifyCommit)
-			resetCmd.Dir = p.RepoPath
+	if iterCount >= maxIter {
+		// Out of iterations — reset to best known commit (outside lock)
+		if bestCommit != "" && repoPath != "" && !improved {
+			resetCmd := exec.Command("git", "reset", "--hard", bestCommit)
+			resetCmd.Dir = repoPath
 			if resetOut, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
 				log.Printf("verify: final rollback failed: %s %v", string(resetOut), resetErr)
 			}
@@ -1375,15 +1388,15 @@ func (m *Manager) verifyAndIterate(w *worker.Worker, t *project.Task, p *project
 			ProjectID: p.ID,
 			TaskID:    t.ID,
 			WorkerID:  w.ID,
-			Message:   m.msgf("Max iterations reached (%d), accepting best score %.4f", "已達最大迭代次數（%d），接受最佳分數 %.4f", maxIter, t.BestVerifyScore),
+			Message:   m.msgf("Max iterations reached (%d), accepting best score %.4f", "已達最大迭代次數（%d），接受最佳分數 %.4f", maxIter, bestScore),
 		})
-		m.mu.Unlock()
 		return "continue" // proceed to normal completion with best result
 	}
 
 	// More iterations available — re-assign with feedback (replace, not append)
+	m.mu.Lock()
 	t.Prompt = fmt.Sprintf("%s\n\n--- 驗證反饋 / Verification Feedback ---\n驗證分數 Score: %.4f (目標 target: 1.0)\n迭代 Iteration: %d/%d\n驗證輸出 Output:\n%s\n\n請根據驗證結果修正程式碼，再次提交。\nPlease fix the code based on verification output and commit again.",
-		t.OriginalPrompt, score, t.IterationCount, maxIter, truncate(output, 2000))
+		origPrompt, score, iterCount, maxIter, truncate(output, 2000))
 	m.projectStore.ForceUpdateTaskStatus(t.ID, project.TaskReady)
 	m.projectStore.SaveTask(t)
 
@@ -2441,6 +2454,7 @@ func (m *Manager) handoffContext(t *project.Task) string {
 	}
 
 	var contexts []string
+	m.mu.RLock()
 	for _, depID := range t.DependsOn {
 		depTask, ok := m.projectStore.GetTask(depID)
 		if !ok || depTask.Status != project.TaskDone {
@@ -2448,7 +2462,6 @@ func (m *Manager) handoffContext(t *project.Task) string {
 		}
 		// Try to capture last output from the assignee's pane
 		if depTask.AssigneeID != "" {
-			m.mu.RLock()
 			if snap, exists := m.lastPaneContent[depTask.AssigneeID]; exists && snap.content != "" {
 				summary := snap.content
 				if len(summary) > 1000 {
@@ -2456,9 +2469,9 @@ func (m *Manager) handoffContext(t *project.Task) string {
 				}
 				contexts = append(contexts, fmt.Sprintf("[%s] %s", depTask.Title, summary))
 			}
-			m.mu.RUnlock()
 		}
 	}
+	m.mu.RUnlock()
 
 	if len(contexts) == 0 {
 		return ""

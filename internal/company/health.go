@@ -2,6 +2,7 @@ package company
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -129,7 +130,7 @@ func joinStrings(ss []string) string {
 }
 
 // StartHealthCheck runs a periodic background health check every 60 seconds.
-// It detects orphaned tmux sessions and stalled workers.
+// It detects orphaned tmux sessions, stalled workers, and proactively assigns tasks.
 func (m *Manager) StartHealthCheck(ctx context.Context) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -140,6 +141,7 @@ func (m *Manager) StartHealthCheck(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.runHealthCycle()
+			m.proactiveTaskDiscovery()
 		}
 	}
 }
@@ -164,9 +166,14 @@ func (m *Manager) runHealthCycle() {
 		// Check if tmux session still exists
 		has, err := m.tmuxClient.HasSession(w.TmuxSession)
 		if err != nil || !has {
-			log.Printf("HEALTH: worker %s (%s) has orphaned session %q — resetting", w.ID, w.Name, w.TmuxSession)
+			log.Printf("HEALTH: worker %s (%s) has orphaned session %q — attempting auto-recovery", w.ID, w.Name, w.TmuxSession)
 
-			// Cancel completion monitor
+			// Try to respawn if task is still valid
+			if m.autoRecover(w) {
+				continue
+			}
+
+			// Recovery not possible — reset worker
 			if cancel, ok := m.cancels[w.ID]; ok {
 				cancel()
 				delete(m.cancels, w.ID)
@@ -176,6 +183,7 @@ func (m *Manager) runHealthCycle() {
 			w.CurrentTaskID = ""
 			w.TmuxSession = ""
 			w.SessionID = ""
+			w.RecoveryAttempts = 0
 			m.saveWorkers()
 
 			m.emit(Event{
@@ -184,7 +192,6 @@ func (m *Manager) runHealthCycle() {
 				Message:  m.msgf("Worker %s auto-reset: orphaned tmux session", "員工 %s 已自動重設：孤立的 tmux session", w.Name),
 			})
 
-			// Clean up stale pane snapshot
 			delete(m.lastPaneContent, w.ID)
 			continue
 		}
@@ -197,18 +204,234 @@ func (m *Manager) runHealthCycle() {
 
 		prev, exists := m.lastPaneContent[w.ID]
 		if !exists || prev.content != content {
-			// Content changed — update snapshot
+			// Content changed — update snapshot and reset recovery attempts
 			m.lastPaneContent[w.ID] = paneSnapshot{content: content, since: time.Now()}
+			if w.RecoveryAttempts > 0 {
+				w.RecoveryAttempts = 0
+			}
 		} else if time.Since(prev.since) > 5*time.Minute {
-			// Content unchanged for 5+ minutes — emit warning (don't auto-reset)
-			log.Printf("HEALTH: worker %s (%s) pane output unchanged for %v", w.ID, w.Name, time.Since(prev.since).Round(time.Second))
-			m.emit(Event{
-				Type:     EventHumanInterventionRequired,
-				WorkerID: w.ID,
-				Message:  m.msgf("Worker %s may be stuck: no output change for 5+ minutes", "員工 %s 可能卡住了：超過 5 分鐘沒有輸出變化", w.Name),
-			})
-			// Reset the timer so we don't spam warnings every 60s
+			// Content unchanged for 5+ minutes — attempt auto-recovery
+			m.autoRecoverStuck(w, content)
+			// Reset the timer so we don't spam every 60s
 			m.lastPaneContent[w.ID] = paneSnapshot{content: content, since: time.Now()}
+		}
+	}
+
+	// Check for timed-out reviews
+	m.checkReviewTimeouts()
+}
+
+// autoRecover attempts to respawn a worker whose tmux session died.
+// Must be called with m.mu held. Returns true if recovery was initiated.
+func (m *Manager) autoRecover(w *worker.Worker) bool {
+	if w.CurrentTaskID == "" || m.spawner == nil {
+		return false
+	}
+
+	t, ok := m.projectStore.GetTask(w.CurrentTaskID)
+	if !ok || t.Status == project.TaskDone || t.Status == project.TaskFailed {
+		return false
+	}
+
+	p, ok := m.projectStore.GetProject(t.ProjectID)
+	if !ok {
+		return false
+	}
+
+	w.RecoveryAttempts++
+	if w.RecoveryAttempts > 3 {
+		// Too many recovery attempts — mark task as failed
+		log.Printf("HEALTH: worker %s recovery exhausted (%d attempts) — marking task %s failed", w.ID, w.RecoveryAttempts, t.ID)
+		m.projectStore.ForceUpdateTaskStatus(t.ID, project.TaskFailed)
+
+		if cancel, ok := m.cancels[w.ID]; ok {
+			cancel()
+			delete(m.cancels, w.ID)
+		}
+
+		w.Status = worker.WorkerIdle
+		w.CurrentTaskID = ""
+		w.TmuxSession = ""
+		w.SessionID = ""
+		w.RecoveryAttempts = 0
+		m.saveWorkers()
+
+		m.emit(Event{
+			Type:     EventWorkerRecoveryFailed,
+			WorkerID: w.ID,
+			TaskID:   t.ID,
+			Message:  m.msgf("Worker %s recovery failed after %d attempts — task marked failed", "員工 %s 恢復失敗（%d 次嘗試）— 任務標記為失敗", w.Name, 3),
+		})
+		return true
+	}
+
+	// Capture last output for context before killing
+	var lastOutput string
+	if prev, exists := m.lastPaneContent[w.ID]; exists {
+		lastOutput = prev.content
+	}
+	// Truncate to 2000 bytes for context
+	if len(lastOutput) > 2000 {
+		lastOutput = lastOutput[len(lastOutput)-2000:]
+	}
+
+	// Cancel existing monitor
+	if cancel, ok := m.cancels[w.ID]; ok {
+		cancel()
+		delete(m.cancels, w.ID)
+	}
+
+	// Reset worker state for respawn
+	w.TmuxSession = ""
+	w.SessionID = ""
+	w.LastRecoveryAt = time.Now()
+
+	log.Printf("HEALTH: respawning worker %s for task %s (attempt %d)", w.ID, t.ID, w.RecoveryAttempts)
+
+	// Respawn in a goroutine (we hold m.mu, spawner needs it released)
+	go func() {
+		m.respawnWorker(w, t, p, lastOutput)
+	}()
+
+	return true
+}
+
+// respawnWorker re-spawns a worker for a task with recovery context.
+func (m *Manager) respawnWorker(w *worker.Worker, t *project.Task, p *project.Project, lastOutput string) {
+	ctx := context.Background()
+
+	// Build recovery prompt prefix
+	recoveryPrefix := ""
+	lang := m.GetLanguage()
+	if lang == "en" {
+		recoveryPrefix = fmt.Sprintf("NOTE: Your previous session was interrupted. Here is the last progress captured:\n\n%s\n\n--- Continue from where you left off ---\n\n", lastOutput)
+	} else {
+		recoveryPrefix = fmt.Sprintf("注意：你之前的工作階段中斷了。以下是最後捕捉到的進度：\n\n%s\n\n--- 請從中斷處繼續 ---\n\n", lastOutput)
+	}
+
+	// Prepend recovery context to prompt
+	originalPrompt := t.Prompt
+	t.Prompt = recoveryPrefix + originalPrompt
+
+	err := m.spawner.SpawnForTask(ctx, w, t, p)
+
+	// Restore original prompt
+	t.Prompt = originalPrompt
+
+	if err != nil {
+		log.Printf("HEALTH: respawn failed for worker %s: %v", w.ID, err)
+		m.mu.Lock()
+		w.Status = worker.WorkerIdle
+		w.CurrentTaskID = ""
+		w.RecoveryAttempts = 0
+		m.saveWorkers()
+		m.projectStore.ForceUpdateTaskStatus(t.ID, project.TaskReady)
+		m.mu.Unlock()
+
+		m.emit(Event{
+			Type:     EventWorkerRecoveryFailed,
+			WorkerID: w.ID,
+			TaskID:   t.ID,
+			Message:  m.msgf("Worker %s respawn failed: %v", "員工 %s 重新啟動失敗：%v", w.Name, err),
+		})
+		return
+	}
+
+	m.mu.Lock()
+	m.saveWorkers()
+	m.mu.Unlock()
+
+	m.emit(Event{
+		Type:     EventWorkerRecovered,
+		WorkerID: w.ID,
+		TaskID:   t.ID,
+		Message:  m.msgf("Worker %s auto-recovered (attempt %d)", "員工 %s 已自動恢復（第 %d 次）", w.Name, w.RecoveryAttempts),
+	})
+
+	// Start new completion monitoring
+	workerCtx, cancel := context.WithCancel(ctx)
+	m.mu.Lock()
+	m.cancels[w.ID] = cancel
+	m.mu.Unlock()
+
+	m.wg.Add(1)
+	go m.watchCompletion(workerCtx, w, t, p)
+}
+
+// autoRecoverStuck handles a worker whose pane output hasn't changed for 5+ minutes.
+// Must be called with m.mu held.
+func (m *Manager) autoRecoverStuck(w *worker.Worker, content string) {
+	w.RecoveryAttempts++
+
+	switch w.RecoveryAttempts {
+	case 1:
+		// First attempt: send Enter key (might be waiting for permission prompt)
+		log.Printf("HEALTH: worker %s stuck — sending Enter key (attempt 1)", w.ID)
+		m.tmuxClient.SendKeys(w.TmuxSession, w.Window, w.Pane, "Enter")
+		m.emit(Event{
+			Type:     EventWorkerRecovered,
+			WorkerID: w.ID,
+			Message:  m.msgf("Worker %s may be stuck — sent Enter key to wake up", "員工 %s 可能卡住了 — 已送出 Enter 喚醒", w.Name),
+		})
+
+	case 2:
+		// Second attempt: send Enter again (avoids sending 'y' which could confirm destructive prompts)
+		log.Printf("HEALTH: worker %s still stuck — sending Enter key again (attempt 2)", w.ID)
+		m.tmuxClient.SendKeys(w.TmuxSession, w.Window, w.Pane, "Enter")
+
+	default:
+		// Third attempt: kill session and respawn
+		log.Printf("HEALTH: worker %s stuck for too long — killing and respawning (attempt %d)", w.ID, w.RecoveryAttempts)
+		m.tmuxClient.KillSession(w.TmuxSession)
+		w.TmuxSession = ""
+		// autoRecover will handle respawn on next cycle since session is gone
+	}
+}
+
+// checkReviewTimeouts auto-approves reviews that have been running too long.
+// Must be called with m.mu held.
+func (m *Manager) checkReviewTimeouts() {
+	reviewTimeout := 15 * time.Minute
+	if m.reviewTimeoutMinutes > 0 {
+		reviewTimeout = time.Duration(m.reviewTimeoutMinutes) * time.Minute
+	}
+
+	for _, p := range m.projectStore.ListProjects() {
+		for _, t := range m.projectStore.TasksForProject(p.ID) {
+			if t.Status != project.TaskReview {
+				continue
+			}
+			if t.ReviewStartedAt == nil {
+				continue
+			}
+			if time.Since(*t.ReviewStartedAt) <= reviewTimeout {
+				continue
+			}
+
+			log.Printf("HEALTH: review for task %s timed out after %v — auto-approving", t.ID, time.Since(*t.ReviewStartedAt).Round(time.Second))
+
+			// Auto-approve the task
+			m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
+
+			m.emit(Event{
+				Type:      EventReviewTimeout,
+				ProjectID: p.ID,
+				TaskID:    t.ID,
+				Message:   m.msgf("Review for task %q auto-approved (timeout after %d min)", "任務 %q 的審查已自動核准（%d 分鐘超時）", t.Title, int(reviewTimeout.Minutes())),
+			})
+
+			// Promote newly unblocked tasks
+			promoted, _ := m.projectStore.PromoteReady(p.ID)
+			for _, pt := range promoted {
+				m.emit(Event{
+					Type:      EventTaskCreated,
+					ProjectID: p.ID,
+					TaskID:    pt.ID,
+					Message:   m.msgf("Task %q is now ready (dependencies resolved)", "任務 %q 已就緒（依賴已解決）", pt.Title),
+				})
+			}
+
+			go m.checkProjectCompletion(p.ID)
 		}
 	}
 }

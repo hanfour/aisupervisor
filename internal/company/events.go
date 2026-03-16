@@ -52,6 +52,17 @@ const (
 	EventWorkerResumed             EventType = "worker_resumed"
 	EventBudgetWarning             EventType = "budget_warning"
 	EventObjectiveCompleted        EventType = "objective_completed"
+	EventWorkerRecovered           EventType = "worker_recovered"
+	EventWorkerRecoveryFailed      EventType = "worker_recovery_failed"
+	EventReviewTimeout             EventType = "review_timeout"
+	EventHelpRequested             EventType = "help_requested"
+	EventMicroRetroCompleted       EventType = "micro_retro_completed"
+	EventContextHandoff            EventType = "context_handoff"
+	EventVerificationPassed        EventType = "verification_passed"
+	EventVerificationFailed        EventType = "verification_failed"
+	EventIterationRollback         EventType = "iteration_rollback"
+	EventIterationRetry         EventType = "iteration_retry"
+	EventPlateauEarlyStop          EventType = "plateau_early_stop"
 )
 
 type Event struct {

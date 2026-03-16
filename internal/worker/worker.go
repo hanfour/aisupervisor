@@ -66,8 +66,10 @@ type Worker struct {
 	Role          WorkerRole   `yaml:"role,omitempty" json:"role,omitempty"`
 	Title         string       `yaml:"title,omitempty" json:"title,omitempty"`
 	Gender        WorkerGender    `yaml:"gender,omitempty" json:"gender,omitempty"`
-	Appearance    *WorkerAppearance `yaml:"appearance,omitempty" json:"appearance,omitempty"`
-	CreatedAt     time.Time       `yaml:"created_at" json:"createdAt"`
+	Appearance       *WorkerAppearance `yaml:"appearance,omitempty" json:"appearance,omitempty"`
+	RecoveryAttempts int               `yaml:"-" json:"-"` // transient: recovery attempts for current task
+	LastRecoveryAt   time.Time         `yaml:"-" json:"-"` // transient: last recovery attempt time
+	CreatedAt        time.Time         `yaml:"created_at" json:"createdAt"`
 }
 
 // EffectiveTier returns the worker's tier, defaulting to TierEngineer if unset.

@@ -187,7 +187,39 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 
 // SpawnForTask creates a tmux session, sets up the git branch, launches Claude Code,
 // sends the task prompt, and wires the session into the existing supervisor pipeline.
+// Retries up to 3 times with exponential backoff on failure.
 func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, p *project.Project) error {
+	backoffs := []time.Duration{0, 2 * time.Second, 5 * time.Second, 10 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			// Check tmux server health before retry
+			if err := s.checkTmuxServer(); err != nil {
+				log.Printf("WARNING: tmux server unhealthy before retry %d: %v", attempt, err)
+				time.Sleep(backoffs[attempt])
+				continue
+			}
+			time.Sleep(backoffs[attempt])
+			log.Printf("SpawnForTask: retry %d for worker %s task %s", attempt, w.ID, t.ID)
+		}
+		if err := s.spawnForTaskInner(ctx, w, t, p); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
+// checkTmuxServer verifies the tmux server is running.
+func (s *Spawner) checkTmuxServer() error {
+	// Try listing sessions — if tmux server is down this will fail
+	_, err := s.tmuxClient.ListSessions()
+	return err
+}
+
+// spawnForTaskInner is the actual spawn implementation.
+func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.Task, p *project.Project) error {
 	tmuxName := fmt.Sprintf("aiworker-%s", w.ID)
 
 	isNonCodeTask := t.Type == project.TaskTypeResearch ||
@@ -521,15 +553,27 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 	// PRD and design tasks use their pre-built prompt directly
 	if t.Type == project.TaskTypePRD || t.Type == project.TaskTypeDesign {
 		prompt := t.Prompt
+		lang := s.language
+		if lang == "" {
+			lang = "zh-TW"
+		}
 		if t.Type == project.TaskTypeDesign {
-			lang := s.language
-			if lang == "" {
-				lang = "zh-TW"
-			}
 			if lang == "en" {
 				prompt += "\n\nOutput design documents to the docs/design/ directory. Create the directory if it doesn't exist.\nWhen done, commit your changes and type /stop to signal completion."
 			} else {
 				prompt += "\n\n將設計文件輸出到 docs/design/ 目錄。如果目錄不存在，請建立它。\n完成時，提交變更並輸入 /stop 表示完成。"
+			}
+		}
+		// Add verification instructions for PRD/design tasks too
+		verifyCmd := t.VerifyCmd
+		if verifyCmd == "" && p != nil {
+			verifyCmd = p.VerifyCmd
+		}
+		if verifyCmd != "" {
+			if lang == "en" {
+				prompt += fmt.Sprintf("\n\n--- Self-Test ---\nBefore committing, run: %s\nIf it fails, fix the issues and try again. Iterate until it passes.", verifyCmd)
+			} else {
+				prompt += fmt.Sprintf("\n\n--- 自我測試 ---\n提交前請執行：%s\n如果失敗，請修正問題並重試。反覆修正直到通過。", verifyCmd)
 			}
 		}
 		return prompt
@@ -559,6 +603,24 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 			}
 			sb.WriteString("You may reference or build on the code from these branches.\n")
 		}
+		// Self-iteration instructions when VerifyCmd is available
+		verifyCmd := t.VerifyCmd
+		if verifyCmd == "" {
+			verifyCmd = p.VerifyCmd
+		}
+		if verifyCmd != "" {
+			sb.WriteString("\n\n--- Self-Test Loop ---\n")
+			sb.WriteString("BEFORE committing, you MUST run this verification command and iterate until it passes:\n")
+			sb.WriteString(fmt.Sprintf("  %s\n\n", verifyCmd))
+			sb.WriteString("Follow this loop:\n")
+			sb.WriteString("1. Make your changes\n")
+			sb.WriteString("2. Run the verification command above\n")
+			sb.WriteString("3. If it PASSES → commit and /stop\n")
+			sb.WriteString("4. If it FAILS → read the output, fix the issues, go back to step 2\n")
+			sb.WriteString("5. Repeat up to 5 times. If still failing, commit your best attempt and /stop\n")
+			sb.WriteString("\nDo NOT skip verification. Do NOT commit code that fails the check.\n")
+		}
+
 		sb.WriteString("\n\n--- When Done ---\n")
 		sb.WriteString("1. Commit all changes with a descriptive message\n")
 		sb.WriteString("2. Type /stop to signal completion\n")
@@ -589,6 +651,25 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 			}
 			sb.WriteString("你可以參考或基於這些分支的程式碼進行開發。\n")
 		}
+
+		// Self-iteration instructions when VerifyCmd is available
+		verifyCmd := t.VerifyCmd
+		if verifyCmd == "" {
+			verifyCmd = p.VerifyCmd
+		}
+		if verifyCmd != "" {
+			sb.WriteString("\n\n--- 自我測試迴圈 ---\n")
+			sb.WriteString("提交前，你必須執行以下驗證指令並反覆修正直到通過：\n")
+			sb.WriteString(fmt.Sprintf("  %s\n\n", verifyCmd))
+			sb.WriteString("按照以下流程操作：\n")
+			sb.WriteString("1. 完成修改\n")
+			sb.WriteString("2. 執行上面的驗證指令\n")
+			sb.WriteString("3. 如果通過 → 提交並輸入 /stop\n")
+			sb.WriteString("4. 如果失敗 → 閱讀輸出，修正問題，回到步驟 2\n")
+			sb.WriteString("5. 最多重複 5 次。如果仍然失敗，提交你最好的版本並輸入 /stop\n")
+			sb.WriteString("\n不要跳過驗證。不要提交無法通過檢查的程式碼。\n")
+		}
+
 		sb.WriteString("\n\n--- 完成時 ---\n")
 		sb.WriteString("1. 用描述性訊息提交所有變更\n")
 		sb.WriteString("2. 輸入 /stop 表示完成\n")
@@ -622,6 +703,16 @@ func (s *Spawner) buildTrainingPrompt(t *project.Task, p *project.Project) strin
 
 	var sb strings.Builder
 
+	// Build score trend string from history
+	scoreTrend := ""
+	if len(cfg.ScoreHistory) > 0 {
+		parts := make([]string, len(cfg.ScoreHistory))
+		for i, s := range cfg.ScoreHistory {
+			parts[i] = fmt.Sprintf("%.4f", s)
+		}
+		scoreTrend = strings.Join(parts, " → ")
+	}
+
 	if lang == "en" {
 		sb.WriteString(fmt.Sprintf("TRAINING ITERATION %d/%d\n\n", cfg.CurrentIter+1, cfg.MaxIterations))
 		sb.WriteString(fmt.Sprintf("Project: %s\n", p.Name))
@@ -630,6 +721,9 @@ func (s *Spawner) buildTrainingPrompt(t *project.Task, p *project.Project) strin
 		if cfg.CurrentIter > 0 {
 			sb.WriteString("--- Previous Iteration Results ---\n")
 			sb.WriteString(fmt.Sprintf("Best Score So Far: %.4f\n", cfg.BestScore))
+			if scoreTrend != "" {
+				sb.WriteString(fmt.Sprintf("Score Trend: %s\n", scoreTrend))
+			}
 			if cfg.LastTestOutput != "" {
 				sb.WriteString(fmt.Sprintf("Last Test Output:\n%s\n", cfg.LastTestOutput))
 			}
@@ -641,8 +735,16 @@ func (s *Spawner) buildTrainingPrompt(t *project.Task, p *project.Project) strin
 		sb.WriteString("2. Make improvements to achieve a higher score\n")
 		sb.WriteString(fmt.Sprintf("3. Target score: >= %.4f\n", cfg.PassThreshold))
 		sb.WriteString(fmt.Sprintf("4. Test command: %s\n", cfg.TestCmd))
-		sb.WriteString("5. When done with your changes, commit and type /stop\n")
+		if cfg.BenchmarkCmd != "" {
+			sb.WriteString(fmt.Sprintf("5. Benchmark command: %s\n", cfg.BenchmarkCmd))
+			sb.WriteString("6. When done with your changes, commit and type /stop\n")
+		} else {
+			sb.WriteString("5. When done with your changes, commit and type /stop\n")
+		}
 		sb.WriteString("\nIMPORTANT: Focus on making targeted improvements. Do NOT rewrite everything.\n")
+		if scoreTrend != "" {
+			sb.WriteString("Look at the score trend above — if scores are flat, try a fundamentally different approach.\n")
+		}
 		if t.BranchName != "" {
 			sb.WriteString(fmt.Sprintf("\nYou are working on branch: %s\n", t.BranchName))
 		}
@@ -654,6 +756,9 @@ func (s *Spawner) buildTrainingPrompt(t *project.Task, p *project.Project) strin
 		if cfg.CurrentIter > 0 {
 			sb.WriteString("--- 上一輪迭代結果 ---\n")
 			sb.WriteString(fmt.Sprintf("目前最佳分數：%.4f\n", cfg.BestScore))
+			if scoreTrend != "" {
+				sb.WriteString(fmt.Sprintf("分數趨勢：%s\n", scoreTrend))
+			}
 			if cfg.LastTestOutput != "" {
 				sb.WriteString(fmt.Sprintf("上一輪測試輸出：\n%s\n", cfg.LastTestOutput))
 			}
@@ -665,8 +770,16 @@ func (s *Spawner) buildTrainingPrompt(t *project.Task, p *project.Project) strin
 		sb.WriteString("2. 進行改進以獲得更高分數\n")
 		sb.WriteString(fmt.Sprintf("3. 目標分數：>= %.4f\n", cfg.PassThreshold))
 		sb.WriteString(fmt.Sprintf("4. 測試指令：%s\n", cfg.TestCmd))
-		sb.WriteString("5. 完成修改後，提交變更並輸入 /stop\n")
+		if cfg.BenchmarkCmd != "" {
+			sb.WriteString(fmt.Sprintf("5. 基準測試指令：%s\n", cfg.BenchmarkCmd))
+			sb.WriteString("6. 完成修改後，提交變更並輸入 /stop\n")
+		} else {
+			sb.WriteString("5. 完成修改後，提交變更並輸入 /stop\n")
+		}
 		sb.WriteString("\n重要：專注於針對性改進，不要重寫所有程式碼。\n")
+		if scoreTrend != "" {
+			sb.WriteString("觀察上方分數趨勢 — 如果分數持平，嘗試根本不同的方法。\n")
+		}
 		if t.BranchName != "" {
 			sb.WriteString(fmt.Sprintf("\n你正在分支上工作：%s\n", t.BranchName))
 		}

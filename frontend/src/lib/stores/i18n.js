@@ -532,6 +532,37 @@ const translations = {
   'training.rolledBack': { en: 'Rolled Back', zh: '已回退' },
   'training.bestScore': { en: 'Best Score', zh: '最佳分數' },
 
+  // --- Worker Activity Feed ---
+  'activity.title': { en: 'Worker Activity', zh: '員工活動' },
+  'activity.noOutput': { en: 'No output captured', zh: '尚未捕捉到輸出' },
+  'activity.noActive': { en: 'No active workers', zh: '沒有正在工作的員工' },
+
+  // --- Task Timeline ---
+  'timeline.created': { en: 'Created', zh: '已建立' },
+  'timeline.assigned': { en: 'Assigned', zh: '已分配' },
+  'timeline.inProgress': { en: 'Working', zh: '進行中' },
+  'timeline.review': { en: 'Review', zh: '審查' },
+  'timeline.done': { en: 'Done', zh: '完成' },
+  'timeline.waitTime': { en: 'Wait', zh: '等待' },
+  'timeline.workTime': { en: 'Work', zh: '工時' },
+  'timeline.rejections': { en: 'Rejections', zh: '退回次數' },
+  'timeline.retries': { en: 'Retries', zh: '重試次數' },
+
+  // --- Recovery Events ---
+  'alerts.recovered': { en: 'Auto-Recovered', zh: '已自動恢復' },
+  'alerts.recoveryFailed': { en: 'Recovery Failed', zh: '恢復失敗' },
+  'alerts.reviewTimeout': { en: 'Review Timeout', zh: '審查超時' },
+
+  // --- Verification & Iteration ---
+  'verify.passed': { en: 'Verification Passed', zh: '驗證通過' },
+  'verify.failed': { en: 'Verification Failed', zh: '驗證失敗' },
+  'verify.rollback': { en: 'Rolled Back', zh: '已回退' },
+  'verify.retry': { en: 'Retrying', zh: '重試中' },
+  'verify.plateau': { en: 'Plateau (Early Stop)', zh: '平台期（提前停止）' },
+  'verify.iteration': { en: 'Iteration', zh: '迭代' },
+  'verify.score': { en: 'Score', zh: '分數' },
+  'verify.bestScore': { en: 'Best Score', zh: '最佳分數' },
+
   // --- Setup Wizard: Onboarding Chat (Step 3) ---
   'setup.chatPlaceholder': { en: 'Tell me what you\'d like to do...', zh: '說說你想做什麼...' },
   'setup.assistantName': { en: 'Assistant', zh: '小助理' },

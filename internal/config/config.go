@@ -32,6 +32,14 @@ type Config struct {
 	WorkerSkillOverrides map[string]SkillProfileOverride `yaml:"worker_skill_overrides,omitempty"`
 	UpdateURL            string                         `yaml:"update_url,omitempty"` // URL base for auto-update checks
 	SkillsMPAPIKey       string                         `yaml:"skillsmp_api_key,omitempty"`
+	ReviewTimeout        int                            `yaml:"review_timeout_minutes,omitempty"`   // minutes before auto-approving stuck reviews (default 15)
+	AutoAssign           AutoAssignConfig               `yaml:"auto_assign,omitempty"`
+}
+
+// AutoAssignConfig controls proactive task assignment to idle workers.
+type AutoAssignConfig struct {
+	Enabled      bool `yaml:"enabled"`
+	IdleTimeout  int  `yaml:"idle_timeout_seconds,omitempty"` // seconds before auto-assigning (default 120)
 }
 
 // SkillProfileOverride holds per-worker customizations layered on top of the base SkillProfile.

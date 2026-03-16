@@ -322,6 +322,22 @@ func (c *CompanyApp) CreateTask(projectID, title, description, prompt string, de
 	return &dto, nil
 }
 
+// CreateTrainingTask creates a training task with iteration config.
+func (c *CompanyApp) CreateTrainingTask(projectID, title, description, prompt string, dependsOn []string, priority int, milestone string, testCmd string, maxIterations int, passThreshold float64) (*TaskDTO, error) {
+	t, err := c.company.AddTask(projectID, title, description, prompt, dependsOn, priority, milestone, "training")
+	if err != nil {
+		return nil, err
+	}
+	t.TrainingConfig = &project.TrainingTaskConfig{
+		MaxIterations: maxIterations,
+		TestCmd:       testCmd,
+		PassThreshold: passThreshold,
+	}
+	c.company.SaveTask(t)
+	dto := TaskToDTO(t)
+	return &dto, nil
+}
+
 // DecomposeGoals uses AI to break project goals into tasks.
 func (c *CompanyApp) DecomposeGoals(projectID string) error {
 	return c.company.DecomposeGoals(c.ctx, projectID)
@@ -1370,4 +1386,62 @@ func (c *CompanyApp) GetPerformanceHistory(workerID string) []company.Performanc
 
 func (c *CompanyApp) GetCompanyOverview() company.CompanyOverview {
 	return c.company.GetCompanyOverview()
+}
+
+// --- Agentic Training ---
+
+func (c *CompanyApp) GetAgenticLoopConfig() AgenticLoopConfigDTO {
+	// Try in-memory first, fall back to config file
+	agCfg := c.company.GetAgenticLoopConfig()
+	if !agCfg.Enabled && agCfg.MaxIterations == 0 {
+		// Not initialized in memory — load from config file
+		if fileCfg, err := config.Load(""); err == nil {
+			agCfg = fileCfg.Training.AgenticLoop
+			c.company.SetAgenticLoopConfig(agCfg)
+		}
+	}
+	return AgenticLoopConfigDTO{
+		Enabled:        agCfg.Enabled,
+		MaxIterations:  agCfg.MaxIterations,
+		DefaultTestCmd: agCfg.DefaultTestCmd,
+		AutoRollback:   agCfg.AutoRollback,
+	}
+}
+
+func (c *CompanyApp) SetAgenticLoopConfig(dto AgenticLoopConfigDTO) error {
+	agCfg := config.AgenticLoopConfig{
+		Enabled:        dto.Enabled,
+		MaxIterations:  dto.MaxIterations,
+		DefaultTestCmd: dto.DefaultTestCmd,
+		AutoRollback:   dto.AutoRollback,
+	}
+	c.company.SetAgenticLoopConfig(agCfg)
+
+	// Persist to config file
+	cfg, err := config.Load("")
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	cfg.Training.AgenticLoop = agCfg
+	if err := cfg.Save(""); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+	return nil
+}
+
+func (c *CompanyApp) GetTrainingLoopStatus(taskID string) *TrainingLoopStatusDTO {
+	t, ok := c.company.GetTask(taskID)
+	if !ok || t.TrainingConfig == nil {
+		return nil
+	}
+	cfg := t.TrainingConfig
+	return &TrainingLoopStatusDTO{
+		TaskID:        taskID,
+		CurrentIter:   cfg.CurrentIter,
+		MaxIterations: cfg.MaxIterations,
+		BestScore:     cfg.BestScore,
+		PassThreshold: cfg.PassThreshold,
+		BestCommit:    cfg.BestCommit,
+		LastOutput:    cfg.LastTestOutput,
+	}
 }

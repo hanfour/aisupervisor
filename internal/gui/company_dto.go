@@ -37,27 +37,28 @@ func ProjectToDTO(p *project.Project) ProjectDTO {
 }
 
 type TaskDTO struct {
-	ID               string           `json:"id"`
-	ProjectID        string           `json:"projectId"`
-	Title            string           `json:"title"`
-	Description      string           `json:"description"`
-	Prompt           string           `json:"prompt"`
-	Type             string           `json:"type"`
-	Status           string           `json:"status"`
-	Priority         int              `json:"priority"`
-	BranchName       string           `json:"branchName"`
-	AssigneeID       string           `json:"assigneeId"`
-	DependsOn        []string         `json:"dependsOn"`
-	Milestone        string           `json:"milestone"`
-	ReviewerID       string           `json:"reviewerId,omitempty"`
-	ParentTaskID     string           `json:"parentTaskId,omitempty"`
-	ReviewCount      int              `json:"reviewCount,omitempty"`
-	RejectionCount   int              `json:"rejectionCount,omitempty"`
-	RejectionHistory []RejectionDTO   `json:"rejectionHistory,omitempty"`
-	BounceHistory    []BounceRecordDTO `json:"bounceHistory,omitempty"`
-	CreatedAt        string           `json:"createdAt"`
-	StartedAt        string           `json:"startedAt,omitempty"`
-	CompletedAt      string           `json:"completedAt,omitempty"`
+	ID               string                        `json:"id"`
+	ProjectID        string                        `json:"projectId"`
+	Title            string                        `json:"title"`
+	Description      string                        `json:"description"`
+	Prompt           string                        `json:"prompt"`
+	Type             string                        `json:"type"`
+	Status           string                        `json:"status"`
+	Priority         int                           `json:"priority"`
+	BranchName       string                        `json:"branchName"`
+	AssigneeID       string                        `json:"assigneeId"`
+	DependsOn        []string                      `json:"dependsOn"`
+	Milestone        string                        `json:"milestone"`
+	ReviewerID       string                        `json:"reviewerId,omitempty"`
+	ParentTaskID     string                        `json:"parentTaskId,omitempty"`
+	ReviewCount      int                           `json:"reviewCount,omitempty"`
+	RejectionCount   int                           `json:"rejectionCount,omitempty"`
+	RejectionHistory []RejectionDTO                `json:"rejectionHistory,omitempty"`
+	BounceHistory    []BounceRecordDTO             `json:"bounceHistory,omitempty"`
+	TrainingConfig   *project.TrainingTaskConfig   `json:"trainingConfig,omitempty"`
+	CreatedAt        string                        `json:"createdAt"`
+	StartedAt        string                        `json:"startedAt,omitempty"`
+	CompletedAt      string                        `json:"completedAt,omitempty"`
 }
 
 type RejectionDTO struct {
@@ -135,6 +136,7 @@ func TaskToDTO(t *project.Task) TaskDTO {
 		RejectionCount:   t.RejectionCount,
 		RejectionHistory: rejections,
 		BounceHistory:    bounces,
+		TrainingConfig:   t.TrainingConfig,
 		CreatedAt:        t.CreatedAt.Format(time.RFC3339),
 	}
 	if t.StartedAt != nil {
@@ -472,6 +474,25 @@ type SkillProfileOverrideDTO struct {
 	AddTools      []string `json:"addTools,omitempty"`
 	RemoveTools   []string `json:"removeTools,omitempty"`
 	ModelOverride string   `json:"modelOverride,omitempty"`
+}
+
+// AgenticLoopConfigDTO is the frontend representation of the agentic loop config.
+type AgenticLoopConfigDTO struct {
+	Enabled        bool   `json:"enabled"`
+	MaxIterations  int    `json:"maxIterations"`
+	DefaultTestCmd string `json:"defaultTestCmd"`
+	AutoRollback   bool   `json:"autoRollback"`
+}
+
+// TrainingLoopStatusDTO reports the status of a training iteration loop.
+type TrainingLoopStatusDTO struct {
+	TaskID        string  `json:"taskId"`
+	CurrentIter   int     `json:"currentIter"`
+	MaxIterations int     `json:"maxIterations"`
+	BestScore     float64 `json:"bestScore"`
+	PassThreshold float64 `json:"passThreshold"`
+	BestCommit    string  `json:"bestCommit"`
+	LastOutput    string  `json:"lastOutput"`
 }
 
 func RetroReportToDTO(r company.RetroReport) RetroReportDTO {

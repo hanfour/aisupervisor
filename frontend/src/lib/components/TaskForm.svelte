@@ -16,16 +16,31 @@
   let taskType = 'code'
   let selectedDeps = []
 
+  // Training-specific fields
+  let testCmd = ''
+  let maxIterations = 10
+  let passThreshold = 0.9
+
   async function handleSubmit() {
     if (!title || !prompt) return
     try {
-      await createTask(projectId, title, description, prompt, selectedDeps, priority, milestone, taskType)
+      if (taskType === 'training' && window.go?.gui?.CompanyApp?.CreateTrainingTask) {
+        await window.go.gui.CompanyApp.CreateTrainingTask(
+          projectId, title, description, prompt, selectedDeps, priority, milestone,
+          testCmd, maxIterations, passThreshold
+        )
+      } else {
+        await createTask(projectId, title, description, prompt, selectedDeps, priority, milestone, taskType)
+      }
       title = ''
       description = ''
       prompt = ''
       priority = 2
       milestone = ''
       taskType = 'code'
+      testCmd = ''
+      maxIterations = 10
+      passThreshold = 0.9
       selectedDeps = []
       onClose()
     } catch (e) {
@@ -79,6 +94,10 @@
                 <input type="radio" class="nes-radio is-dark" name="taskType" value="hr" bind:group={taskType} />
                 <span>{$t('taskForm.typeHR')}</span>
               </label>
+              <label class="type-option" class:selected={taskType === 'training'}>
+                <input type="radio" class="nes-radio is-dark" name="taskType" value="training" bind:group={taskType} />
+                <span>{$t('taskForm.typeTraining')}</span>
+              </label>
             </div>
           </div>
           <div class="nes-field">
@@ -90,6 +109,22 @@
             <input type="text" id="task-milestone" class="nes-input is-dark" bind:value={milestone} />
           </div>
         </div>
+        {#if taskType === 'training'}
+          <div class="field-row">
+            <div class="nes-field">
+              <label for="task-testcmd">{$t('taskForm.testCmd')}</label>
+              <input type="text" id="task-testcmd" class="nes-input is-dark" bind:value={testCmd} placeholder="make test" />
+            </div>
+            <div class="nes-field">
+              <label for="task-maxiter">{$t('taskForm.maxIter')}</label>
+              <input type="number" id="task-maxiter" class="nes-input is-dark" bind:value={maxIterations} min="1" max="100" />
+            </div>
+            <div class="nes-field">
+              <label for="task-threshold">{$t('taskForm.passThreshold')}</label>
+              <input type="number" id="task-threshold" class="nes-input is-dark" bind:value={passThreshold} min="0" max="1" step="0.01" />
+            </div>
+          </div>
+        {/if}
         {#if existingTasks.length > 0}
           <div class="nes-field">
             <!-- svelte-ignore a11y-label-has-associated-control -->

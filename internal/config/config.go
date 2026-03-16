@@ -65,11 +65,20 @@ type SkillProfile struct {
 }
 
 type TrainingConfig struct {
-	Enabled      bool            `yaml:"enabled"`
-	DataDir      string          `yaml:"data_dir,omitempty"`
-	CaptureDiffs bool            `yaml:"capture_diffs,omitempty"`
-	Finetune     FinetuneConfig  `yaml:"finetune,omitempty"`
-	Promotion    PromotionConfig `yaml:"promotion,omitempty"`
+	Enabled      bool              `yaml:"enabled"`
+	DataDir      string            `yaml:"data_dir,omitempty"`
+	CaptureDiffs bool              `yaml:"capture_diffs,omitempty"`
+	Finetune     FinetuneConfig    `yaml:"finetune,omitempty"`
+	Promotion    PromotionConfig   `yaml:"promotion,omitempty"`
+	AgenticLoop  AgenticLoopConfig `yaml:"agentic_loop,omitempty"`
+}
+
+// AgenticLoopConfig controls the agentic training iteration loop.
+type AgenticLoopConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	MaxIterations  int    `yaml:"max_iterations,omitempty"`
+	DefaultTestCmd string `yaml:"default_test_cmd,omitempty"`
+	AutoRollback   bool   `yaml:"auto_rollback,omitempty"`
 }
 
 type FinetuneConfig struct {

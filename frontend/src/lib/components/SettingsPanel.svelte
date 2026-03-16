@@ -11,6 +11,12 @@
   let chatBackend = ''
   let availableChatBackends = []
 
+  // Agentic training config
+  let agenticEnabled = false
+  let agenticMaxIter = 10
+  let agenticTestCmd = ''
+  let agenticAutoRollback = true
+
   onMount(async () => {
     if (window.go?.gui?.CompanyApp) {
       try {
@@ -19,8 +25,34 @@
       } catch {
         // ignore
       }
+      try {
+        const cfg = await window.go.gui.CompanyApp.GetAgenticLoopConfig()
+        if (cfg) {
+          agenticEnabled = cfg.enabled
+          agenticMaxIter = cfg.maxIterations || 10
+          agenticTestCmd = cfg.defaultTestCmd || ''
+          agenticAutoRollback = cfg.autoRollback
+        }
+      } catch {
+        // ignore
+      }
     }
   })
+
+  async function saveAgenticConfig() {
+    if (window.go?.gui?.CompanyApp) {
+      try {
+        await window.go.gui.CompanyApp.SetAgenticLoopConfig({
+          enabled: agenticEnabled,
+          maxIterations: agenticMaxIter,
+          defaultTestCmd: agenticTestCmd,
+          autoRollback: agenticAutoRollback,
+        })
+      } catch (err) {
+        console.error('Failed to save agentic config:', err)
+      }
+    }
+  }
 
   async function onChatBackendChange(e) {
     const name = e.target.value
@@ -77,6 +109,32 @@
   </div>
 
   <div class="setting-group nes-container with-title is-dark">
+    <p class="title">{$t('settings.agenticTraining')}</p>
+    <div class="field">
+      <label>
+        <input type="checkbox" class="nes-checkbox is-dark" bind:checked={agenticEnabled} on:change={saveAgenticConfig} />
+        <span>{$t('settings.agenticEnabled')}</span>
+      </label>
+    </div>
+    {#if agenticEnabled}
+      <div class="field">
+        <span class="field-label">{$t('settings.maxIterations')}:</span>
+        <input type="number" class="nes-input is-dark setting-input" bind:value={agenticMaxIter} min="1" max="100" on:change={saveAgenticConfig} />
+      </div>
+      <div class="field">
+        <span class="field-label">{$t('settings.defaultTestCmd')}:</span>
+        <input type="text" class="nes-input is-dark setting-input" bind:value={agenticTestCmd} placeholder="make test" on:change={saveAgenticConfig} />
+      </div>
+      <div class="field">
+        <label>
+          <input type="checkbox" class="nes-checkbox is-dark" bind:checked={agenticAutoRollback} on:change={saveAgenticConfig} />
+          <span>{$t('settings.autoRollback')}</span>
+        </label>
+      </div>
+    {/if}
+  </div>
+
+  <div class="setting-group nes-container with-title is-dark">
     <p class="title">Context</p>
     <div class="field">
       <span class="field-label">Enabled:</span>
@@ -123,5 +181,11 @@
   .chat-select {
     font-size: 10px;
     max-width: 160px;
+  }
+
+  .setting-input {
+    font-size: 10px;
+    max-width: 140px;
+    padding: 2px 4px;
   }
 </style>

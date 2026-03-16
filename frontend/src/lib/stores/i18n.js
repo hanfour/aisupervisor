@@ -517,6 +517,21 @@ const translations = {
   'setup.needsNode': { en: 'Requires Node.js', zh: '需先安裝 Node.js' },
   'setup.needsBrew': { en: 'Requires Homebrew', zh: '需先安裝 Homebrew' },
 
+  // --- Agentic Training ---
+  'settings.agenticTraining': { en: 'Agentic Training', zh: '自主訓練' },
+  'settings.agenticEnabled': { en: 'Enable Agentic Loop', zh: '啟用自主迭代' },
+  'settings.maxIterations': { en: 'Max Iterations', zh: '最大迭代次數' },
+  'settings.defaultTestCmd': { en: 'Default Test Command', zh: '預設測試指令' },
+  'settings.autoRollback': { en: 'Auto Rollback', zh: '自動回退' },
+  'taskForm.typeTraining': { en: 'Training', zh: '訓練' },
+  'taskForm.testCmd': { en: 'Test Command', zh: '測試指令' },
+  'taskForm.maxIter': { en: 'Max Iterations', zh: '最大迭代' },
+  'taskForm.passThreshold': { en: 'Pass Threshold', zh: '通過分數' },
+  'training.iteration': { en: 'Iteration {n}/{total}', zh: '第 {n}/{total} 輪' },
+  'training.improved': { en: 'Improved', zh: '有進步' },
+  'training.rolledBack': { en: 'Rolled Back', zh: '已回退' },
+  'training.bestScore': { en: 'Best Score', zh: '最佳分數' },
+
   // --- Setup Wizard: Onboarding Chat (Step 3) ---
   'setup.chatPlaceholder': { en: 'Tell me what you\'d like to do...', zh: '說說你想做什麼...' },
   'setup.assistantName': { en: 'Assistant', zh: '小助理' },

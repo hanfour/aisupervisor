@@ -65,6 +65,8 @@ type Manager struct {
 	budgetsPath      string
 	analytics        []PerformanceSnapshot
 	draining         atomic.Bool // debounce flag for drainReadyQueue
+	trainingLoop     *training.TrainingLoop
+	agenticLoopCfg   config.AgenticLoopConfig
 }
 
 type workersFile struct {
@@ -139,6 +141,7 @@ func New(
 		budgetsPath:      budgetsFilePath(dataDir),
 	}
 	m.review = newReviewPipeline(m)
+	m.trainingLoop = &training.TrainingLoop{}
 	m.modelStrategy = NewModelStrategy()
 	m.circuitBreaker = NewCircuitBreaker(m)
 	m.commMatrix = NewCommunicationMatrix(m)
@@ -405,7 +408,7 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 	tt := project.TaskType(taskType)
 	switch tt {
 	case project.TaskTypeResearch, project.TaskTypePRD, project.TaskTypeDesign,
-		project.TaskTypeAdmin, project.TaskTypeHR:
+		project.TaskTypeAdmin, project.TaskTypeHR, project.TaskTypeTraining:
 		// keep as-is
 	default:
 		tt = project.TaskTypeCode
@@ -423,8 +426,8 @@ func (m *Manager) AddTask(projectID, title, description, prompt string, dependsO
 		Milestone:   milestone,
 	}
 
-	// Only code tasks need a git branch
-	if tt == project.TaskTypeCode {
+	// Code and training tasks need a git branch
+	if tt == project.TaskTypeCode || tt == project.TaskTypeTraining {
 		t.BranchName = gitops.BranchName(p.ID, "", slug)
 	}
 
@@ -806,6 +809,11 @@ func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *proj
 func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *project.Project, result worker.CompletionResult) {
 	m.mu.Lock()
 
+	if result.Success && t.Type == project.TaskTypeTraining {
+		m.handleTrainingIteration(w, t, p)
+		return
+	}
+
 	if result.Success && t.Type == project.TaskTypeResearch {
 		m.handleResearchCompletion(w, t, p)
 		return
@@ -1024,6 +1032,134 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 
 	// Check if project is fully completed
 	go m.checkProjectCompletion(projectID)
+}
+
+// handleTrainingIteration runs the test command, evaluates the score,
+// and either commits (improved) or rolls back (no improvement).
+// If iterations remain and the pass threshold is not reached, it re-spawns the worker.
+// Must be called with m.mu held (acquired in handleTaskCompletion).
+func (m *Manager) handleTrainingIteration(w *worker.Worker, t *project.Task, p *project.Project) {
+	cfg := t.TrainingConfig
+	if cfg == nil {
+		log.Printf("training: task %s has no TrainingConfig, treating as done", t.ID)
+		m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
+		w.Status = worker.WorkerIdle
+		w.CurrentTaskID = ""
+		m.saveWorkers()
+		m.mu.Unlock()
+		return
+	}
+
+	// Record metrics
+	m.recordCompletionMetrics(w, t, true)
+
+	// Run test evaluation (release lock during I/O)
+	m.mu.Unlock()
+
+	result, err := m.trainingLoop.EvaluateAndDecide(p.RepoPath, t.BranchName, cfg)
+	if err != nil {
+		log.Printf("training: evaluate failed for task %s: %v", t.ID, err)
+		m.emit(Event{
+			Type:      EventTaskFailed,
+			ProjectID: p.ID,
+			TaskID:    t.ID,
+			WorkerID:  w.ID,
+			Message:   m.msgf("Training evaluation failed: %v", "訓練評估失敗：%v", err),
+		})
+		m.mu.Lock()
+		m.projectStore.UpdateTaskStatus(t.ID, project.TaskFailed)
+		w.Status = worker.WorkerIdle
+		w.CurrentTaskID = ""
+		m.saveWorkers()
+		m.mu.Unlock()
+		return
+	}
+
+	// Update training config with iteration results
+	m.mu.Lock()
+	cfg.CurrentIter = result.Iteration
+	cfg.LastTestOutput = result.TestOutput
+	if result.Improved {
+		cfg.BestScore = result.Score
+		cfg.BestCommit = result.CommitHash
+	}
+	m.projectStore.SaveTask(t)
+
+	if result.Improved {
+		m.emit(Event{
+			Type:      EventTaskCompleted,
+			ProjectID: p.ID,
+			TaskID:    t.ID,
+			WorkerID:  w.ID,
+			Message:   m.msgf("Training iteration %d/%d: improved to %.4f", "訓練迭代 %d/%d：進步至 %.4f", result.Iteration, cfg.MaxIterations, result.Score),
+		})
+	} else {
+		m.emit(Event{
+			Type:      EventTaskFailed,
+			ProjectID: p.ID,
+			TaskID:    t.ID,
+			WorkerID:  w.ID,
+			Message:   m.msgf("Training iteration %d/%d: rolled back (score %.4f <= best %.4f)", "訓練迭代 %d/%d：已回退（分數 %.4f <= 最佳 %.4f）", result.Iteration, cfg.MaxIterations, result.Score, cfg.BestScore),
+		})
+	}
+
+	// Check if we should continue iterating
+	if cfg.CurrentIter < cfg.MaxIterations && cfg.BestScore < cfg.PassThreshold {
+		// Re-spawn worker for next iteration
+		w.Status = worker.WorkerIdle
+		w.CurrentTaskID = ""
+		m.saveWorkers()
+		m.mu.Unlock()
+
+		go func() {
+			ctx := context.Background()
+			if err := m.AssignTask(ctx, t.ID, w.ID); err != nil {
+				log.Printf("training: failed to re-assign task %s to %s: %v", t.ID, w.ID, err)
+			}
+		}()
+		return
+	}
+
+	// Training complete
+	m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
+	w.Status = worker.WorkerIdle
+	w.CurrentTaskID = ""
+	m.saveWorkers()
+
+	m.emit(Event{
+		Type:      EventTaskCompleted,
+		ProjectID: p.ID,
+		TaskID:    t.ID,
+		WorkerID:  w.ID,
+		Message:   m.msgf("Training complete: %d iterations, best score %.4f", "訓練完成：%d 輪迭代，最佳分數 %.4f", cfg.CurrentIter, cfg.BestScore),
+	})
+
+	m.mu.Unlock()
+
+	if m.autoSchedule {
+		go m.tryAutoAssign(w.ID)
+	}
+}
+
+// SaveTask persists a task to the store.
+func (m *Manager) SaveTask(t *project.Task) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.projectStore.SaveTask(t)
+}
+
+// SetAgenticLoopConfig sets the agentic loop configuration.
+func (m *Manager) SetAgenticLoopConfig(cfg config.AgenticLoopConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.agenticLoopCfg = cfg
+}
+
+// GetAgenticLoopConfig returns the current agentic loop configuration.
+func (m *Manager) GetAgenticLoopConfig() config.AgenticLoopConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.agenticLoopCfg
 }
 
 // recordCompletionMetrics captures token usage, analytics snapshot, and budget checks.

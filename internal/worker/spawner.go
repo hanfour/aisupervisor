@@ -193,6 +193,7 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 	isNonCodeTask := t.Type == project.TaskTypeResearch ||
 		t.Type == project.TaskTypePRD || t.Type == project.TaskTypeDesign ||
 		t.Type == project.TaskTypeAdmin || t.Type == project.TaskTypeHR
+	// Training tasks use git branches like code tasks
 
 	// 1. Create git branch if it doesn't exist (skip for non-code tasks)
 	if !isNonCodeTask && t.BranchName != "" {
@@ -506,6 +507,10 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 		return s.buildResearchPrompt(t, deps)
 	}
 
+	if t.Type == project.TaskTypeTraining {
+		return s.buildTrainingPrompt(t, p)
+	}
+
 	if t.Type == project.TaskTypeAdmin {
 		return s.buildAdminPrompt(t, deps)
 	}
@@ -596,6 +601,74 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 			sb.WriteString("- prompt（必填）：被指派者將收到的完整指示\n")
 			sb.WriteString("- priority（必填）：1 = 最高、2 = 一般、3 = 低\n")
 			sb.WriteString("只有在你有具體工作需要委派時才輸出此 JSON。如果你自己能完成任務，請不要委派。\n")
+		}
+	}
+
+	return sb.String()
+}
+
+// buildTrainingPrompt creates a prompt for agentic training iterations.
+func (s *Spawner) buildTrainingPrompt(t *project.Task, p *project.Project) string {
+	lang := s.language
+	if lang == "" {
+		lang = "zh-TW"
+	}
+
+	cfg := t.TrainingConfig
+	if cfg == nil {
+		// Fallback: use the task prompt directly
+		return t.Prompt
+	}
+
+	var sb strings.Builder
+
+	if lang == "en" {
+		sb.WriteString(fmt.Sprintf("TRAINING ITERATION %d/%d\n\n", cfg.CurrentIter+1, cfg.MaxIterations))
+		sb.WriteString(fmt.Sprintf("Project: %s\n", p.Name))
+		sb.WriteString(fmt.Sprintf("Goal: %s\n\n", t.Prompt))
+
+		if cfg.CurrentIter > 0 {
+			sb.WriteString("--- Previous Iteration Results ---\n")
+			sb.WriteString(fmt.Sprintf("Best Score So Far: %.4f\n", cfg.BestScore))
+			if cfg.LastTestOutput != "" {
+				sb.WriteString(fmt.Sprintf("Last Test Output:\n%s\n", cfg.LastTestOutput))
+			}
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("--- Instructions ---\n")
+		sb.WriteString("1. Analyze the current code and test results\n")
+		sb.WriteString("2. Make improvements to achieve a higher score\n")
+		sb.WriteString(fmt.Sprintf("3. Target score: >= %.4f\n", cfg.PassThreshold))
+		sb.WriteString(fmt.Sprintf("4. Test command: %s\n", cfg.TestCmd))
+		sb.WriteString("5. When done with your changes, commit and type /stop\n")
+		sb.WriteString("\nIMPORTANT: Focus on making targeted improvements. Do NOT rewrite everything.\n")
+		if t.BranchName != "" {
+			sb.WriteString(fmt.Sprintf("\nYou are working on branch: %s\n", t.BranchName))
+		}
+	} else {
+		sb.WriteString(fmt.Sprintf("訓練迭代 第 %d/%d 輪\n\n", cfg.CurrentIter+1, cfg.MaxIterations))
+		sb.WriteString(fmt.Sprintf("專案：%s\n", p.Name))
+		sb.WriteString(fmt.Sprintf("目標：%s\n\n", t.Prompt))
+
+		if cfg.CurrentIter > 0 {
+			sb.WriteString("--- 上一輪迭代結果 ---\n")
+			sb.WriteString(fmt.Sprintf("目前最佳分數：%.4f\n", cfg.BestScore))
+			if cfg.LastTestOutput != "" {
+				sb.WriteString(fmt.Sprintf("上一輪測試輸出：\n%s\n", cfg.LastTestOutput))
+			}
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("--- 操作指引 ---\n")
+		sb.WriteString("1. 分析目前程式碼和測試結果\n")
+		sb.WriteString("2. 進行改進以獲得更高分數\n")
+		sb.WriteString(fmt.Sprintf("3. 目標分數：>= %.4f\n", cfg.PassThreshold))
+		sb.WriteString(fmt.Sprintf("4. 測試指令：%s\n", cfg.TestCmd))
+		sb.WriteString("5. 完成修改後，提交變更並輸入 /stop\n")
+		sb.WriteString("\n重要：專注於針對性改進，不要重寫所有程式碼。\n")
+		if t.BranchName != "" {
+			sb.WriteString(fmt.Sprintf("\n你正在分支上工作：%s\n", t.BranchName))
 		}
 	}
 

@@ -11,6 +11,7 @@ const (
 	TaskTypeDesign   TaskType = "design"
 	TaskTypeAdmin    TaskType = "admin"
 	TaskTypeHR       TaskType = "hr"
+	TaskTypeTraining TaskType = "training"
 )
 
 type TaskStatus string
@@ -25,6 +26,18 @@ const (
 	TaskDone       TaskStatus = "done"
 	TaskFailed     TaskStatus = "failed"
 )
+
+// TrainingTaskConfig holds iteration state for training tasks.
+type TrainingTaskConfig struct {
+	MaxIterations  int     `yaml:"max_iterations" json:"maxIterations"`
+	TestCmd        string  `yaml:"test_cmd" json:"testCmd"`
+	BenchmarkCmd   string  `yaml:"benchmark_cmd,omitempty" json:"benchmarkCmd,omitempty"`
+	PassThreshold  float64 `yaml:"pass_threshold" json:"passThreshold"`
+	CurrentIter    int     `yaml:"current_iter" json:"currentIter"`
+	BestScore      float64 `yaml:"best_score" json:"bestScore"`
+	BestCommit     string  `yaml:"best_commit,omitempty" json:"bestCommit,omitempty"`
+	LastTestOutput string  `yaml:"last_test_output,omitempty" json:"lastTestOutput,omitempty"`
+}
 
 type Task struct {
 	ID           string     `yaml:"id" json:"id"`
@@ -48,6 +61,7 @@ type Task struct {
 	BounceHistory    []BounceRecord `yaml:"bounce_history,omitempty" json:"bounceHistory,omitempty"`
 	TokensConsumed   int64          `yaml:"tokens_consumed,omitempty" json:"tokensConsumed,omitempty"`
 	BudgetLimit      int64          `yaml:"budget_limit,omitempty" json:"budgetLimit,omitempty"`
+	TrainingConfig   *TrainingTaskConfig `yaml:"training_config,omitempty" json:"trainingConfig,omitempty"`
 	RetryCount       int            `yaml:"retry_count,omitempty" json:"retryCount,omitempty"`
 	CreatedAt        time.Time      `yaml:"created_at" json:"createdAt"`
 	StartedAt        *time.Time     `yaml:"started_at,omitempty" json:"startedAt,omitempty"`

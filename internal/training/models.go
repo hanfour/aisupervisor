@@ -93,6 +93,20 @@ func (r *ModelRegistry) Get(version string) (*ModelVersion, bool) {
 	return nil, false
 }
 
+// UpdateBenchmarkScore sets the benchmark score for a specific version.
+func (r *ModelRegistry) UpdateBenchmarkScore(version string, score float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for i := range r.Versions {
+		if r.Versions[i].Version == version {
+			r.Versions[i].BenchmarkScore = score
+			return r.save()
+		}
+	}
+	return fmt.Errorf("version %q not found", version)
+}
+
 // VersionChain returns the lineage from a version back to the base model.
 func (r *ModelRegistry) VersionChain(version string) []ModelVersion {
 	r.mu.RLock()

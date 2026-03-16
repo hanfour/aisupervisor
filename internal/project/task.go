@@ -37,6 +37,13 @@ type TrainingTaskConfig struct {
 	BestScore      float64 `yaml:"best_score" json:"bestScore"`
 	BestCommit     string  `yaml:"best_commit,omitempty" json:"bestCommit,omitempty"`
 	LastTestOutput string  `yaml:"last_test_output,omitempty" json:"lastTestOutput,omitempty"`
+
+	// ScoreHistory records the score of each iteration for trend analysis.
+	ScoreHistory []float64 `yaml:"score_history,omitempty" json:"scoreHistory,omitempty"`
+	// TestTimeoutSec is the max seconds a test command can run (default 300).
+	TestTimeoutSec int `yaml:"test_timeout_sec,omitempty" json:"testTimeoutSec,omitempty"`
+	// PlateauLimit is how many consecutive non-improving iterations trigger early-stop (default 3).
+	PlateauLimit int `yaml:"plateau_limit,omitempty" json:"plateauLimit,omitempty"`
 }
 
 type Task struct {
@@ -62,10 +69,30 @@ type Task struct {
 	TokensConsumed   int64          `yaml:"tokens_consumed,omitempty" json:"tokensConsumed,omitempty"`
 	BudgetLimit      int64          `yaml:"budget_limit,omitempty" json:"budgetLimit,omitempty"`
 	TrainingConfig   *TrainingTaskConfig `yaml:"training_config,omitempty" json:"trainingConfig,omitempty"`
+
+	// VerifyCmd overrides the project-level verify command for this task.
+	// If set, runs after the worker completes to validate the result.
+	VerifyCmd       string  `yaml:"verify_cmd,omitempty" json:"verifyCmd,omitempty"`
+	// VerifyScore tracks the last verification score (0.0-1.0).
+	VerifyScore     float64 `yaml:"verify_score,omitempty" json:"verifyScore,omitempty"`
+	// BestVerifyScore is the best verification score across iterations.
+	BestVerifyScore float64 `yaml:"best_verify_score,omitempty" json:"bestVerifyScore,omitempty"`
+	// BestVerifyCommit is the commit hash with the best verification score.
+	BestVerifyCommit string `yaml:"best_verify_commit,omitempty" json:"bestVerifyCommit,omitempty"`
+	// IterationCount tracks how many verify-improve cycles this task has gone through.
+	IterationCount  int     `yaml:"iteration_count,omitempty" json:"iterationCount,omitempty"`
+	// OriginalPrompt preserves the initial prompt before verification feedback is appended.
+	OriginalPrompt string `yaml:"original_prompt,omitempty" json:"-"`
+	// PreTaskCommit is the HEAD commit before the worker started, used for rollback.
+	PreTaskCommit string `yaml:"pre_task_commit,omitempty" json:"-"`
+	// HelpRequestHandled stores the help content already processed, to prevent duplicate handling.
+	HelpRequestHandled string `yaml:"help_request_handled,omitempty" json:"-"`
+
 	RetryCount       int            `yaml:"retry_count,omitempty" json:"retryCount,omitempty"`
 	CreatedAt        time.Time      `yaml:"created_at" json:"createdAt"`
 	StartedAt        *time.Time     `yaml:"started_at,omitempty" json:"startedAt,omitempty"`
 	CompletedAt      *time.Time     `yaml:"completed_at,omitempty" json:"completedAt,omitempty"`
+	ReviewStartedAt  *time.Time     `yaml:"review_started_at,omitempty" json:"reviewStartedAt,omitempty"`
 }
 
 // Rejection records a single review rejection event.

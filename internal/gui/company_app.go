@@ -178,6 +178,12 @@ func (c *CompanyApp) DeleteProject(projectID string) error {
 	return c.company.DeleteProject(projectID)
 }
 
+// SetProjectVerifyCmd sets the verification command for a project.
+// All tasks in this project will be verified after completion using this command.
+func (c *CompanyApp) SetProjectVerifyCmd(projectID, verifyCmd string, maxIterations int) error {
+	return c.company.SetProjectVerifyCmd(projectID, verifyCmd, maxIterations)
+}
+
 // ActiveWorkerCount returns the number of workers currently working on tasks.
 func (c *CompanyApp) ActiveWorkerCount() int {
 	return c.company.ActiveWorkerCount()
@@ -990,6 +996,11 @@ func (c *CompanyApp) GetDashboardAlerts() DashboardAlertsDTO {
 		EscalatedTasks:   escalatedCount,
 		PendingApprovals: pendingCount,
 	}
+}
+
+// GetWorkerActivity returns recent pane output for a worker (for real-time UI display).
+func (c *CompanyApp) GetWorkerActivity(workerID string) string {
+	return c.company.GetWorkerActivity(workerID)
 }
 
 // ListFullSkillProfiles returns complete profile info including systemPrompt, tools, etc.

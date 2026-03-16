@@ -9,30 +9,34 @@ import (
 )
 
 type ProjectDTO struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	RepoPath    string   `json:"repoPath"`
-	BaseBranch  string   `json:"baseBranch"`
-	Goals       []string `json:"goals"`
-	Phase       string   `json:"phase,omitempty"`
-	Status      string   `json:"status"`
-	CreatedAt   string   `json:"createdAt"`
-	UpdatedAt   string   `json:"updatedAt"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	RepoPath      string   `json:"repoPath"`
+	BaseBranch    string   `json:"baseBranch"`
+	Goals         []string `json:"goals"`
+	Phase         string   `json:"phase,omitempty"`
+	Status        string   `json:"status"`
+	VerifyCmd     string   `json:"verifyCmd,omitempty"`
+	MaxIterations int      `json:"maxIterations,omitempty"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
 }
 
 func ProjectToDTO(p *project.Project) ProjectDTO {
 	return ProjectDTO{
-		ID:          p.ID,
-		Name:        p.Name,
-		Description: p.Description,
-		RepoPath:    p.RepoPath,
-		BaseBranch:  p.BaseBranch,
-		Goals:       p.Goals,
-		Phase:       string(p.Phase),
-		Status:      string(p.Status),
-		CreatedAt:   p.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   p.UpdatedAt.Format(time.RFC3339),
+		ID:            p.ID,
+		Name:          p.Name,
+		Description:   p.Description,
+		RepoPath:      p.RepoPath,
+		BaseBranch:    p.BaseBranch,
+		Goals:         p.Goals,
+		Phase:         string(p.Phase),
+		Status:        string(p.Status),
+		VerifyCmd:     p.VerifyCmd,
+		MaxIterations: p.MaxIterations,
+		CreatedAt:     p.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:     p.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -56,6 +60,10 @@ type TaskDTO struct {
 	RejectionHistory []RejectionDTO                `json:"rejectionHistory,omitempty"`
 	BounceHistory    []BounceRecordDTO             `json:"bounceHistory,omitempty"`
 	TrainingConfig   *project.TrainingTaskConfig   `json:"trainingConfig,omitempty"`
+	VerifyCmd        string                        `json:"verifyCmd,omitempty"`
+	VerifyScore      float64                       `json:"verifyScore,omitempty"`
+	BestVerifyScore  float64                       `json:"bestVerifyScore,omitempty"`
+	IterationCount   int                           `json:"iterationCount,omitempty"`
 	CreatedAt        string                        `json:"createdAt"`
 	StartedAt        string                        `json:"startedAt,omitempty"`
 	CompletedAt      string                        `json:"completedAt,omitempty"`
@@ -137,6 +145,10 @@ func TaskToDTO(t *project.Task) TaskDTO {
 		RejectionHistory: rejections,
 		BounceHistory:    bounces,
 		TrainingConfig:   t.TrainingConfig,
+		VerifyCmd:        t.VerifyCmd,
+		VerifyScore:      t.VerifyScore,
+		BestVerifyScore:  t.BestVerifyScore,
+		IterationCount:   t.IterationCount,
 		CreatedAt:        t.CreatedAt.Format(time.RFC3339),
 	}
 	if t.StartedAt != nil {

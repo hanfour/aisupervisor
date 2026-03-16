@@ -10,6 +10,46 @@ export const budgetSummary = writable({ currentMonth: '', tokenBudget: 0, tokens
 export const objectivesList = writable([])
 const MAX_EVENTS = 200
 
+// Debounce utility: collapses rapid calls into a single delayed invocation
+function debounce(fn, ms) {
+  let timer
+  return (...args) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => fn(...args), ms)
+  }
+}
+
+// Debounced loaders — prevents 5+ API calls per event
+const debouncedLoadStats = debounce(loadCompanyStats, 300)
+const debouncedLoadReviews = debounce(loadReviewQueue, 300)
+const debouncedLoadTraining = debounce(loadTrainingStats, 500)
+const debouncedLoadAlerts = debounce(loadDashboardAlerts, 300)
+const debouncedLoadSessions = debounce(loadSessions, 500)
+
+// Event type → relevant loaders mapping
+const eventLoaderMap = {
+  worker_spawned: [debouncedLoadStats],
+  worker_idle: [debouncedLoadStats],
+  worker_recovered: [debouncedLoadStats, debouncedLoadAlerts],
+  worker_recovery_failed: [debouncedLoadStats, debouncedLoadAlerts],
+  task_created: [debouncedLoadStats],
+  task_assigned: [debouncedLoadStats, debouncedLoadSessions],
+  task_completed: [debouncedLoadStats, debouncedLoadAlerts],
+  task_failed: [debouncedLoadStats, debouncedLoadAlerts],
+  review_started: [debouncedLoadReviews],
+  review_approved: [debouncedLoadReviews, debouncedLoadStats],
+  review_rejected: [debouncedLoadReviews, debouncedLoadStats],
+  review_timeout: [debouncedLoadReviews, debouncedLoadStats, debouncedLoadAlerts],
+  training_captured: [debouncedLoadTraining],
+  human_intervention_required: [debouncedLoadAlerts],
+  help_requested: [debouncedLoadStats],
+  verification_passed: [debouncedLoadStats],
+  verification_failed: [debouncedLoadStats, debouncedLoadAlerts],
+  iteration_rollback: [debouncedLoadStats],
+  iteration_retry: [debouncedLoadStats],
+  plateau_early_stop: [debouncedLoadStats],
+}
+
 export function initCompanyStore() {
   if (window.runtime) {
     window.runtime.EventsOn('company:event', (event) => {
@@ -17,12 +57,15 @@ export function initCompanyStore() {
         const updated = [event, ...list]
         return updated.slice(0, MAX_EVENTS)
       })
-      // Auto-refresh all data on any company event
-      loadCompanyStats()
-      loadReviewQueue()
-      loadTrainingStats()
-      loadDashboardAlerts()
-      loadSessions()
+
+      // Smart refresh: only reload data relevant to the event type
+      const loaders = eventLoaderMap[event.type]
+      if (loaders) {
+        loaders.forEach(loader => loader())
+      } else {
+        // Unknown event type — refresh core stats only
+        debouncedLoadStats()
+      }
     })
   }
 }

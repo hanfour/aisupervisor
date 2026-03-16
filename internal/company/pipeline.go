@@ -412,30 +412,73 @@ func tierCompatible(tier worker.WorkerTier, taskType project.TaskType) bool {
 	}
 }
 
-// matchWorker selects the best idle worker ID for a task using soft skill matching.
-// First tries to match preferred skill profiles, then falls back to any idle worker.
+// workerSkillScore extracts the relevant skill score for a task type from a worker's scores.
+func workerSkillScore(scores personality.SkillScores, taskType project.TaskType) int {
+	switch taskType {
+	case project.TaskTypeCode, project.TaskTypeTraining:
+		// Use composite of code quality + carefulness
+		return (scores.CodeQuality + scores.Carefulness) / 2
+	case project.TaskTypeResearch:
+		return scores.CommunicationClarity
+	default:
+		// Average of all scores for generic tasks
+		return (scores.Carefulness + scores.BoundaryChecking + scores.TestCoverageAware +
+			scores.CommunicationClarity + scores.CodeQuality + scores.SecurityAwareness) / 6
+	}
+}
+
+// matchWorker selects the best idle worker ID for a task using skill-aware matching.
+// Three-layer strategy:
+//  1. Best match: profile match + highest skill score
+//  2. Second-best: tier-compatible + highest skill score
+//  3. Fallback: any idle tier-compatible worker
+//
 // Filters by tier compatibility. Returns empty string if no match found.
 func matchWorker(t *project.Task, idle []idleWorkerSnapshot, assigned map[string]bool) string {
 	preferred := preferredProfiles(t.Type)
 
-	// First pass: find skill profile match with tier compatibility
+	// First pass: profile match + best skill score
+	bestID := ""
+	bestScore := -1
 	for _, w := range idle {
 		if assigned[w.ID] || !tierCompatible(w.Tier, t.Type) {
 			continue
 		}
+		profileMatch := false
 		for _, pref := range preferred {
 			if w.SkillProfile == pref {
-				return w.ID
+				profileMatch = true
+				break
 			}
 		}
+		if !profileMatch {
+			continue
+		}
+		score := workerSkillScore(w.SkillScores, t.Type)
+		if score > bestScore {
+			bestScore = score
+			bestID = w.ID
+		}
+	}
+	if bestID != "" {
+		return bestID
 	}
 
-	// Second pass: any tier-compatible idle worker (soft fallback)
+	// Second pass: tier-compatible + best skill score
+	bestID = ""
+	bestScore = -1
 	for _, w := range idle {
 		if assigned[w.ID] || !tierCompatible(w.Tier, t.Type) {
 			continue
 		}
-		return w.ID
+		score := workerSkillScore(w.SkillScores, t.Type)
+		if score > bestScore {
+			bestScore = score
+			bestID = w.ID
+		}
+	}
+	if bestID != "" {
+		return bestID
 	}
 
 	return ""

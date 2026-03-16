@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
@@ -388,6 +389,83 @@ func (m *Manager) GetWorkerSkillOverride(workerID string) *config.SkillProfileOv
 		return &override
 	}
 	return nil
+}
+
+// RunMicroRetro runs a lightweight retrospective after every 3 completed tasks.
+// It analyzes recent task patterns and writes results to the worker's growth log.
+func (m *Manager) RunMicroRetro(ctx context.Context, projectID string) {
+	if m.chatProvider == nil {
+		return
+	}
+
+	tasks := m.projectStore.TasksForProject(projectID)
+	// Collect the last 3 completed non-review tasks
+	var recentTasks []*project.Task
+	for i := len(tasks) - 1; i >= 0 && len(recentTasks) < 3; i-- {
+		t := tasks[i]
+		if (t.Status == project.TaskDone || t.Status == project.TaskFailed) && t.ParentTaskID == "" {
+			recentTasks = append(recentTasks, t)
+		}
+	}
+
+	if len(recentTasks) < 3 {
+		return
+	}
+
+	// Build analysis prompt
+	var taskSummaries []string
+	for _, t := range recentTasks {
+		status := "done"
+		if t.Status == project.TaskFailed {
+			status = "failed"
+		}
+		taskSummaries = append(taskSummaries, fmt.Sprintf("- %s (%s, type: %s, rejections: %d, reviews: %d)", t.Title, status, t.Type, t.RejectionCount, t.ReviewCount))
+	}
+
+	systemPrompt := `You are a brief retrospective analyst. Given recent tasks, identify one pattern and one suggestion for improvement.
+Output ONLY valid JSON: {"pattern": "one sentence about common pattern", "suggestion": "one actionable suggestion", "passRate": 0.0}`
+
+	userMsg := fmt.Sprintf("Recent tasks:\n%s", strings.Join(taskSummaries, "\n"))
+
+	ctxTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	response, err := m.chatProvider.Chat(ctxTimeout, []ai.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userMsg},
+	})
+	if err != nil {
+		log.Printf("micro-retro failed: %v", err)
+		return
+	}
+
+	log.Printf("MICRO-RETRO: %s", response)
+
+	// Parse retro JSON for structured insight
+	var retro struct {
+		Pattern    string  `json:"pattern"`
+		Suggestion string  `json:"suggestion"`
+		PassRate   float64 `json:"passRate"`
+	}
+	if err := json.Unmarshal([]byte(response), &retro); err != nil {
+		// Try to extract JSON from within the response (LLM may add surrounding text)
+		if start := strings.Index(response, "{"); start != -1 {
+			if end := strings.LastIndex(response, "}"); end > start {
+				_ = json.Unmarshal([]byte(response[start:end+1]), &retro)
+			}
+		}
+	}
+
+	summary := response
+	if retro.Pattern != "" {
+		summary = fmt.Sprintf("pattern: %s | suggestion: %s | pass rate: %.0f%%", retro.Pattern, retro.Suggestion, retro.PassRate*100)
+	}
+
+	m.emit(Event{
+		Type:      EventMicroRetroCompleted,
+		ProjectID: projectID,
+		Message:   m.msgf("Micro-retro: %s", "微型回顧：%s", truncate(summary, 200)),
+	})
 }
 
 // mergeStringSlice appends items from b to a, skipping duplicates.

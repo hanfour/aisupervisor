@@ -64,8 +64,9 @@ func parseTokenNum(s string) int64 {
 }
 
 type CompletionResult struct {
-	Success bool
-	Reason  string // "idle_prompt", "no_change", "shell_exit"
+	Success     bool
+	Reason      string // "idle_prompt", "no_change", "shell_exit"
+	HelpRequest string // non-empty if HELP_NEEDED: was detected
 }
 
 type CompletionMonitor struct {
@@ -123,6 +124,20 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 			// Check for shell prompt (CLI has exited)
 			if isShellPrompt(content) && hadActivity {
 				return CompletionResult{Success: true, Reason: "shell_exit"}, nil
+			}
+
+			// Check for help request keyword (only if newly appeared, not in previous content)
+			if strings.Contains(content, "HELP_NEEDED:") && !strings.Contains(lastContent, "HELP_NEEDED:") {
+				if helpIdx := strings.Index(content, "HELP_NEEDED:"); helpIdx != -1 {
+					helpContent := content[helpIdx+len("HELP_NEEDED:"):]
+					if nlIdx := strings.Index(helpContent, "\n"); nlIdx != -1 {
+						helpContent = helpContent[:nlIdx]
+					}
+					helpContent = strings.TrimSpace(helpContent)
+					if helpContent != "" {
+						return CompletionResult{Success: false, Reason: "help_needed", HelpRequest: helpContent}, nil
+					}
+				}
 			}
 
 			// Track content changes (must happen before idle checks so

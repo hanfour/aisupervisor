@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -65,8 +66,11 @@ type Manager struct {
 	budgetsPath      string
 	analytics        []PerformanceSnapshot
 	draining         atomic.Bool // debounce flag for drainReadyQueue
-	trainingLoop     *training.TrainingLoop
-	agenticLoopCfg   config.AgenticLoopConfig
+	trainingLoop        *training.TrainingLoop
+	agenticLoopCfg      config.AgenticLoopConfig
+	reviewTimeoutMinutes int                     // minutes before auto-approving stuck reviews
+	autoAssignCfg       config.AutoAssignConfig
+	completedTaskCount  int                     // counter for micro-retro trigger
 }
 
 type workersFile struct {
@@ -295,6 +299,19 @@ func (m *Manager) DeleteProject(projectID string) error {
 		Message:   m.msgf("Project deleted: %s", "專案已刪除：%s", name),
 	})
 	return nil
+}
+
+// SetProjectVerifyCmd sets the verification command and max iterations for a project.
+func (m *Manager) SetProjectVerifyCmd(projectID, verifyCmd string, maxIterations int) error {
+	p, ok := m.projectStore.GetProject(projectID)
+	if !ok {
+		return fmt.Errorf("project %q not found", projectID)
+	}
+	p.VerifyCmd = verifyCmd
+	if maxIterations > 0 {
+		p.MaxIterations = maxIterations
+	}
+	return m.projectStore.SaveProject(p)
 }
 
 // ActiveWorkerCount returns the number of workers currently working on tasks.
@@ -732,6 +749,27 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 
 	m.mu.Unlock()
 
+	// Inject context from completed dependencies
+	if handoff := m.handoffContext(t); handoff != "" {
+		t.Prompt = t.Prompt + handoff
+		m.emit(Event{
+			Type:      EventContextHandoff,
+			ProjectID: p.ID,
+			TaskID:    taskID,
+			Message:   m.msgf("Context handed off to task %q from dependencies", "已從依賴項目傳遞上下文給任務 %q", t.Title),
+		})
+	}
+
+	// Capture pre-task commit for verification rollback (before worker makes changes)
+	if p.RepoPath != "" && t.PreTaskCommit == "" {
+		headCmd := exec.Command("git", "rev-parse", "HEAD")
+		headCmd.Dir = p.RepoPath
+		if headOut, err := headCmd.Output(); err == nil {
+			t.PreTaskCommit = strings.TrimSpace(string(headOut))
+			m.projectStore.SaveTask(t)
+		}
+	}
+
 	// Spawn worker (this creates tmux session, git branch, launches Claude Code)
 	if m.spawner == nil {
 		m.projectStore.UpdateTaskStatus(taskID, project.TaskReady)
@@ -803,15 +841,64 @@ func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *proj
 		return
 	}
 
+	// Handle help request — create research sub-task and resume monitoring
+	// Only process once per task to prevent unbounded goroutine spawning
+	// if the HELP_NEEDED keyword persists in scrollback.
+	if result.HelpRequest != "" && t.HelpRequestHandled == "" {
+		t.HelpRequestHandled = result.HelpRequest
+		m.projectStore.SaveTask(t)
+		m.handleHelpRequest(w, result.HelpRequest)
+		// Continue monitoring — the worker is still working
+		m.wg.Add(1)
+		go m.watchCompletion(ctx, w, t, p)
+		return
+	}
+
 	m.handleTaskCompletion(w, t, p, result)
 }
 
 func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *project.Project, result worker.CompletionResult) {
+	// Record growth log for every completion (before locking)
+	m.updateWorkerGrowth(w, t, result.Success)
+
+	// Track completed tasks for micro-retro trigger
+	if result.Success && t.ParentTaskID == "" {
+		m.mu.Lock()
+		m.completedTaskCount++
+		shouldMicroRetro := m.completedTaskCount%3 == 0 && m.chatProvider != nil
+		projectID := p.ID
+		m.mu.Unlock()
+		if shouldMicroRetro {
+			go m.RunMicroRetro(context.Background(), projectID)
+		}
+	}
+
 	m.mu.Lock()
+	// Reset recovery attempts on completion (under lock to avoid data race)
+	w.RecoveryAttempts = 0
 
 	if result.Success && t.Type == project.TaskTypeTraining {
 		m.handleTrainingIteration(w, t, p)
 		return
+	}
+
+	// For non-training tasks: run verification if VerifyCmd is configured.
+	// This implements the iterate loop: verify → keep if improved → rollback if not → retry.
+	if result.Success && t.Type != project.TaskTypeTraining && t.ParentTaskID == "" {
+		verifyCmd := t.VerifyCmd
+		if verifyCmd == "" {
+			verifyCmd = p.VerifyCmd
+		}
+		if verifyCmd != "" {
+			m.mu.Unlock()
+			action := m.verifyAndIterate(w, t, p, verifyCmd)
+			if action != "continue" {
+				// verifyAndIterate handled everything (retry or early-stop)
+				return
+			}
+			m.mu.Lock()
+			// Verification passed — continue to normal completion flow
+		}
 	}
 
 	if result.Success && t.Type == project.TaskTypeResearch {
@@ -1056,7 +1143,7 @@ func (m *Manager) handleTrainingIteration(w *worker.Worker, t *project.Task, p *
 	// Run test evaluation (release lock during I/O)
 	m.mu.Unlock()
 
-	result, err := m.trainingLoop.EvaluateAndDecide(p.RepoPath, t.BranchName, cfg)
+	result, err := m.trainingLoop.EvaluateAndDecide(context.Background(), p.RepoPath, t.BranchName, cfg)
 	if err != nil {
 		log.Printf("training: evaluate failed for task %s: %v", t.ID, err)
 		m.emit(Event{
@@ -1079,6 +1166,7 @@ func (m *Manager) handleTrainingIteration(w *worker.Worker, t *project.Task, p *
 	m.mu.Lock()
 	cfg.CurrentIter = result.Iteration
 	cfg.LastTestOutput = result.TestOutput
+	cfg.ScoreHistory = append(cfg.ScoreHistory, result.Score)
 	if result.Improved {
 		cfg.BestScore = result.Score
 		cfg.BestCommit = result.CommitHash
@@ -1103,6 +1191,26 @@ func (m *Manager) handleTrainingIteration(w *worker.Worker, t *project.Task, p *
 		})
 	}
 
+	// Check for plateau early-stop
+	if result.Plateau {
+		m.emit(Event{
+			Type:      EventTaskCompleted,
+			ProjectID: p.ID,
+			TaskID:    t.ID,
+			WorkerID:  w.ID,
+			Message:   m.msgf("Training early-stop: plateau detected after %d iterations (best %.4f)", "訓練提前停止：%d 輪後偵測到平台期（最佳 %.4f）", cfg.CurrentIter, cfg.BestScore),
+		})
+		m.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
+		w.Status = worker.WorkerIdle
+		w.CurrentTaskID = ""
+		m.saveWorkers()
+		m.mu.Unlock()
+		if m.autoSchedule {
+			go m.tryAutoAssign(w.ID)
+		}
+		return
+	}
+
 	// Check if we should continue iterating
 	if cfg.CurrentIter < cfg.MaxIterations && cfg.BestScore < cfg.PassThreshold {
 		// Re-spawn worker for next iteration
@@ -1113,7 +1221,7 @@ func (m *Manager) handleTrainingIteration(w *worker.Worker, t *project.Task, p *
 
 		go func() {
 			ctx := context.Background()
-			if err := m.AssignTask(ctx, t.ID, w.ID); err != nil {
+			if err := m.AssignTask(ctx, w.ID, t.ID); err != nil {
 				log.Printf("training: failed to re-assign task %s to %s: %v", t.ID, w.ID, err)
 			}
 		}()
@@ -1141,6 +1249,181 @@ func (m *Manager) handleTrainingIteration(w *worker.Worker, t *project.Task, p *
 	}
 }
 
+// verifyAndIterate runs verification on a completed non-training task.
+// Returns "continue" if verification passed (caller should proceed to normal completion),
+// or "handled" if the method took care of everything (retry or early-stop).
+// Must be called WITHOUT m.mu held.
+func (m *Manager) verifyAndIterate(w *worker.Worker, t *project.Task, p *project.Project, verifyCmd string) string {
+	maxIter := p.MaxIterations
+	if maxIter <= 0 {
+		maxIter = 3
+	}
+
+	// Ensure we're on the correct branch before running verification
+	if p.RepoPath != "" && t.BranchName != "" {
+		checkoutCmd := exec.Command("git", "checkout", t.BranchName)
+		checkoutCmd.Dir = p.RepoPath
+		if out, err := checkoutCmd.CombinedOutput(); err != nil {
+			log.Printf("verify: failed to checkout branch %s: %s %v", t.BranchName, string(out), err)
+		}
+	}
+
+	// Snapshot current HEAD (post-worker commit) for tracking the best version
+	currentCommit := ""
+	if p.RepoPath != "" {
+		headCmd := exec.Command("git", "rev-parse", "HEAD")
+		headCmd.Dir = p.RepoPath
+		if out, err := headCmd.Output(); err == nil {
+			currentCommit = strings.TrimSpace(string(out))
+		}
+	}
+
+	// Run verification command with 5-minute timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "bash", "-c", verifyCmd)
+	cmd.Dir = p.RepoPath
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+	exitCode := 0
+	if err != nil {
+		if ctx.Err() != nil {
+			log.Printf("verify: command timed out for task %s", t.ID)
+			output = "verification command timed out"
+			exitCode = -1
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+
+	// Parse score from output
+	score := training.ParseScore(output, exitCode)
+
+	m.mu.Lock()
+
+	// Preserve original prompt on first iteration (before any feedback is appended)
+	if t.OriginalPrompt == "" {
+		t.OriginalPrompt = t.Prompt
+	}
+
+	// Track iteration
+	t.IterationCount++
+	t.VerifyScore = score
+
+	// Determine if improved
+	improved := score > t.BestVerifyScore
+	if t.IterationCount == 1 {
+		improved = score >= t.BestVerifyScore // first iteration: baseline
+	}
+
+	if improved {
+		t.BestVerifyScore = score
+		t.BestVerifyCommit = currentCommit // store the worker's commit as best
+		m.projectStore.SaveTask(t)
+	} else {
+		m.projectStore.SaveTask(t)
+	}
+
+	// Capture state needed for git operations, then release lock before blocking I/O
+	bestCommit := t.BestVerifyCommit
+	bestScore := t.BestVerifyScore
+	repoPath := p.RepoPath
+	iterCount := t.IterationCount
+	origPrompt := t.OriginalPrompt
+	m.mu.Unlock()
+
+	if improved {
+		m.emit(Event{
+			Type:      EventVerificationPassed,
+			ProjectID: p.ID,
+			TaskID:    t.ID,
+			WorkerID:  w.ID,
+			Message:   m.msgf("Verification passed: score %.4f (iteration %d/%d)", "驗證通過：分數 %.4f（迭代 %d/%d）", score, iterCount, maxIter),
+		})
+	} else {
+		m.emit(Event{
+			Type:      EventVerificationFailed,
+			ProjectID: p.ID,
+			TaskID:    t.ID,
+			WorkerID:  w.ID,
+			Message:   m.msgf("Verification failed: score %.4f <= best %.4f (iteration %d/%d)", "驗證失敗：分數 %.4f <= 最佳 %.4f（迭代 %d/%d）", score, bestScore, iterCount, maxIter),
+		})
+
+		// Rollback to best commit if we have one (outside lock — blocking I/O)
+		if bestCommit != "" && repoPath != "" {
+			resetCmd := exec.Command("git", "reset", "--hard", bestCommit)
+			resetCmd.Dir = repoPath
+			if resetOut, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
+				log.Printf("verify: rollback failed for task %s: %s %v", t.ID, string(resetOut), resetErr)
+			} else {
+				m.emit(Event{
+					Type:      EventIterationRollback,
+					ProjectID: p.ID,
+					TaskID:    t.ID,
+					WorkerID:  w.ID,
+					Message:   m.msgf("Rolled back to best commit %s", "已回退至最佳提交 %s", truncate(bestCommit, 8)),
+				})
+			}
+		}
+	}
+
+	// Check if verification passed (score == 1.0 means all tests pass)
+	if score >= 1.0 {
+		return "continue" // fully passed, proceed to normal flow
+	}
+
+	// Check iteration budget
+	if iterCount >= maxIter {
+		// Out of iterations — reset to best known commit (outside lock)
+		if bestCommit != "" && repoPath != "" && !improved {
+			resetCmd := exec.Command("git", "reset", "--hard", bestCommit)
+			resetCmd.Dir = repoPath
+			if resetOut, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
+				log.Printf("verify: final rollback failed: %s %v", string(resetOut), resetErr)
+			}
+		}
+		m.emit(Event{
+			Type:      EventPlateauEarlyStop,
+			ProjectID: p.ID,
+			TaskID:    t.ID,
+			WorkerID:  w.ID,
+			Message:   m.msgf("Max iterations reached (%d), accepting best score %.4f", "已達最大迭代次數（%d），接受最佳分數 %.4f", maxIter, bestScore),
+		})
+		return "continue" // proceed to normal completion with best result
+	}
+
+	// More iterations available — re-assign with feedback (replace, not append)
+	m.mu.Lock()
+	t.Prompt = fmt.Sprintf("%s\n\n--- 驗證反饋 / Verification Feedback ---\n驗證分數 Score: %.4f (目標 target: 1.0)\n迭代 Iteration: %d/%d\n驗證輸出 Output:\n%s\n\n請根據驗證結果修正程式碼，再次提交。\nPlease fix the code based on verification output and commit again.",
+		origPrompt, score, iterCount, maxIter, truncate(output, 2000))
+	m.projectStore.ForceUpdateTaskStatus(t.ID, project.TaskReady)
+	m.projectStore.SaveTask(t)
+
+	w.Status = worker.WorkerIdle
+	w.CurrentTaskID = ""
+	m.saveWorkers()
+	m.mu.Unlock()
+
+	m.emit(Event{
+		Type:      EventIterationRetry,
+		ProjectID: p.ID,
+		TaskID:    t.ID,
+		WorkerID:  w.ID,
+		Message:   m.msgf("Re-assigning for iteration %d/%d (score %.4f)", "重新分配進行迭代 %d/%d（分數 %.4f）", iterCount+1, maxIter, score),
+	})
+
+	// Re-assign task to same worker for next iteration
+	go func() {
+		ctx := context.Background()
+		if err := m.AssignTask(ctx, w.ID, t.ID); err != nil {
+			log.Printf("verify: failed to re-assign task %s to %s: %v", t.ID, w.ID, err)
+		}
+	}()
+
+	return "handled"
+}
+
 // SaveTask persists a task to the store.
 func (m *Manager) SaveTask(t *project.Task) {
 	m.mu.Lock()
@@ -1160,6 +1443,20 @@ func (m *Manager) GetAgenticLoopConfig() config.AgenticLoopConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.agenticLoopCfg
+}
+
+// SetReviewTimeout sets the review timeout in minutes.
+func (m *Manager) SetReviewTimeout(minutes int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reviewTimeoutMinutes = minutes
+}
+
+// SetAutoAssignConfig sets the auto-assign configuration.
+func (m *Manager) SetAutoAssignConfig(cfg config.AutoAssignConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.autoAssignCfg = cfg
 }
 
 // recordCompletionMetrics captures token usage, analytics snapshot, and budget checks.
@@ -1364,6 +1661,7 @@ type idleWorkerSnapshot struct {
 	ID           string
 	SkillProfile string
 	Tier         worker.WorkerTier
+	SkillScores  personality.SkillScores
 }
 
 // drainReadyQueue assigns ready tasks to idle workers until no more matches.
@@ -1379,12 +1677,18 @@ func (m *Manager) drainReadyQueue(ctx context.Context) {
 		return
 	}
 
-	// Snapshot idle workers (IDs, skill profiles, and tiers)
+	// Snapshot idle workers (IDs, skill profiles, tiers, and skill scores)
 	m.mu.RLock()
 	var idle []idleWorkerSnapshot
 	for _, w := range m.workers {
 		if w.Status == worker.WorkerIdle {
-			idle = append(idle, idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile, Tier: w.EffectiveTier()})
+			snap := idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile, Tier: w.EffectiveTier()}
+			if m.personalityStore != nil {
+				if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
+					snap.SkillScores = profile.SkillScores
+				}
+			}
+			idle = append(idle, snap)
 		}
 	}
 	m.mu.RUnlock()
@@ -2139,4 +2443,214 @@ func (m *Manager) ReassignTask(ctx context.Context, taskID, newWorkerID string) 
 // DrainReviewQueue forces processing of all pending review requests.
 func (m *Manager) DrainReviewQueue(ctx context.Context) {
 	m.review.DrainQueue(ctx)
+}
+
+// --- Phase 2: Context Handoff ---
+
+// handoffContext extracts context from completed dependency tasks and returns a summary.
+func (m *Manager) handoffContext(t *project.Task) string {
+	if len(t.DependsOn) == 0 || m.tmuxClient == nil {
+		return ""
+	}
+
+	var contexts []string
+	m.mu.RLock()
+	for _, depID := range t.DependsOn {
+		depTask, ok := m.projectStore.GetTask(depID)
+		if !ok || depTask.Status != project.TaskDone {
+			continue
+		}
+		// Try to capture last output from the assignee's pane
+		if depTask.AssigneeID != "" {
+			if snap, exists := m.lastPaneContent[depTask.AssigneeID]; exists && snap.content != "" {
+				summary := snap.content
+				if rs := []rune(summary); len(rs) > 1000 {
+					summary = string(rs[len(rs)-1000:])
+				}
+				contexts = append(contexts, fmt.Sprintf("[%s] %s", depTask.Title, summary))
+			}
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(contexts) == 0 {
+		return ""
+	}
+
+	lang := m.GetLanguage()
+	if lang == "en" {
+		return "\n\n--- Previous Task Context ---\n" + strings.Join(contexts, "\n---\n") + "\n"
+	}
+	return "\n\n--- 前置任務上下文 ---\n" + strings.Join(contexts, "\n---\n") + "\n"
+}
+
+// --- Phase 2: Help Request Handling ---
+
+// handleHelpRequest processes a HELP_NEEDED: keyword detected in worker output.
+func (m *Manager) handleHelpRequest(w *worker.Worker, helpContent string) {
+	if w.CurrentTaskID == "" {
+		return
+	}
+
+	t, ok := m.projectStore.GetTask(w.CurrentTaskID)
+	if !ok {
+		return
+	}
+
+	p, ok := m.projectStore.GetProject(t.ProjectID)
+	if !ok {
+		return
+	}
+
+	m.emit(Event{
+		Type:     EventHelpRequested,
+		WorkerID: w.ID,
+		TaskID:   t.ID,
+		Message:  m.msgf("Worker %s requested help: %s", "員工 %s 請求幫助：%s", w.Name, truncate(helpContent, 100)),
+	})
+
+	// Create a research sub-task for another worker
+	lang := m.GetLanguage()
+	var prompt string
+	if lang == "en" {
+		prompt = fmt.Sprintf("A colleague needs help with the following:\n\n%s\n\nContext: They are working on task %q in project %q.\n\nPlease research this and provide a concise answer. Output your findings and type /stop when done.", helpContent, t.Title, p.Name)
+	} else {
+		prompt = fmt.Sprintf("一位同事在以下問題上需要幫助：\n\n%s\n\n背景：他們正在專案「%s」的任務「%s」上工作。\n\n請研究並提供簡潔答案。輸出你的發現後輸入 /stop 完成。", helpContent, p.Name, t.Title)
+	}
+
+	helpTask, err := m.AddTask(p.ID, m.msgf("Help: %s", "幫助：%s", truncate(helpContent, 50)), "Auto-created help request", prompt, nil, 1, "", "research")
+	if err != nil {
+		log.Printf("WARNING: failed to create help task: %v", err)
+		return
+	}
+	helpTask.ParentTaskID = t.ID
+	m.projectStore.SaveTask(helpTask)
+}
+
+// --- Phase 2: Mid-Task Feedback ---
+
+// --- Phase 3: Growth Log ---
+
+// updateWorkerGrowth records a task completion in the worker's growth log.
+func (m *Manager) updateWorkerGrowth(w *worker.Worker, t *project.Task, success bool) {
+	if m.personalityStore == nil {
+		return
+	}
+
+	m.personalityStore.UpdateProfile(w.ID, func(profile *personality.CharacterProfile) {
+		event := "task_completed"
+		if !success {
+			event = "task_failed"
+		}
+
+		changes := map[string]int{}
+		if success {
+			changes["tasks_completed"] = 1
+		} else {
+			changes["tasks_failed"] = 1
+		}
+
+		entry := personality.GrowthEntry{
+			Event:   event,
+			Date:    time.Now(),
+			Changes: changes,
+		}
+
+		// Keep growth log bounded to last 50 entries
+		profile.GrowthLog = append(profile.GrowthLog, entry)
+		if len(profile.GrowthLog) > 50 {
+			profile.GrowthLog = profile.GrowthLog[len(profile.GrowthLog)-50:]
+		}
+
+		// Auto-adjust skill scores every 5 completed tasks
+		profile.TasksCompleted++
+		if profile.TasksCompleted%5 == 0 {
+			if success {
+				// Small boost for consistent completion
+				profile.SkillScores.Carefulness = clampScore(profile.SkillScores.Carefulness + 1)
+				profile.SkillScores.CodeQuality = clampScore(profile.SkillScores.CodeQuality + 1)
+			}
+		}
+	})
+}
+
+func clampScore(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
+// --- Phase 3: Proactive Task Discovery ---
+
+// proactiveTaskDiscovery assigns tasks to idle workers that have been idle too long.
+func (m *Manager) proactiveTaskDiscovery() {
+	m.mu.RLock()
+	cfg := m.autoAssignCfg
+	m.mu.RUnlock()
+
+	if !cfg.Enabled {
+		return
+	}
+
+	idleTimeout := 120 * time.Second
+	if cfg.IdleTimeout > 0 {
+		idleTimeout = time.Duration(cfg.IdleTimeout) * time.Second
+	}
+
+	m.mu.RLock()
+	var idleWorkers []string
+	for _, w := range m.workers {
+		if w.Status == worker.WorkerIdle && w.CurrentTaskID == "" {
+			// Check how long they've been idle by looking at pane content timestamp
+			if snap, exists := m.lastPaneContent[w.ID]; exists {
+				if time.Since(snap.since) > idleTimeout {
+					idleWorkers = append(idleWorkers, w.ID)
+				}
+			} else {
+				// No pane content — worker was recently reset, give them a task
+				idleWorkers = append(idleWorkers, w.ID)
+			}
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(idleWorkers) > 0 {
+		go m.drainReadyQueue(context.Background())
+	}
+}
+
+// GetWorkerActivity returns recent pane output for a worker (for UI display).
+func (m *Manager) GetWorkerActivity(workerID string) string {
+	m.mu.RLock()
+	w, ok := m.workers[workerID]
+	var session string
+	var window, pane int
+	if ok {
+		session = w.TmuxSession
+		window = w.Window
+		pane = w.Pane
+	}
+	m.mu.RUnlock()
+
+	if !ok || session == "" || m.tmuxClient == nil {
+		return ""
+	}
+
+	content, err := m.tmuxClient.CapturePane(session, window, pane, 10)
+	if err != nil {
+		return ""
+	}
+	return content
+}
+
+func truncate(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
 }

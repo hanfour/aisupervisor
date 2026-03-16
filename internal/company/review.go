@@ -165,6 +165,9 @@ func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, 
 	// Update original task status
 	t.ReviewCount++
 	t.ReviewerID = managerWorker.ID
+	now := time.Now()
+	t.ReviewStartedAt = &now
+	rp.mgr.projectStore.SaveTask(t)
 	if err := rp.mgr.projectStore.UpdateTaskStatus(t.ID, project.TaskReview); err != nil {
 		return fmt.Errorf("updating task status to review: %w", err)
 	}

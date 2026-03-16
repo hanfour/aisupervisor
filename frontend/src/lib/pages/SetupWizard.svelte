@@ -187,6 +187,8 @@
         chatMessages = [...chatMessages, { role: 'system', content: $t('setup.hrHired').replace('{name}', hrName), sender: 'system' }]
         hrHired = true
         hrWorker = { id: 'hr', name: hrName, gender: 'female', status: 'idle', tier: 'engineer', skillProfile: 'reviewer' }
+        // Inject a context message so the LLM knows HR has joined and should speak as HR
+        chatMessages = [...chatMessages, { role: 'user', content: `${hrName} 已加入團隊。請以 ${hrName}（HR）的身份繼續對話，了解我的需求後推薦團隊。`, sender: 'user' }]
         await scrollChat()
         // Continue the conversation automatically — HR introduces themselves
         chatLoading = false

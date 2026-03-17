@@ -275,6 +275,8 @@ const translations = {
   'workerDetail.morale': { en: 'Morale:', zh: '士氣：' },
   'workerDetail.traits': { en: 'Traits', zh: '特質' },
   'workerDetail.generateNarrative': { en: 'Generate Personality (AI)', zh: '生成性格描述 (AI)' },
+  'workerDetail.generating': { en: 'Generating...', zh: '生成中...' },
+  'workerDetail.narrativeError': { en: 'Failed to generate personality. Check AI backend settings.', zh: '生成性格描述失敗，請檢查 AI 後端設定。' },
   'workerDetail.relationshipsSection': { en: 'Relationships', zh: '人際關係' },
   'workerDetail.affinity': { en: 'Affinity', zh: '好感' },
   'workerDetail.trust': { en: 'Trust', zh: '信任' },

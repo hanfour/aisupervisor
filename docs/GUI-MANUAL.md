@@ -49,7 +49,6 @@ cd cmd/aisupervisor-gui
 
 ![Dashboard](screenshots/01-dashboard.png)
 
-
 The dashboard is the app's home page, providing a real-time overview of company operations.
 
 #### Company Stats Cards
@@ -72,6 +71,13 @@ Lists all monitored tmux sessions. Click a session card to jump to the Terminal 
 
 #### Events
 Event log table showing the latest 200 Supervisor and Company events with Time, Type, Source, and Detail columns.
+
+#### Low-Confidence Confirmation Dialog
+When the Supervisor detects a low-confidence decision (below the configured threshold), a confirmation dialog automatically appears showing:
+- Session name
+- Suggested action
+- Reasoning and confidence percentage
+- **Approve** / **Dismiss** buttons
 
 ---
 
@@ -106,12 +112,33 @@ The board page displays task flow in Kanban style for a given project.
 | **Revision** | `revision` | Tasks sent back for revision |
 | **Escalation** | `failed` | Failed/escalated tasks |
 
+#### Status Flow
+```
+backlog → draft → spec_review → approved → ready → assigned → in_progress
+  → code_review → testing → security_scan → staging → accepted → done → deployed
+```
+- Any review stage can reject a task back to `revision` (with reason)
+- 3+ rejections by the same agent pair triggers automatic escalation
+- Simple tasks can skip intermediate stages: `backlog → ready` (backward compatible)
+
+#### Circuit Breaker (Dead Loop Detection)
+Built-in circuit breaker prevents infinite review loops:
+- Same agent pair rejection limit: 3 times
+- Total rejection limit: 6 times
+- When exceeded, task is automatically escalated to Consultant tier for re-decomposition
+
+#### Create a Task
+1. Click **+ New Task**
+2. Fill in: Title, Description, Prompt (instructions for Claude Code), Priority (1-9, 1 = highest), Milestone (optional), Dependencies
+3. Click **Create**
+
 #### Task Operations
 - **Assign** (Ready status) — Assign task to an idle worker
 - **Advance** (review stages) — Move task to next stage
 - **Reject** (review stages) — Send task back with reason
 - **Done** (Accepted status) — Mark task complete
 - **Deploy** (Done status) — Mark as deployed (requires human approval via Human Gate)
+- Task cards display priority badge (P1-P3), assignee, branch status, and rejection count
 
 ---
 
@@ -129,10 +156,78 @@ The Workers page displays all AI employees in a 3-column hierarchy view.
 | **Engineers** | Execution tier — writing code |
 
 #### Worker Card
-Each card shows: Avatar, Name, Status Badge (idle/working/waiting/error), Current Task, Role Badge, Parent Link, Skill Scores, and Promote button.
+Each card shows:
+- **Avatar** — NES.css pixel character icon
+- **Name** — Worker name
+- **Status Badge** — Current status indicator
+  - 🟢 idle — Available
+  - 🔵 working — Task in progress
+  - 🟡 waiting — Waiting for input
+  - 🔴 error — Error state
+- **Current Task** — Currently assigned task ID
+- **Role Badge** — Job role (see below)
+- **Parent Link** — Supervisor name (e.g., "↑ Manager: Alice")
+- **Skill Scores** — Score summary (hover for details)
+- **Promote** — Promote worker to next tier
+
+#### Worker Roles
+Each worker has a job role in addition to their tier:
+
+| Role | Description | Responsible Stage |
+|------|-------------|-------------------|
+| `architect` | System architect | spec_review |
+| `coder` | Developer (default) | in_progress |
+| `qa` | Quality assurance | testing |
+| `security` | Security auditor | security_scan |
+| `devops` | Operations & deployment | staging |
+| `designer` | UI/UX designer | Design tasks |
+
+A worker can have both a SkillProfile (e.g., `hacker`) and a Role (e.g., `security`). Stage auto-assignment matches by role. Workers without a role default to `coder`.
 
 #### Skill Score System
-Six dimensions tracked per worker (0-100, default 50): Carefulness, BoundaryChecking, TestCoverageAware, CommunicationClarity, CodeQuality, SecurityAwareness.
+Six dimensions tracked per worker (0-100, default 50):
+
+| Dimension | Description |
+|-----------|-------------|
+| Carefulness | Attention to detail |
+| BoundaryChecking | Edge case awareness |
+| TestCoverageAware | Test coverage consciousness |
+| CommunicationClarity | Communication clarity |
+| CodeQuality | Code quality |
+| SecurityAwareness | Security awareness |
+
+- Scores auto-adjust based on events (e.g., review rejection → related score decreases)
+- Every 10 completed tasks, all scores decay 10% toward 50 (mean reversion)
+- Score < 40 triggers warning guidance injection into worker prompt
+- Score > 80 triggers positive reinforcement
+
+#### Click Worker → Log Panel
+Click any worker card to open the Log Panel dialog:
+- 85vw × 80vh terminal-style window
+- Real-time worker execution logs
+- Search/filter functionality
+- Adjustable scrollback (100-1000 lines)
+- Auto-refreshes every 1.5 seconds
+
+#### Hire a New Worker
+
+![Hire Worker](screenshots/02-workers.png)
+
+1. Click **+ Hire Worker**
+2. Fill in: Name, Avatar (pixel character), Tier, Parent (Manager), Role, CLI Tool (Claude/Codex/Gemini), Backend ID (optional)
+3. Click **Hire**
+
+#### Model Selection Strategy
+The system selects AI models in priority order:
+1. Worker's personal `ModelVersion` setting
+2. Task type override (e.g., research tasks use Opus)
+3. SkillProfile's configured model
+4. Tier default (Consultant/Manager → Opus, Engineer → Sonnet)
+
+#### Promote Workers
+- Engineer → Manager → Consultant
+- Click the **Promote** button on a worker card
+- Consultants are the highest tier (no Promote button shown)
 
 ---
 
@@ -140,7 +235,30 @@ Six dimensions tracked per worker (0-100, default 50): Carefulness, BoundaryChec
 
 ![Hierarchy](screenshots/03-hierarchy.png)
 
-Full-page hierarchy visualization with three columns connected by arrows (→) showing the chain of command.
+Full-page hierarchy visualization showing the company organization structure.
+
+#### Hierarchy Columns
+Three columns arranged horizontally with arrows (→) showing the chain of command:
+
+| Column | Icon | Color |
+|--------|------|-------|
+| Consultants | ★ | Yellow |
+| Managers | ♦ | Blue |
+| Engineers | ⚙ | Green |
+
+Each tier has a color-bordered badge header showing icon, name, and count.
+
+#### Worker Cards
+Same as the Workers page, but additionally shows:
+- **Tier Badge** — Color-coded `[consultant]` / `[manager]` / `[engineer]`
+- **Parent Name** — Supervisor name (e.g., "↑ Alice")
+
+Clicking a card opens the Log Panel.
+
+#### Bottom Panels
+Two panels at the page bottom:
+- **Review Queue** — Same pending review list as Dashboard
+- **Training Stats** — Same training statistics as Dashboard
 
 ---
 
@@ -152,13 +270,36 @@ Terminal page shows detailed info for a specific tmux session, including session
 
 ### 8. Roles
 
-Manage Supervisor's AI decision-making roles (Gatekeeper, Manager, custom roles).
+Manage Supervisor's AI decision-making roles.
+
+#### Role System
+Each role has different responsibilities and decision modes:
+- **Gatekeeper** — Gatekeeper role, decides whether to approve actions
+- **Manager** — Manager role, strategic decisions
+- Custom roles — Loaded via config or `~/.config/aisupervisor/roles/` directory
+
+#### Session Role Assignment
+1. Select a Session
+2. Check the roles to enable
+3. Roles participate in decisions based on their mode (observe/intervene) and priority
 
 ---
 
 ### 9. Groups
 
-Displays AI group discussions in three stages: Opinion → Roundtable → Decision.
+AI group discussion page showing the full multi-role discussion flow.
+
+#### Three-Stage Discussion
+1. **Opinion** — Each role provides initial opinion
+2. **Roundtable** — Roles exchange views in roundtable discussion
+3. **Decision** — Final decision
+
+#### Discussion Messages
+Each message shows:
+- Role name and icon
+- Confidence percentage (red <50% / yellow 50-80% / green 80%+)
+- Stage label
+- Suggested action badge
 
 ---
 
@@ -166,7 +307,42 @@ Displays AI group discussions in three stages: Opinion → Roundtable → Decisi
 
 ![Settings](screenshots/10-settings.png)
 
-Read-only display of current Supervisor configuration: Polling, Decision, Context, Verification, Human Gate, Backends, and Auto-Approve Rules.
+Read-only display of current Supervisor configuration.
+
+#### Polling
+- **Interval (ms)** — Polling interval, default 500ms
+- **Context Lines** — Lines read per poll, default 100
+
+#### Decision
+- **Confidence Threshold** — Below this value requires human confirmation, default 0.7
+- **Timeout (s)** — Decision timeout in seconds, default 30
+
+#### Context (Memory)
+- **Enabled** — Whether context memory is active
+- **Max Decisions** — Max decisions to remember, default 20
+- **Token Budget** — Token budget, default 2000
+
+#### Verification (Auto Pipeline)
+- **Enabled** — Whether auto-verification is active
+- **Docker Image** — Docker image for verification (default `golang:1.22`)
+- **Timeout (s)** — Verification timeout (default 300)
+- **Lint/Build/Test Commands** — Custom commands
+
+When enabled, tasks are auto-verified (lint/build/test) before entering `code_review`. Failures are sent directly back to the Engineer (saving Manager tokens). After passing, Manager code review runs, followed by static security scanning (semgrep/gosec).
+
+#### Human Gate
+- **Enabled** — Whether human intervention is active
+- **Token Budget Threshold** — Token consumption threshold requiring human confirmation
+- **Require Deploy Approval** — Whether `staging → deployed` needs human approval
+- **Confidence Floor** — Minimum confidence level
+
+Human Gate triggers on: production deployments, circuit breaker escalations, token budget exceeded, `git push --force` detection, destructive DB schema changes. When triggered, the GUI shows a pending review notification and pauses the task until a human responds.
+
+#### Backends
+Lists configured AI backends (Anthropic, OpenAI, Gemini, Ollama).
+
+#### Auto-Approve Rules
+Lists auto-approve rules — matching actions skip human confirmation.
 
 ---
 
@@ -245,7 +421,6 @@ cd cmd/aisupervisor-gui
 ## 2. Dashboard（儀表板）
 
 ![Dashboard](screenshots/01-dashboard.png)
-
 
 Dashboard 是應用程式的首頁，提供公司整體運作狀態的即時概覽。
 

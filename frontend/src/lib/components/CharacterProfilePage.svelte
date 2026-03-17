@@ -23,6 +23,8 @@
   let animFrame = 0
   let animTimer
   let showAppearanceEditor = false
+  let narrativeLoading = false
+  let narrativeError = ''
 
   $: workerEvents = ($events || []).filter(e =>
     e.workerID === workerId || e.workerId === workerId
@@ -69,11 +71,17 @@
   }
 
   async function handleGenerateNarrative() {
+    narrativeLoading = true
+    narrativeError = ''
     try {
       await generateNarrative(workerId)
+      narrativeError = ''
       profile = await loadCharacterProfile(workerId)
     } catch (e) {
       console.error(e)
+      narrativeError = e?.message || $t('workerDetail.narrativeError')
+    } finally {
+      narrativeLoading = false
     }
   }
 
@@ -314,9 +322,12 @@
         {/if}
 
         {#if !profile.narrative?.description}
-        <button class="nes-btn is-primary generate-btn" on:click={handleGenerateNarrative}>
-          {$t('workerDetail.generateNarrative')}
+        <button class="nes-btn is-primary generate-btn" on:click={handleGenerateNarrative} disabled={narrativeLoading}>
+          {narrativeLoading ? $t('workerDetail.generating') : $t('workerDetail.generateNarrative')}
         </button>
+        {#if narrativeError}
+        <p style="font-size: 0.7rem; color: #f44; margin-top: 4px;">{narrativeError}</p>
+        {/if}
         {/if}
       </div>
       {/if}

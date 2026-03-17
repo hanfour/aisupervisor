@@ -1,4 +1,125 @@
-# AI Supervisor — Docker 開發環境使用手冊
+# AI Supervisor — Docker Development Guide / Docker 開發環境使用手冊
+
+[English](#english) | [繁體中文](#繁體中文)
+
+---
+
+## English
+
+Run aisupervisor in a Docker container, giving AI workers (Claude Code CLI) full read/write and execution permissions in an isolated sandbox while keeping your host system safe.
+
+### Architecture Overview
+
+```
+┌─ Host (macOS / Linux) ─────────────────────────────────────────┐
+│                                                                 │
+│  ~/.claude/            ──(read-only mount)──┐                   │
+│  ~/.config/aisupervisor/ ──(read-write)─────┤                   │
+│  ~/.local/share/aisupervisor/ ──(read-write)┤                   │
+│  ~/Projects/           ──(read-write)───────┤                   │
+│                                              ▼                  │
+│  ┌─ Docker Container (debian:bookworm-slim) ──────────────────┐ │
+│  │                                                            │ │
+│  │  aisupervisor CLI          (Go binary)                     │ │
+│  │  ├── tmux server                                           │ │
+│  │  │   └── worker sessions   (Claude Code CLI)               │ │
+│  │  ├── Node.js 20 LTS                                        │ │
+│  │  ├── Claude Code CLI       (@anthropic-ai/claude-code)     │ │
+│  │  └── git 2.39                                              │ │
+│  │                                                            │ │
+│  │  /workspace        ← ~/Projects                            │ │
+│  │  /root/.claude     ← ~/.claude (ro)                        │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Prerequisites
+
+| Requirement | Version | Check |
+|-------------|---------|-------|
+| Docker Desktop | >= 4.0 | `docker --version` |
+| Docker Compose | v2 (built into Docker Desktop) | `docker compose version` |
+| OpenAI API Key | — | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| Claude Code auth | — | `~/.claude/` directory exists |
+
+### Quick Start
+
+```bash
+# 1. Set API key
+export OPENAI_API_KEY="sk-proj-your-key"
+
+# 2. Build image
+cd aisupervisor/
+docker compose build
+
+# 3. Run interactively
+docker compose run --rm aisupervisor
+
+# 4. Or run in background
+docker compose up -d
+docker exec -it aisupervisor-dev bash
+```
+
+### Volume Mounts
+
+| Host Path | Container Path | Permission | Purpose |
+|-----------|---------------|------------|---------|
+| `~/.claude/` | `/root/.claude/` | **Read-only** | Claude Code OAuth tokens |
+| `~/.config/aisupervisor/` | `/root/.config/aisupervisor/` | Read-write | config.yaml |
+| `~/.local/share/aisupervisor/` | `/root/.local/share/aisupervisor/` | Read-write | Audit logs, training data |
+| `~/Projects/` | `/workspace/` | Read-write | Project source code |
+
+### Project Path Mapping
+
+Projects don't need to be moved into the container. Host `~/Projects/` is directly mapped to `/workspace/`:
+
+```
+Host                          Container
+~/Projects/my-app/    ←→     /workspace/my-app/
+```
+
+```bash
+# Auto-resolve: just --name, automatically finds /workspace/my-app
+aisupervisor company create-project --name "my-app"
+
+# Manual: override with --repo
+aisupervisor company create-project --name "My App" --repo "/workspace/my-app"
+```
+
+### Passing Files, Images & URLs to Workers
+
+| Resource Type | Method | Worker Access |
+|--------------|--------|---------------|
+| Source code | Already in `/workspace` mount | `Read`, `Grep`, `Glob` tools |
+| Documents (PDF/TXT/YAML) | Place in project directory | `Read` tool |
+| Images (PNG/JPG) | Place in project directory | `Read` tool (multimodal) |
+| Public URLs | Write in task description | `WebFetch` tool |
+| Private URLs | Download to project directory | `Read` tool |
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `aisupervisor company` | Interactive company management |
+| `aisupervisor monitor --tui` | Launch TUI monitoring dashboard |
+| `aisupervisor monitor --backend <name>` | Start monitoring with specific backend |
+| `aisupervisor monitor --dry-run` | Detect-only mode (no actions) |
+| `aisupervisor config show` | Show current configuration |
+| `aisupervisor audit list` | View audit logs |
+| `aisupervisor training export` | Export training data |
+
+### Troubleshooting
+
+- **Build fails with `connection refused`** — Docker Desktop HTTP Proxy interference. Dockerfile already handles this.
+- **`OPENAI_API_KEY: NOT SET`** — Set `export OPENAI_API_KEY="..."` before running.
+- **Claude Code auth fails** — Run `claude` on host first to authenticate, ensure `~/.claude/` has credentials.
+- **Can't see project files** — Verify `~/Projects/` exists and contains projects.
+
+> For the complete detailed guide in Traditional Chinese, see [繁體中文](#繁體中文) below.
+
+---
+
+## 繁體中文
 
 在 Docker 容器中執行 aisupervisor，讓 worker（Claude Code CLI）在隔離的沙盒環境內擁有完整讀寫與執行權限，同時與本機系統隔離。
 

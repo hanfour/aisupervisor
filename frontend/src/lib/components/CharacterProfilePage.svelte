@@ -75,6 +75,7 @@
     narrativeError = ''
     try {
       await generateNarrative(workerId)
+      narrativeError = ''
       profile = await loadCharacterProfile(workerId)
     } catch (e) {
       console.error(e)
@@ -325,7 +326,7 @@
           {narrativeLoading ? $t('workerDetail.generating') : $t('workerDetail.generateNarrative')}
         </button>
         {#if narrativeError}
-        <p style="font-size: 7px; color: #f44; margin-top: 4px;">{narrativeError}</p>
+        <p style="font-size: 0.7rem; color: #f44; margin-top: 4px;">{narrativeError}</p>
         {/if}
         {/if}
       </div>

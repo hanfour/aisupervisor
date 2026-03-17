@@ -32,6 +32,7 @@ __pycache__/
 
 # One-off tools
 cmd/fixyaml/
+cmd/test-claudecli/
 
 # Design drafts
 docs/plans/

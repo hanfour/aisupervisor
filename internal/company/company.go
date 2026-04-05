@@ -71,6 +71,8 @@ type Manager struct {
 	reviewTimeoutMinutes int                     // minutes before auto-approving stuck reviews
 	autoAssignCfg       config.AutoAssignConfig
 	completedTaskCount  int                     // counter for micro-retro trigger
+	growthEngine        interface{}              // *growth.Engine (lazy import)
+	featureManager      interface{}              // *feature.Manager (lazy import)
 }
 
 type workersFile struct {

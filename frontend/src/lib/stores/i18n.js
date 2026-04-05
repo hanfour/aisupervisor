@@ -575,6 +575,27 @@ const translations = {
   'setup.recommendedTeam': { en: 'Recommended Team', zh: '推薦團隊' },
   'setup.chatError': { en: 'Assistant temporarily unavailable', zh: '助理暫時無法回應' },
   'setup.apiKeyHint': { en: 'Enter an API key to enable the AI assistant. You can use Claude CLI login or provide a key below.', zh: '請輸入 API 金鑰以啟用 AI 助理。你也可以使用 Claude CLI 登入，或在下方提供金鑰。' },
+
+  // --- Growth System ---
+  'growth.title': { en: 'Growth', zh: '成長' },
+  'growth.level': { en: 'Level', zh: '等級' },
+  'growth.avgLevel': { en: 'Avg Level', zh: '平均等級' },
+  'growth.dominant': { en: 'Dominant', zh: '專長' },
+  'growth.expToNext': { en: 'EXP to next', zh: '下級經驗' },
+  'growth.skillTree': { en: 'Skill Tree', zh: '技能樹' },
+  'growth.achievements': { en: 'Achievements', zh: '成就' },
+  'growth.history': { en: 'History', zh: '歷史' },
+  'growth.feedback': { en: 'Feedback', zh: '回饋' },
+  'growth.feedbackPlaceholder': { en: 'Enter feedback for this worker...', zh: '輸入對此員工的回饋...' },
+  'growth.submitFeedback': { en: 'Submit', zh: '送出' },
+  'growth.noEvents': { en: 'No growth events yet', zh: '尚無成長事件' },
+  'growth.featureFlags': { en: 'Feature Flags', zh: '功能開關' },
+  'growth.branch.frontend': { en: 'Frontend', zh: '前端' },
+  'growth.branch.backend': { en: 'Backend', zh: '後端' },
+  'growth.branch.security': { en: 'Security', zh: '安全' },
+  'growth.branch.devops': { en: 'DevOps', zh: 'DevOps' },
+  'growth.branch.architecture': { en: 'Architecture', zh: '架構' },
+  'growth.branch.research': { en: 'Research', zh: '研究' },
 }
 
 /** @type {import('svelte/store').Readable<(key: string) => string>} */

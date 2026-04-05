@@ -3,8 +3,10 @@
   import { addError } from '../stores/errors.js'
   import { getWorker, getManager, getSubordinates, skillProfiles, loadSkillProfiles, loadWorkers, loadHierarchy } from '../stores/workers.js'
   import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
+  import { loadSkillTree, skillTree } from '../stores/growth.js'
   import WorkerLogPanel from './WorkerLogPanel.svelte'
   import CharacterPortrait from './CharacterPortrait.svelte'
+  import SkillRadarChart from './SkillRadarChart.svelte'
   import { t } from '../stores/i18n.js'
   import { calcAge, genderIcon } from '../utils/worker.js'
 
@@ -54,6 +56,7 @@
       await loadSkillProfiles()
       profile = await loadCharacterProfile(id)
       workerRelationships = await loadWorkerRelationships(id)
+      await loadSkillTree(id).catch(() => {})
     }
     loading = false
   }
@@ -314,6 +317,27 @@
           </div>
         {:else}
           <span class="empty-text">{$t('workerDetail.noSubs')}</span>
+        {/if}
+
+        <!-- Growth Summary -->
+        {#if $skillTree && $skillTree.branches}
+        <section class="nes-container is-dark" style="margin-top: 12px;">
+          <h3 class="section-title">{$t('growth.skillTree')}</h3>
+          <div style="display: flex; justify-content: center;">
+            <SkillRadarChart branches={$skillTree.branches} width={240} height={240} />
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 8px;">
+            <span>{$t('growth.dominant')}: {$t('growth.branch.' + ($skillTree.dominantBranch || 'backend'))}</span>
+            <span>{$t('growth.avgLevel')}: {($skillTree.averageLevel || 1).toFixed(1)}</span>
+          </div>
+          {#if $skillTree.branches[$skillTree.dominantBranch]}
+            {@const dom = $skillTree.branches[$skillTree.dominantBranch]}
+            <div style="margin-top: 6px; font-size: 9px;">
+              <span>{$t('growth.level')} {dom.level} - {$t('growth.expToNext')}: {dom.expToNext}</span>
+              <progress class="nes-progress is-primary" value={dom.currentExp} max={dom.currentExp + dom.expToNext} style="height: 10px; margin-top: 4px;"></progress>
+            </div>
+          {/if}
+        </section>
         {/if}
 
         <!-- View Logs -->

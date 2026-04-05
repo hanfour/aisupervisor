@@ -10,6 +10,8 @@ import (
 
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
+	"github.com/hanfourmini/aisupervisor/internal/growth"
+	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/session"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
@@ -33,9 +35,10 @@ type Spawner struct {
 	tierConfigs   map[WorkerTier]TierSpawnConfig
 	skillProfiles    map[string]config.SkillProfile
 	skillOverrides   map[string]config.SkillProfileOverride // keyed by workerID
-	projectStore     projectStoreReader
-	language         string // "en" or "zh-TW"
-	personalityStore *personality.Store
+	projectStore       projectStoreReader
+	language           string // "en" or "zh-TW"
+	personalityStore   *personality.Store
+	knowledgeInjector  *knowledge.Injector
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -99,6 +102,11 @@ func (s *Spawner) LoadSkillProfiles(profiles []config.SkillProfile) {
 	}
 }
 
+// SetKnowledgeInjector sets the knowledge injector for prompt enrichment.
+func (s *Spawner) SetKnowledgeInjector(inj *knowledge.Injector) {
+	s.knowledgeInjector = inj
+}
+
 // LoadSkillOverrides populates per-worker skill profile overrides from config.
 func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOverride) {
 	for k, v := range overrides {
@@ -108,7 +116,11 @@ func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOve
 
 // buildSkillArgs converts a worker's skill profile into CLI flags.
 // Per-worker overrides (from retro results) are applied on top of the base profile.
+// If the worker has a skill tree, growth-based config takes precedence.
 func (s *Spawner) buildSkillArgs(w *Worker) string {
+	if w.SkillTree != nil {
+		return s.buildGrowthSkillArgs(w)
+	}
 	sp, ok := s.skillProfiles[w.SkillProfile]
 	if !ok {
 		if w.SkillProfile != "" {
@@ -182,6 +194,51 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 	if sp.ExtraCLIArgs != "" {
 		parts = append(parts, sp.ExtraCLIArgs)
 	}
+	return strings.Join(parts, " ")
+}
+
+// buildGrowthSkillArgs derives CLI flags from the worker's skill tree level.
+func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
+	dominant := w.SkillTree.DominantBranch()
+	cfg := growth.EffectiveConfig(w.SkillTree, dominant)
+
+	var parts []string
+
+	// Model
+	if cfg.Model != "" {
+		parts = append(parts, "--model", cfg.Model)
+	}
+
+	// Permission mode
+	switch cfg.PermissionMode {
+	case "bypassPermissions":
+		parts = append(parts, "--dangerously-skip-permissions")
+	case "acceptEdits":
+		parts = append(parts, "--permission-mode", "acceptEdits")
+	case "plan":
+		parts = append(parts, "--permission-mode", "plan")
+	}
+
+	// Allowed tools from level config
+	if len(cfg.AllowedTools) > 0 {
+		parts = append(parts, "--allowedTools")
+		for _, tool := range cfg.AllowedTools {
+			parts = append(parts, shellEscape(tool))
+		}
+	}
+
+	// Extra prompt from level
+	if cfg.ExtraPrompt != "" {
+		parts = append(parts, "--append-system-prompt", shellEscape(cfg.ExtraPrompt))
+	}
+
+	// Also apply any existing skill profile system prompt on top
+	if w.SkillProfile != "" {
+		if sp, ok := s.skillProfiles[w.SkillProfile]; ok && sp.SystemPrompt != "" {
+			parts = append(parts, "--append-system-prompt", shellEscape(sp.SystemPrompt))
+		}
+	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -535,6 +592,18 @@ func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout 
 
 // buildPromptForTier formats the task prompt based on the worker tier and language.
 func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier WorkerTier, deps []depContext) string {
+	prompt := s.buildPromptForTierInner(t, p, tier, deps)
+	// Append knowledge context if injector is available
+	if s.knowledgeInjector != nil && t.AssigneeID != "" {
+		knowledgeCtx, err := s.knowledgeInjector.BuildContext(t.AssigneeID, t.ProjectID)
+		if err == nil && knowledgeCtx != "" {
+			prompt += "\n\n" + knowledgeCtx
+		}
+	}
+	return prompt
+}
+
+func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, tier WorkerTier, deps []depContext) string {
 	if t.Type == project.TaskTypeResearch {
 		return s.buildResearchPrompt(t, deps)
 	}

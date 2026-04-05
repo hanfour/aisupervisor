@@ -1584,4 +1584,19 @@ export const SKILL_PROFILE_ICONS = {
   reviewer:   '\u2705',
 }
 
+// ── Level-based visual effects ───────────────────────────────────────────────
+// Returns visual effect data for a worker based on their growth level (1-5).
+export function getLevelEffects(level) {
+  if (!level || level < 1) level = 1
+  if (level > 5) level = 5
+  const effects = {
+    1: { stars: 0, glowColor: null, glowRadius: 0, badge: null },
+    2: { stars: 1, glowColor: 'rgba(91,186,213,0.12)', glowRadius: 4, badge: null },
+    3: { stars: 2, glowColor: 'rgba(107,184,123,0.15)', glowRadius: 6, badge: null },
+    4: { stars: 3, glowColor: 'rgba(232,168,85,0.18)', glowRadius: 8, badge: '\u2605' },
+    5: { stars: 4, glowColor: 'rgba(176,136,208,0.22)', glowRadius: 10, badge: '\u2605' },
+  }
+  return effects[level]
+}
+
 export { FURNITURE_SPRITES, ENV_SPRITES, CHARACTER_NAMES, CHARACTER_CONFIGS, WORKER_CONFIGS }

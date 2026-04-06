@@ -116,8 +116,10 @@ func createProvider(name, apiKey, model, baseURL string) (agent.Provider, error)
 		return providers.NewOpenAI(apiKey, model, baseURL), nil
 	case "anthropic":
 		return providers.NewAnthropic(apiKey, model, baseURL), nil
+	case "ollama":
+		return providers.NewOllama(model, baseURL), nil
 	default:
-		return nil, fmt.Errorf("unknown provider: %s (supported: openai, anthropic)", name)
+		return nil, fmt.Errorf("unknown provider: %s (supported: openai, anthropic, ollama)", name)
 	}
 }
 

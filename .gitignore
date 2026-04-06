@@ -37,3 +37,4 @@ cmd/test-claudecli/
 # Design drafts
 docs/plans/
 .claude/worktrees/
+ais-agent

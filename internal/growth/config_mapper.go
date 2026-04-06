@@ -1,6 +1,8 @@
 package growth
 
 type LevelConfig struct {
+	CLITool         string   `json:"cliTool"`
+	Provider        string   `json:"provider"`
 	Model           string   `json:"model"`
 	AllowedTools    []string `json:"allowedTools"`
 	DisallowedTools []string `json:"disallowedTools"`
@@ -13,28 +15,36 @@ type LevelConfig struct {
 
 var levelDefaults = map[int]LevelConfig{
 	1: {
-		Model:          "haiku",
+		CLITool:        "ais-agent",
+		Provider:       "ollama",
+		Model:          "llama3",
 		PermissionMode: "plan",
 		AllowedTools:   []string{"Read", "Glob", "Grep"},
 		MaxTokenBudget: 50000,
 		ExtraPrompt:    "You are a junior developer. Ask for help when unsure. Focus on learning.",
 	},
 	2: {
-		Model:          "sonnet",
+		CLITool:        "ais-agent",
+		Provider:       "openai",
+		Model:          "gpt-4o-mini",
 		PermissionMode: "acceptEdits",
 		AllowedTools:   []string{"Read", "Glob", "Grep", "Edit", "Write"},
 		MaxTokenBudget: 100000,
 		ExtraPrompt:    "You are developing your skills. Write tests for your changes.",
 	},
 	3: {
-		Model:          "sonnet",
+		CLITool:        "ais-agent",
+		Provider:       "openai",
+		Model:          "gpt-4o",
 		PermissionMode: "acceptEdits",
 		AllowedTools:   nil,
 		MaxTokenBudget: 200000,
 		ExtraPrompt:    "You are an experienced developer. Follow best practices consistently.",
 	},
 	4: {
-		Model:          "opus",
+		CLITool:        "claude",
+		Provider:       "",
+		Model:          "claude-sonnet-4-20250514",
 		PermissionMode: "bypassPermissions",
 		AllowedTools:   nil,
 		MaxTokenBudget: 500000,
@@ -42,7 +52,9 @@ var levelDefaults = map[int]LevelConfig{
 		ExtraPrompt:    "You are a senior developer. Consider architecture impacts and mentor others.",
 	},
 	5: {
-		Model:          "opus",
+		CLITool:        "claude",
+		Provider:       "",
+		Model:          "claude-opus-4-20250514",
 		PermissionMode: "bypassPermissions",
 		AllowedTools:   nil,
 		MaxTokenBudget: 1000000,

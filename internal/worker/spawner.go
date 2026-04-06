@@ -202,14 +202,18 @@ func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
 	dominant := w.SkillTree.DominantBranch()
 	cfg := growth.EffectiveConfig(w.SkillTree, dominant)
 
+	// Use ais-agent flags when CLITool is ais-agent
+	if cfg.CLITool == "ais-agent" {
+		return s.buildAISAgentArgs(w, cfg)
+	}
+
+	// Default: Claude Code CLI flags
 	var parts []string
 
-	// Model
 	if cfg.Model != "" {
 		parts = append(parts, "--model", cfg.Model)
 	}
 
-	// Permission mode
 	switch cfg.PermissionMode {
 	case "bypassPermissions":
 		parts = append(parts, "--dangerously-skip-permissions")
@@ -219,7 +223,6 @@ func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
 		parts = append(parts, "--permission-mode", "plan")
 	}
 
-	// Allowed tools from level config
 	if len(cfg.AllowedTools) > 0 {
 		parts = append(parts, "--allowedTools")
 		for _, tool := range cfg.AllowedTools {
@@ -227,12 +230,41 @@ func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
 		}
 	}
 
-	// Extra prompt from level
 	if cfg.ExtraPrompt != "" {
 		parts = append(parts, "--append-system-prompt", shellEscape(cfg.ExtraPrompt))
 	}
 
-	// Also apply any existing skill profile system prompt on top
+	if w.SkillProfile != "" {
+		if sp, ok := s.skillProfiles[w.SkillProfile]; ok && sp.SystemPrompt != "" {
+			parts = append(parts, "--append-system-prompt", shellEscape(sp.SystemPrompt))
+		}
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// buildAISAgentArgs builds CLI flags for the ais-agent runtime.
+func (s *Spawner) buildAISAgentArgs(w *Worker, cfg growth.LevelConfig) string {
+	var parts []string
+
+	if cfg.Provider != "" {
+		parts = append(parts, "--provider", cfg.Provider)
+	}
+	if cfg.Model != "" {
+		parts = append(parts, "--model", cfg.Model)
+	}
+	if cfg.PermissionMode != "" {
+		parts = append(parts, "--permission-mode", cfg.PermissionMode)
+	}
+	if len(cfg.AllowedTools) > 0 {
+		parts = append(parts, "--allowed-tools", strings.Join(cfg.AllowedTools, ","))
+	}
+	if cfg.MaxTokenBudget > 0 {
+		parts = append(parts, "--max-tokens", fmt.Sprintf("%d", cfg.MaxTokenBudget))
+	}
+	if cfg.ExtraPrompt != "" {
+		parts = append(parts, "--append-system-prompt", shellEscape(cfg.ExtraPrompt))
+	}
 	if w.SkillProfile != "" {
 		if sp, ok := s.skillProfiles[w.SkillProfile]; ok && sp.SystemPrompt != "" {
 			parts = append(parts, "--append-system-prompt", shellEscape(sp.SystemPrompt))
@@ -446,6 +478,15 @@ func (s *Spawner) resolveCLI(w *Worker) (cliTool, cliArgs string, readyRe *regex
 	cliTool = "claude"
 	if w.CLITool != "" {
 		cliTool = w.CLITool
+	}
+
+	// Growth system can override CLITool based on skill level
+	if w.SkillTree != nil {
+		dominant := w.SkillTree.DominantBranch()
+		cfg := growth.EffectiveConfig(w.SkillTree, dominant)
+		if cfg.CLITool != "" {
+			cliTool = cfg.CLITool
+		}
 	}
 
 	if tc, ok := s.tierConfigs[w.EffectiveTier()]; ok {

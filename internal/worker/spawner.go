@@ -174,9 +174,13 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
-	if len(sp.DisallowedTools) > 0 {
+	// Merge profile-specific and global autonomous disallowed tools.
+	// Global tools (Skill, EnterPlanMode, ExitPlanMode) prevent infinite loops
+	// caused by interactive skills overriding worker instructions.
+	disallowed := mergeDisallowedTools(sp.DisallowedTools, config.AutonomousDisallowedTools())
+	if len(disallowed) > 0 {
 		parts = append(parts, "--disallowedTools")
-		for _, tool := range sp.DisallowedTools {
+		for _, tool := range disallowed {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
@@ -226,6 +230,15 @@ func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
 	if len(cfg.AllowedTools) > 0 {
 		parts = append(parts, "--allowedTools")
 		for _, tool := range cfg.AllowedTools {
+			parts = append(parts, shellEscape(tool))
+		}
+	}
+
+	// Always block interactive skill tools for autonomous workers
+	globalDisallowed := config.AutonomousDisallowedTools()
+	if len(globalDisallowed) > 0 {
+		parts = append(parts, "--disallowedTools")
+		for _, tool := range globalDisallowed {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
@@ -1079,4 +1092,24 @@ func (s *Spawner) resolveDeps(t *project.Task) []depContext {
 
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// mergeDisallowedTools combines profile-specific and global disallowed tools,
+// deduplicating entries.
+func mergeDisallowedTools(profile, global []string) []string {
+	seen := make(map[string]bool, len(profile)+len(global))
+	var result []string
+	for _, t := range profile {
+		if !seen[t] {
+			seen[t] = true
+			result = append(result, t)
+		}
+	}
+	for _, t := range global {
+		if !seen[t] {
+			seen[t] = true
+			result = append(result, t)
+		}
+	}
+	return result
 }

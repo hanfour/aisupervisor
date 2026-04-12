@@ -88,6 +88,7 @@ type Task struct {
 	// HelpRequestHandled stores the help content already processed, to prevent duplicate handling.
 	HelpRequestHandled string `yaml:"help_request_handled,omitempty" json:"-"`
 
+	ErrorLog         []string       `yaml:"error_log,omitempty" json:"errorLog,omitempty"`
 	RetryCount       int            `yaml:"retry_count,omitempty" json:"retryCount,omitempty"`
 	CreatedAt        time.Time      `yaml:"created_at" json:"createdAt"`
 	StartedAt        *time.Time     `yaml:"started_at,omitempty" json:"startedAt,omitempty"`

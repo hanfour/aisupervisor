@@ -55,6 +55,53 @@ func (b *OAuthBackend) Chat(ctx context.Context, messages []ai.ChatMessage) (str
 	return resp.Content[0].Text, nil
 }
 
+// ChatWithModel implements ai.ModelOverrideChat for APIBackend.
+func (b *APIBackend) ChatWithModel(ctx context.Context, messages []ai.ChatMessage, model string) (string, error) {
+	system, sdkMessages := convertChatMessages(messages)
+
+	resp, err := b.client.Messages.New(ctx, sdk.MessageNewParams{
+		Model:     sdk.Model(model),
+		MaxTokens: 4096,
+		System:    system,
+		Messages:  sdkMessages,
+	})
+	if err != nil {
+		return "", fmt.Errorf("anthropic chat: %w", err)
+	}
+
+	if len(resp.Content) == 0 {
+		return "", fmt.Errorf("empty response from Anthropic")
+	}
+
+	return resp.Content[0].Text, nil
+}
+
+// ChatWithModel implements ai.ModelOverrideChat for OAuthBackend.
+func (b *OAuthBackend) ChatWithModel(ctx context.Context, messages []ai.ChatMessage, model string) (string, error) {
+	client, err := b.getClient(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	system, sdkMessages := convertChatMessages(messages)
+
+	resp, err := client.Messages.New(ctx, sdk.MessageNewParams{
+		Model:     sdk.Model(model),
+		MaxTokens: 4096,
+		System:    system,
+		Messages:  sdkMessages,
+	})
+	if err != nil {
+		return "", fmt.Errorf("anthropic chat: %w", err)
+	}
+
+	if len(resp.Content) == 0 {
+		return "", fmt.Errorf("empty response from Anthropic")
+	}
+
+	return resp.Content[0].Text, nil
+}
+
 // convertChatMessages splits ChatMessages into Anthropic system blocks and message params.
 func convertChatMessages(messages []ai.ChatMessage) ([]sdk.TextBlockParam, []sdk.MessageParam) {
 	var system []sdk.TextBlockParam

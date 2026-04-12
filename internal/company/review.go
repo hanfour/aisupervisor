@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/config"
+	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
@@ -832,4 +833,18 @@ func parseReviewVerdict(output string) reviewVerdict {
 		return verdictApproved
 	}
 	return verdictRejected
+}
+
+// cleanupAfterApproval removes the git worktree after a task is approved.
+// If no worktree was used (WorktreePath is empty), this is a no-op.
+func (rp *ReviewPipeline) cleanupAfterApproval(t *project.Task, repoPath string, g gitops.GitOps) {
+	if t.WorktreePath == "" {
+		return
+	}
+	if g != nil {
+		if err := g.CleanupWorktree(repoPath, t.WorktreePath); err != nil {
+			log.Printf("WARN: failed to cleanup worktree %s: %v", t.WorktreePath, err)
+		}
+	}
+	t.WorktreePath = ""
 }

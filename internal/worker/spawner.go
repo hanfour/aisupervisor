@@ -234,11 +234,13 @@ func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
 		}
 	}
 
-	// Always block interactive skill tools for autonomous workers
-	globalDisallowed := config.AutonomousDisallowedTools()
-	if len(globalDisallowed) > 0 {
+	// Always block interactive skill tools for autonomous workers.
+	// Use mergeDisallowedTools for consistency with buildSkillArgs and to
+	// support future growth configs that may carry their own disallowed tools.
+	disallowed := mergeDisallowedTools(nil, config.AutonomousDisallowedTools())
+	if len(disallowed) > 0 {
 		parts = append(parts, "--disallowedTools")
-		for _, tool := range globalDisallowed {
+		for _, tool := range disallowed {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
@@ -257,6 +259,10 @@ func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
 }
 
 // buildAISAgentArgs builds CLI flags for the ais-agent runtime.
+// Note: ais-agent does not load .claude/ skills or SessionStart hooks,
+// so it is not susceptible to the interactive skill loop. No disallowed
+// tools are needed here. If ais-agent gains skill support in the future,
+// add autonomousDisallowedTools enforcement here as well.
 func (s *Spawner) buildAISAgentArgs(w *Worker, cfg growth.LevelConfig) string {
 	var parts []string
 

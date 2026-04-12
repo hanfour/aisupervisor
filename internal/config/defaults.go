@@ -10,7 +10,9 @@ package config
 //
 // Permission modes: "default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"
 // Model aliases: "sonnet", "opus", "haiku", "sonnet[1m]", "opusplan"
+
 // autonomousDisallowedTools lists tools that autonomous workers must never use.
+// Do not modify this slice directly; use AutonomousDisallowedTools() to get a copy.
 // These prevent infinite loops caused by interactive skills (brainstorming,
 // writing-plans, etc.) overriding worker instructions via SessionStart hooks.
 var autonomousDisallowedTools = []string{

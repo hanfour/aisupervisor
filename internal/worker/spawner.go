@@ -107,6 +107,11 @@ func (s *Spawner) SetKnowledgeInjector(inj *knowledge.Injector) {
 	s.knowledgeInjector = inj
 }
 
+// KnowledgeInjector returns the knowledge injector (may be nil).
+func (s *Spawner) KnowledgeInjector() *knowledge.Injector {
+	return s.knowledgeInjector
+}
+
 // LoadSkillOverrides populates per-worker skill profile overrides from config.
 func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOverride) {
 	for k, v := range overrides {

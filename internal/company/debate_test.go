@@ -115,6 +115,54 @@ func TestRunSinglePassReview(t *testing.T) {
 	}
 }
 
+func TestDebateFullPipeline(t *testing.T) {
+	mock := &mockChatProvider{
+		responses: []string{
+			// Agent A (impact): finds SQL injection
+			`{"findings": [{"file": "main.go", "line": 10, "severity": "HIGH", "body": "SQL injection in user input"}]}`,
+			// Agent B (quality): finds same + naming issue
+			`{"findings": [{"file": "main.go", "line": 10, "severity": "HIGH", "body": "SQL injection dup"}, {"file": "util.go", "line": 5, "severity": "MEDIUM", "body": "poor naming"}]}`,
+			// Voter 1
+			`{"#1": "KEEP", "#2": "DROP"}`,
+			// Voter 2
+			`{"#1": "KEEP", "#2": "DROP"}`,
+			// Synthesizer
+			`{"status": "CHANGES_REQUESTED", "summary": "SQL injection found", "comments": [{"file": "main.go", "line": 10, "severity": "HIGH", "body": "SQL injection in user input"}]}`,
+		},
+	}
+	// fastConverge=1 forces voting round (merged findings > 1)
+	result, err := runDebate(context.Background(), mock, "big diff...", "", "opus", "haiku", "sonnet", 1, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "CHANGES_REQUESTED" {
+		t.Errorf("status = %q, want CHANGES_REQUESTED", result.Status)
+	}
+	if len(result.Comments) == 0 {
+		t.Error("expected comments in result")
+	}
+}
+
+func TestDebateAllApproved(t *testing.T) {
+	mock := &mockChatProvider{
+		responses: []string{
+			// Agent A: one medium finding
+			`{"findings": [{"file": "x.go", "line": 1, "severity": "MEDIUM", "body": "minor style"}]}`,
+			// Agent B: no findings
+			`{"findings": []}`,
+			// Synthesizer (fast converge with 1 finding <= 5)
+			`{"status": "APPROVED", "summary": "only minor style issue", "comments": [{"file": "x.go", "line": 1, "severity": "MEDIUM", "body": "minor style"}]}`,
+		},
+	}
+	result, err := runDebate(context.Background(), mock, "small diff", "", "opus", "haiku", "sonnet", 5, "zh-TW")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "APPROVED" {
+		t.Errorf("MEDIUM-only should be APPROVED, got %s", result.Status)
+	}
+}
+
 func TestParseDebateResult(t *testing.T) {
 	tests := []struct {
 		name   string

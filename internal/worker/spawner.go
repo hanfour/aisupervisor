@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"path/filepath"
+
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/growth"
@@ -39,6 +41,7 @@ type Spawner struct {
 	language           string // "en" or "zh-TW"
 	personalityStore   *personality.Store
 	knowledgeInjector  *knowledge.Injector
+	useWorktrees       bool // Enable git worktree isolation per task
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -88,6 +91,15 @@ func (s *Spawner) SetLanguage(lang string) {
 // SetProjectStore sets the project store for dependency context lookups.
 func (s *Spawner) SetProjectStore(ps projectStoreReader) {
 	s.projectStore = ps
+}
+
+// SetUseWorktrees enables git worktree isolation per task.
+func (s *Spawner) SetUseWorktrees(enabled bool) {
+	s.useWorktrees = enabled
+}
+
+func (s *Spawner) worktreePath(repoPath, taskID string) string {
+	return filepath.Join(repoPath, ".worktrees", taskID)
 }
 
 // SetPersonalityStore sets the personality store for skill score lookups.
@@ -353,7 +365,20 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		}
 	}
 
-	// 2. Create tmux session (kill stale session if it exists)
+	// 2. Set up working directory (worktree or repo root)
+	var workDir string
+	if s.useWorktrees && !isNonCodeTask && t.BranchName != "" {
+		wtPath := s.worktreePath(p.RepoPath, t.ID)
+		if err := s.gitOps.CreateWorktree(p.RepoPath, wtPath, t.BranchName); err != nil {
+			return fmt.Errorf("create worktree: %w", err)
+		}
+		workDir = wtPath
+		t.WorktreePath = wtPath
+	} else {
+		workDir = p.RepoPath
+	}
+
+	// 3. Create tmux session (kill stale session if it exists)
 	if exists, _ := s.tmuxClient.HasSession(tmuxName); exists {
 		s.tmuxClient.KillSession(tmuxName)
 	}
@@ -361,12 +386,12 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		return fmt.Errorf("creating tmux session: %w", err)
 	}
 
-	// 3. cd to repo path
-	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(p.RepoPath))+" Enter")
+	// 4. cd to working directory
+	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(workDir))+" Enter")
 	s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 
-	// 4. Checkout task branch (skip for non-code tasks)
-	if !isNonCodeTask && t.BranchName != "" {
+	// 5. Checkout task branch (only when NOT using worktrees — worktree is already on correct branch)
+	if !s.useWorktrees && !isNonCodeTask && t.BranchName != "" {
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("git checkout %s", t.BranchName)+" Enter")
 		s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 	}

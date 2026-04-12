@@ -75,3 +75,39 @@ func TestInjector_EmptyKnowledge(t *testing.T) {
 		t.Error("should return empty string for no knowledge")
 	}
 }
+
+func TestTierConstants(t *testing.T) {
+	tests := []struct {
+		tier KnowledgeTier
+		want int
+	}{
+		{TierL0Identity, 0},
+		{TierL1Essential, 1},
+		{TierL2RoomRecall, 2},
+		{TierL3DeepSearch, 3},
+	}
+	for _, tt := range tests {
+		if int(tt.tier) != tt.want {
+			t.Errorf("tier %d != %d", tt.tier, tt.want)
+		}
+	}
+}
+
+func TestTierForType(t *testing.T) {
+	tests := []struct {
+		kt   KnowledgeType
+		want KnowledgeTier
+	}{
+		{KnowledgeDecision, TierL1Essential},
+		{KnowledgeFeedback, TierL1Essential},
+		{KnowledgeArchitecture, TierL2RoomRecall},
+		{KnowledgeGotcha, TierL2RoomRecall},
+		{KnowledgeTaskSummary, TierL2RoomRecall},
+		{KnowledgeLessonLearnt, TierL3DeepSearch},
+	}
+	for _, tt := range tests {
+		if got := TierForType(tt.kt); got != tt.want {
+			t.Errorf("TierForType(%s) = %d, want %d", tt.kt, got, tt.want)
+		}
+	}
+}

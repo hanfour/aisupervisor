@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 )
@@ -110,9 +110,8 @@ func tallyVotes(findings []Finding, votes ...map[string]string) []Finding {
 }
 
 // runDebate executes the full 3-round debate review pipeline.
+// The caller is responsible for setting a timeout on ctx.
 func runDebate(ctx context.Context, cp ai.ChatProvider, diff, pkbContext string, analysisModel, voteModel, synthesisModel string, fastConverge int, lang string) (*DebateResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
 
 	// Round 1: Parallel Analysis
 	var wg sync.WaitGroup
@@ -169,6 +168,8 @@ func runDebate(ctx context.Context, cp ai.ChatProvider, diff, pkbContext string,
 	survived := merged
 	if errV1 == nil && errV2 == nil {
 		survived = tallyVotes(merged, votes1, votes2)
+	} else {
+		log.Printf("debate: vote agent failure (v1=%v, v2=%v), passing all %d findings to synthesis", errV1, errV2, len(merged))
 	}
 
 	if len(survived) == 0 {
@@ -214,7 +215,10 @@ func runAnalysisAgent(ctx context.Context, cp ai.ChatProvider, diff, pkbContext,
 }
 
 func runVoteAgent(ctx context.Context, cp ai.ChatProvider, findings []Finding, model, lang string) (map[string]string, error) {
-	findingsJSON, _ := json.Marshal(findings)
+	findingsJSON, err := json.Marshal(findings)
+	if err != nil {
+		return nil, fmt.Errorf("marshal findings: %w", err)
+	}
 	msgs := []ai.ChatMessage{
 		{Role: "system", Content: voteAgentPrompt(lang)},
 		{Role: "user", Content: string(findingsJSON)},
@@ -233,7 +237,10 @@ func runVoteAgent(ctx context.Context, cp ai.ChatProvider, findings []Finding, m
 }
 
 func runSynthesis(ctx context.Context, cp ai.ChatProvider, findings []Finding, model, lang string) (*DebateResult, error) {
-	findingsJSON, _ := json.Marshal(findings)
+	findingsJSON, err := json.Marshal(findings)
+	if err != nil {
+		return nil, fmt.Errorf("marshal findings: %w", err)
+	}
 	msgs := []ai.ChatMessage{
 		{Role: "system", Content: synthesisPrompt(lang)},
 		{Role: "user", Content: string(findingsJSON)},

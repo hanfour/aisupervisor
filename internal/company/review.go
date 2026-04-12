@@ -150,9 +150,13 @@ func (rp *ReviewPipeline) DrainQueue(ctx context.Context) {
 }
 
 func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, managerWorker *worker.Worker, t *project.Task, p *project.Project) error {
-	// Use debate pipeline if ChatProvider is available
+	// Use debate pipeline if ChatProvider is available.
+	// Copy reviewCfg under lock to avoid race with SetReviewConfig.
 	if rp.mgr.chatProvider != nil {
-		go rp.runChatReview(req, t, p)
+		rp.mu.Lock()
+		cfg := rp.reviewCfg
+		rp.mu.Unlock()
+		go rp.runChatReview(req, t, p, cfg)
 		return nil
 	}
 	return rp.executeReviewTmux(ctx, req, managerWorker, t, p)
@@ -204,8 +208,8 @@ func (rp *ReviewPipeline) executeReviewTmux(ctx context.Context, req ReviewReque
 }
 
 // getDiffStats returns diff line count, file count, and diff content for a branch pair.
-func getDiffStats(repoPath, baseBranch, taskBranch string) (diffLines int, fileCount int, diff string, err error) {
-	cmd := exec.CommandContext(context.Background(), "git", "diff", baseBranch+"..."+taskBranch)
+func getDiffStats(ctx context.Context, repoPath, baseBranch, taskBranch string) (diffLines int, fileCount int, diff string, err error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", baseBranch+"..."+taskBranch)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
@@ -214,7 +218,7 @@ func getDiffStats(repoPath, baseBranch, taskBranch string) (diffLines int, fileC
 	diff = string(out)
 	diffLines = strings.Count(diff, "\n")
 
-	cmd2 := exec.CommandContext(context.Background(), "git", "diff", "--name-only", baseBranch+"..."+taskBranch)
+	cmd2 := exec.CommandContext(ctx, "git", "diff", "--name-only", baseBranch+"..."+taskBranch)
 	cmd2.Dir = repoPath
 	out2, _ := cmd2.Output()
 	names := strings.TrimSpace(string(out2))
@@ -242,26 +246,54 @@ func parseDebateResult(output string) (*DebateResult, error) {
 	return &result, nil
 }
 
+// reviewConfigWithDefaults applies defaults to a ReviewConfig with zero values.
+func reviewConfigWithDefaults(cfg config.ReviewConfig) config.ReviewConfig {
+	if cfg.DebateThreshold <= 0 {
+		cfg.DebateThreshold = 300
+	}
+	if cfg.LightMaxLines <= 0 {
+		cfg.LightMaxLines = 50
+	}
+	if cfg.LightMaxFiles <= 0 {
+		cfg.LightMaxFiles = 3
+	}
+	if cfg.FastConverge <= 0 {
+		cfg.FastConverge = 5
+	}
+	if cfg.AnalysisModel == "" {
+		cfg.AnalysisModel = "opus"
+	}
+	if cfg.VoteModel == "" {
+		cfg.VoteModel = "haiku"
+	}
+	if cfg.SynthesisModel == "" {
+		cfg.SynthesisModel = "sonnet"
+	}
+	return cfg
+}
+
 // runChatReview runs the debate/single-pass review pipeline via ChatProvider.
-func (rp *ReviewPipeline) runChatReview(req ReviewRequest, t *project.Task, p *project.Project) {
+// cfg is passed by value (copied under lock by caller) to avoid races.
+func (rp *ReviewPipeline) runChatReview(req ReviewRequest, t *project.Task, p *project.Project, cfg config.ReviewConfig) {
+	cfg = reviewConfigWithDefaults(cfg)
+
 	baseBranch := p.BaseBranch
 	if baseBranch == "" {
 		baseBranch = "main"
 	}
 
-	diffLines, fileCount, diff, err := getDiffStats(p.RepoPath, baseBranch, t.BranchName)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	diffLines, fileCount, diff, err := getDiffStats(ctx, p.RepoPath, baseBranch, t.BranchName)
 	if err != nil {
 		log.Printf("debate: getDiffStats failed: %v, falling back to tmux review", err)
 		rp.fallbackTmuxReview(req, t, p)
 		return
 	}
 
-	cfg := rp.reviewCfg
 	strategy := selectStrategy(diffLines, fileCount, cfg.DebateThreshold, cfg.LightMaxLines, cfg.LightMaxFiles)
 	log.Printf("debate: task=%s strategy=%s (lines=%d files=%d)", t.ID, strategy, diffLines, fileCount)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
 
 	// Build PKB context if knowledge injector is available via spawner
 	var pkbContext string
@@ -318,8 +350,13 @@ func (rp *ReviewPipeline) handleDebateResult(result *DebateResult, req ReviewReq
 		output = sb.String()
 	}
 
+	// Emit appropriate event based on verdict
+	eventType := EventReviewApproved
+	if !approved {
+		eventType = EventReviewRejected
+	}
 	rp.mgr.emit(Event{
-		Type:      EventReviewStarted,
+		Type:      eventType,
 		ProjectID: p.ID,
 		TaskID:    t.ID,
 		Message:   rp.mgr.msgf("Debate review for task %q: %s (%d findings)", "任務 %q 的辯論審查：%s（%d 個發現）", t.Title, result.Status, len(result.Comments)),

@@ -655,7 +655,11 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 	prompt := s.buildPromptForTierInner(t, p, tier, deps)
 	// Append knowledge context if injector is available
 	if s.knowledgeInjector != nil && t.AssigneeID != "" {
-		knowledgeCtx, err := s.knowledgeInjector.BuildContext(t.AssigneeID, t.ProjectID)
+		tier := knowledge.TierL2RoomRecall
+		if t.Type == project.TaskTypePRD {
+			tier = knowledge.TierL3DeepSearch
+		}
+		knowledgeCtx, err := s.knowledgeInjector.BuildContext(t.AssigneeID, t.ProjectID, tier)
 		if err == nil && knowledgeCtx != "" {
 			prompt += "\n\n" + knowledgeCtx
 		}

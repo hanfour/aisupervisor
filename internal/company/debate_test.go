@@ -114,3 +114,31 @@ func TestRunSinglePassReview(t *testing.T) {
 		t.Errorf("got %s, want APPROVED", result.Status)
 	}
 }
+
+func TestParseDebateResult(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   string
+		wantOK bool
+	}{
+		{"valid approved", `{"status":"APPROVED","summary":"looks good","comments":[]}`, "APPROVED", true},
+		{"wrapped in markdown", "```json\n{\"status\":\"CHANGES_REQUESTED\",\"summary\":\"issues\",\"comments\":[{\"file\":\"x.go\",\"severity\":\"HIGH\",\"body\":\"bad\"}]}\n```", "CHANGES_REQUESTED", true},
+		{"garbage", "no json here", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseDebateResult(tt.input)
+			if tt.wantOK {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if result.Status != tt.want {
+					t.Errorf("status = %q, want %q", result.Status, tt.want)
+				}
+			} else if err == nil {
+				t.Error("expected error for garbage input")
+			}
+		})
+	}
+}

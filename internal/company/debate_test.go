@@ -1,6 +1,12 @@
 package company
 
-import "testing"
+import (
+	"context"
+	"sync"
+	"testing"
+
+	"github.com/hanfourmini/aisupervisor/internal/ai"
+)
 
 func TestSelectStrategy(t *testing.T) {
 	tests := []struct {
@@ -58,5 +64,53 @@ func TestTallyVotes(t *testing.T) {
 	survived := tallyVotes(findings, votes1, votes2)
 	if len(survived) != 1 || survived[0].ID != "#1" {
 		t.Errorf("tallyVotes: got %v, want only #1", survived)
+	}
+}
+
+type mockChatProvider struct {
+	responses []string
+	callIdx   int
+	mu        sync.Mutex
+}
+
+func (m *mockChatProvider) Chat(ctx context.Context, msgs []ai.ChatMessage) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.callIdx >= len(m.responses) {
+		return `{"findings": []}`, nil
+	}
+	resp := m.responses[m.callIdx]
+	m.callIdx++
+	return resp, nil
+}
+
+func TestRunDebateFastConverge(t *testing.T) {
+	mock := &mockChatProvider{
+		responses: []string{
+			`{"findings": []}`,
+			`{"findings": []}`,
+		},
+	}
+	result, err := runDebate(context.Background(), mock, "diff content", "", "opus", "haiku", "sonnet", 5, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "APPROVED" {
+		t.Errorf("0 findings should be APPROVED, got %s", result.Status)
+	}
+}
+
+func TestRunSinglePassReview(t *testing.T) {
+	mock := &mockChatProvider{
+		responses: []string{
+			`{"status":"APPROVED","summary":"clean code","comments":[]}`,
+		},
+	}
+	result, err := runSinglePassReview(context.Background(), mock, "diff", "", "sonnet", "en", ReviewLight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "APPROVED" {
+		t.Errorf("got %s, want APPROVED", result.Status)
 	}
 }

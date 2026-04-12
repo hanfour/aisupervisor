@@ -1,6 +1,10 @@
 package worker
 
-import "time"
+import (
+	"time"
+
+	"github.com/hanfourmini/aisupervisor/internal/growth"
+)
 
 type WorkerStatus string
 
@@ -69,6 +73,7 @@ type Worker struct {
 	Appearance       *WorkerAppearance `yaml:"appearance,omitempty" json:"appearance,omitempty"`
 	RecoveryAttempts int               `yaml:"-" json:"-"` // transient: recovery attempts for current task
 	LastRecoveryAt   time.Time         `yaml:"-" json:"-"` // transient: last recovery attempt time
+	SkillTree        *growth.SkillTree `yaml:"skill_tree,omitempty" json:"skillTree,omitempty"`
 	CreatedAt        time.Time         `yaml:"created_at" json:"createdAt"`
 }
 

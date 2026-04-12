@@ -10,6 +10,8 @@ import (
 
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
+	"github.com/hanfourmini/aisupervisor/internal/growth"
+	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/session"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
@@ -33,9 +35,10 @@ type Spawner struct {
 	tierConfigs   map[WorkerTier]TierSpawnConfig
 	skillProfiles    map[string]config.SkillProfile
 	skillOverrides   map[string]config.SkillProfileOverride // keyed by workerID
-	projectStore     projectStoreReader
-	language         string // "en" or "zh-TW"
-	personalityStore *personality.Store
+	projectStore       projectStoreReader
+	language           string // "en" or "zh-TW"
+	personalityStore   *personality.Store
+	knowledgeInjector  *knowledge.Injector
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -99,6 +102,11 @@ func (s *Spawner) LoadSkillProfiles(profiles []config.SkillProfile) {
 	}
 }
 
+// SetKnowledgeInjector sets the knowledge injector for prompt enrichment.
+func (s *Spawner) SetKnowledgeInjector(inj *knowledge.Injector) {
+	s.knowledgeInjector = inj
+}
+
 // LoadSkillOverrides populates per-worker skill profile overrides from config.
 func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOverride) {
 	for k, v := range overrides {
@@ -108,7 +116,11 @@ func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOve
 
 // buildSkillArgs converts a worker's skill profile into CLI flags.
 // Per-worker overrides (from retro results) are applied on top of the base profile.
+// If the worker has a skill tree, growth-based config takes precedence.
 func (s *Spawner) buildSkillArgs(w *Worker) string {
+	if w.SkillTree != nil {
+		return s.buildGrowthSkillArgs(w)
+	}
 	sp, ok := s.skillProfiles[w.SkillProfile]
 	if !ok {
 		if w.SkillProfile != "" {
@@ -162,9 +174,13 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
-	if len(sp.DisallowedTools) > 0 {
+	// Merge profile-specific and global autonomous disallowed tools.
+	// Global tools (Skill, EnterPlanMode, ExitPlanMode) prevent infinite loops
+	// caused by interactive skills overriding worker instructions.
+	disallowed := mergeDisallowedTools(sp.DisallowedTools, config.AutonomousDisallowedTools())
+	if len(disallowed) > 0 {
 		parts = append(parts, "--disallowedTools")
-		for _, tool := range sp.DisallowedTools {
+		for _, tool := range disallowed {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
@@ -182,6 +198,98 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 	if sp.ExtraCLIArgs != "" {
 		parts = append(parts, sp.ExtraCLIArgs)
 	}
+	return strings.Join(parts, " ")
+}
+
+// buildGrowthSkillArgs derives CLI flags from the worker's skill tree level.
+func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
+	dominant := w.SkillTree.DominantBranch()
+	cfg := growth.EffectiveConfig(w.SkillTree, dominant)
+
+	// Use ais-agent flags when CLITool is ais-agent
+	if cfg.CLITool == "ais-agent" {
+		return s.buildAISAgentArgs(w, cfg)
+	}
+
+	// Default: Claude Code CLI flags
+	var parts []string
+
+	if cfg.Model != "" {
+		parts = append(parts, "--model", cfg.Model)
+	}
+
+	switch cfg.PermissionMode {
+	case "bypassPermissions":
+		parts = append(parts, "--dangerously-skip-permissions")
+	case "acceptEdits":
+		parts = append(parts, "--permission-mode", "acceptEdits")
+	case "plan":
+		parts = append(parts, "--permission-mode", "plan")
+	}
+
+	if len(cfg.AllowedTools) > 0 {
+		parts = append(parts, "--allowedTools")
+		for _, tool := range cfg.AllowedTools {
+			parts = append(parts, shellEscape(tool))
+		}
+	}
+
+	// Always block interactive skill tools for autonomous workers.
+	// Use mergeDisallowedTools for consistency with buildSkillArgs and to
+	// support future growth configs that may carry their own disallowed tools.
+	disallowed := mergeDisallowedTools(nil, config.AutonomousDisallowedTools())
+	if len(disallowed) > 0 {
+		parts = append(parts, "--disallowedTools")
+		for _, tool := range disallowed {
+			parts = append(parts, shellEscape(tool))
+		}
+	}
+
+	if cfg.ExtraPrompt != "" {
+		parts = append(parts, "--append-system-prompt", shellEscape(cfg.ExtraPrompt))
+	}
+
+	if w.SkillProfile != "" {
+		if sp, ok := s.skillProfiles[w.SkillProfile]; ok && sp.SystemPrompt != "" {
+			parts = append(parts, "--append-system-prompt", shellEscape(sp.SystemPrompt))
+		}
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// buildAISAgentArgs builds CLI flags for the ais-agent runtime.
+// Note: ais-agent does not load .claude/ skills or SessionStart hooks,
+// so it is not susceptible to the interactive skill loop. No disallowed
+// tools are needed here. If ais-agent gains skill support in the future,
+// add autonomousDisallowedTools enforcement here as well.
+func (s *Spawner) buildAISAgentArgs(w *Worker, cfg growth.LevelConfig) string {
+	var parts []string
+
+	if cfg.Provider != "" {
+		parts = append(parts, "--provider", cfg.Provider)
+	}
+	if cfg.Model != "" {
+		parts = append(parts, "--model", cfg.Model)
+	}
+	if cfg.PermissionMode != "" {
+		parts = append(parts, "--permission-mode", cfg.PermissionMode)
+	}
+	if len(cfg.AllowedTools) > 0 {
+		parts = append(parts, "--allowed-tools", strings.Join(cfg.AllowedTools, ","))
+	}
+	if cfg.MaxTokenBudget > 0 {
+		parts = append(parts, "--max-tokens", fmt.Sprintf("%d", cfg.MaxTokenBudget))
+	}
+	if cfg.ExtraPrompt != "" {
+		parts = append(parts, "--append-system-prompt", shellEscape(cfg.ExtraPrompt))
+	}
+	if w.SkillProfile != "" {
+		if sp, ok := s.skillProfiles[w.SkillProfile]; ok && sp.SystemPrompt != "" {
+			parts = append(parts, "--append-system-prompt", shellEscape(sp.SystemPrompt))
+		}
+	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -391,6 +499,15 @@ func (s *Spawner) resolveCLI(w *Worker) (cliTool, cliArgs string, readyRe *regex
 		cliTool = w.CLITool
 	}
 
+	// Growth system can override CLITool based on skill level
+	if w.SkillTree != nil {
+		dominant := w.SkillTree.DominantBranch()
+		cfg := growth.EffectiveConfig(w.SkillTree, dominant)
+		if cfg.CLITool != "" {
+			cliTool = cfg.CLITool
+		}
+	}
+
 	if tc, ok := s.tierConfigs[w.EffectiveTier()]; ok {
 		if tc.CLITool != "" {
 			cliTool = tc.CLITool
@@ -535,6 +652,18 @@ func (s *Spawner) waitForReady(ctx context.Context, tmuxSession string, timeout 
 
 // buildPromptForTier formats the task prompt based on the worker tier and language.
 func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier WorkerTier, deps []depContext) string {
+	prompt := s.buildPromptForTierInner(t, p, tier, deps)
+	// Append knowledge context if injector is available
+	if s.knowledgeInjector != nil && t.AssigneeID != "" {
+		knowledgeCtx, err := s.knowledgeInjector.BuildContext(t.AssigneeID, t.ProjectID)
+		if err == nil && knowledgeCtx != "" {
+			prompt += "\n\n" + knowledgeCtx
+		}
+	}
+	return prompt
+}
+
+func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, tier WorkerTier, deps []depContext) string {
 	if t.Type == project.TaskTypeResearch {
 		return s.buildResearchPrompt(t, deps)
 	}
@@ -969,4 +1098,24 @@ func (s *Spawner) resolveDeps(t *project.Task) []depContext {
 
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// mergeDisallowedTools combines profile-specific and global disallowed tools,
+// deduplicating entries.
+func mergeDisallowedTools(profile, global []string) []string {
+	seen := make(map[string]bool, len(profile)+len(global))
+	var result []string
+	for _, t := range profile {
+		if !seen[t] {
+			seen[t] = true
+			result = append(result, t)
+		}
+	}
+	for _, t := range global {
+		if !seen[t] {
+			seen[t] = true
+			result = append(result, t)
+		}
+	}
+	return result
 }

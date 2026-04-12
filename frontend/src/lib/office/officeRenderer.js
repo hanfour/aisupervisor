@@ -1,7 +1,7 @@
 // Canvas 2D rendering engine for Pixel Office — Warm Bright Edition
 
 import { TILE_SIZE, SCALE, getFloorMap, getDesks, buildWorkerDeskMap, getLayoutDimensions, getCurrentLayoutId } from './layout.js'
-import { prerenderCharacter, prerenderCharacterFromAppearance, prerenderFurniture, prerenderEnvSprite, prerenderWallVariants, getCharacterType, getWorkerDecorations, drawDeskDecoration, SKILL_PROFILE_COLORS } from './sprites.js'
+import { prerenderCharacter, prerenderCharacterFromAppearance, prerenderFurniture, prerenderEnvSprite, prerenderWallVariants, getCharacterType, getWorkerDecorations, drawDeskDecoration, SKILL_PROFILE_COLORS, getLevelEffects } from './sprites.js'
 import { AnimationState, statusToAnim, ENV_ANIM } from './animation.js'
 import { PHASES } from './gameClock.js'
 import { startAmbient, stopAmbient, playKeyClatter } from './sounds.js'
@@ -157,6 +157,9 @@ export class OfficeRenderer {
     // Movement and bubble subsystems
     this.movement = new MovementController()
     this.bubbles = new BubbleManager()
+
+    // Growth level data: Map<workerId, number>
+    this.workerLevels = new Map()
     this.simulation = null  // set via setSimulation()
 
     // Build tall furniture list for Z-Sort
@@ -544,6 +547,33 @@ export class OfficeRenderer {
     ctx.fillText(w.name, nameX, py + TILE_PX + 10)
     ctx.restore()
 
+    // Level indicator (small stars above name, based on growth level)
+    if (this.workerLevels) {
+      const level = this.workerLevels.get(w.id)
+      if (level && level > 1) {
+        const fx = getLevelEffects(level)
+        // Glow effect behind character
+        if (fx.glowColor && fx.glowRadius > 0) {
+          ctx.save()
+          ctx.beginPath()
+          ctx.arc(px + TILE_PX / 2, py + TILE_PX / 2, TILE_PX * 0.5 + fx.glowRadius, 0, Math.PI * 2)
+          ctx.fillStyle = fx.glowColor
+          ctx.fill()
+          ctx.restore()
+        }
+        // Star indicators below name
+        if (fx.stars > 0) {
+          ctx.save()
+          ctx.font = '6px "Press Start 2P", monospace'
+          ctx.textAlign = 'center'
+          ctx.fillStyle = '#e8a855'
+          const starStr = '\u2606'.repeat(fx.stars)
+          ctx.fillText(starStr, px + TILE_PX / 2, py + TILE_PX + 18)
+          ctx.restore()
+        }
+      }
+    }
+
     // Mood indicator (above character)
     if (this.profiles) {
       const profile = this.profiles.get(w.id)
@@ -905,6 +935,15 @@ export class OfficeRenderer {
 
   setHoveredWorker(workerId) {
     this.hoveredWorkerId = workerId
+  }
+
+  // Set growth level data for workers. levels: Map<workerId, number> or object { id: level }
+  setWorkerLevels(levels) {
+    if (levels instanceof Map) {
+      this.workerLevels = levels
+    } else if (levels && typeof levels === 'object') {
+      this.workerLevels = new Map(Object.entries(levels))
+    }
   }
 
   destroy() {

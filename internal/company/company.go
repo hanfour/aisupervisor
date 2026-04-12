@@ -17,7 +17,9 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/ai/claudecli"
 	"github.com/hanfourmini/aisupervisor/internal/config"
+	"github.com/hanfourmini/aisupervisor/internal/feature"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
+	"github.com/hanfourmini/aisupervisor/internal/growth"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
@@ -71,6 +73,8 @@ type Manager struct {
 	reviewTimeoutMinutes int                     // minutes before auto-approving stuck reviews
 	autoAssignCfg       config.AutoAssignConfig
 	completedTaskCount  int                     // counter for micro-retro trigger
+	growthEngine        *growth.Engine
+	featureManager      *feature.Manager
 }
 
 type workersFile struct {
@@ -524,6 +528,8 @@ func (m *Manager) CreateWorker(name, avatar string, opts ...WorkerOption) (*work
 	}
 
 	m.workers[w.ID] = w
+
+	w.SkillTree = growth.NewSkillTree()
 
 	profile := personality.NewCharacterProfile(w.ID, string(w.EffectiveTier()))
 	m.personalityStore.SetProfile(profile)
@@ -2196,6 +2202,7 @@ func (m *Manager) Shutdown() {
 
 func (m *Manager) emit(e Event) {
 	e.Timestamp = time.Now()
+	go m.processGrowthEvent(e)
 	m.subMu.Lock()
 	for _, ch := range m.subscribers {
 		select {

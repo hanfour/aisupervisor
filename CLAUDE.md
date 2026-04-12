@@ -82,6 +82,7 @@ go test ./internal/...
 - **Wails dev restart**: Code changes require killing wails process and restarting; hot reload only works for frontend
 - **Permission mode**: Workers with `bypassPermissions` skip all Claude Code permission prompts; `acceptEdits` auto-accepts file edits but still prompts for Bash
 - **Review verdict**: `parseReviewVerdict()` searches last 5000 bytes for "approved"/"rejected" keywords in captured pane output (500 lines scrollback)
+- **Autonomous worker skill isolation**: Workers inherit the host's `.claude/` skills (superpowers, brainstorming, etc.) via SessionStart hooks. These interactive skills can override worker prompts and cause infinite loops (brainstorming → planning → task creation). All skill profiles MUST include `Skill`, `EnterPlanMode`, `ExitPlanMode` in `DisallowedTools`. The spawner also enforces `config.AutonomousDisallowedTools()` globally as a safety net.
 
 ## Coding Conventions
 

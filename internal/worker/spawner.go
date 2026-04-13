@@ -101,6 +101,48 @@ func (s *Spawner) worktreePath(repoPath, taskID string) string {
 	return filepath.Join(repoPath, ".worktrees", taskID)
 }
 
+// buildKarpathyOverlay generates targeted behavioral guidelines based on rejection history.
+// Returns empty string if no violation tags are present.
+func buildKarpathyOverlay(t *project.Task, lang string) string {
+	if len(t.RejectionHistory) == 0 {
+		return ""
+	}
+
+	seen := make(map[string]bool)
+	for _, r := range t.RejectionHistory {
+		for _, tag := range r.ViolationTags {
+			seen[tag] = true
+		}
+	}
+	if len(seen) == 0 {
+		return ""
+	}
+
+	guidelines := config.KarpathyGuidelines()
+	var sb strings.Builder
+
+	if lang == "zh-TW" {
+		sb.WriteString("--- 行為準則（根據先前審查回饋）---\n")
+	} else {
+		sb.WriteString("--- Behavioral Guidelines (from prior review feedback) ---\n")
+	}
+
+	for tag := range seen {
+		if g, ok := guidelines[tag]; ok {
+			sb.WriteString(g)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	if lang == "zh-TW" {
+		sb.WriteString("--- 準則結束 ---\n\n")
+	} else {
+		sb.WriteString("--- End Guidelines ---\n\n")
+	}
+
+	return sb.String()
+}
+
 // SetPersonalityStore sets the personality store for skill score lookups.
 func (s *Spawner) SetPersonalityStore(ps *personality.Store) {
 	s.personalityStore = ps
@@ -756,6 +798,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 	var sb strings.Builder
 
 	if lang == "en" {
+		if overlay := buildKarpathyOverlay(t, "en"); overlay != "" {
+			sb.WriteString(overlay)
+		}
 		sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
 		sb.WriteString(fmt.Sprintf("Project: %s\n", p.Name))
 		if p.Description != "" {
@@ -804,6 +849,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 			sb.WriteString("Only output this JSON block when you have concrete work to delegate. Do NOT delegate if you can complete the task yourself.\n")
 		}
 	} else {
+		if overlay := buildKarpathyOverlay(t, "zh-TW"); overlay != "" {
+			sb.WriteString(overlay)
+		}
 		sb.WriteString("重要：請立即開始寫程式碼。不要建立規劃文件、設計文件或架構文件。直接寫程式碼。\n\n")
 		sb.WriteString(fmt.Sprintf("專案：%s\n", p.Name))
 		if p.Description != "" {

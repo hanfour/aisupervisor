@@ -1477,9 +1477,12 @@ func (m *Manager) SetAutoAssignConfig(cfg config.AutoAssignConfig) {
 // SetReviewConfig sets the debate review pipeline configuration.
 func (m *Manager) SetReviewConfig(cfg config.ReviewConfig) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.reviewCfg = cfg
+	m.mu.Unlock()
+	// Write to ReviewPipeline under its own lock to avoid race with executeReview.
+	m.review.mu.Lock()
 	m.review.reviewCfg = cfg
+	m.review.mu.Unlock()
 }
 
 // recordCompletionMetrics captures token usage, analytics snapshot, and budget checks.

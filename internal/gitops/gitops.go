@@ -14,6 +14,11 @@ type CommitInfo struct {
 	Date    time.Time
 }
 
+type WorktreeInfo struct {
+	Path   string
+	Branch string
+}
+
 type GitOps interface {
 	CurrentBranch(repoPath string) (string, error)
 	BranchExists(repoPath, branch string) (bool, error)
@@ -22,6 +27,10 @@ type GitOps interface {
 	HasUncommitted(repoPath string) (bool, error)
 	DiffBranch(repoPath, branch string) (string, error)
 	LatestCommitHash(repoPath, branch string) (string, error)
+	// Worktree operations
+	CreateWorktree(repoPath, worktreePath, branch string) error
+	CleanupWorktree(repoPath, worktreePath string) error
+	ListWorktrees(repoPath string) ([]WorktreeInfo, error)
 }
 
 type gitOps struct{}

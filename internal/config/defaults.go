@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // DefaultSkillProfiles returns the built-in skill profiles.
 // User-defined profiles in config.yaml override these by matching ID.
 //
@@ -217,4 +219,46 @@ func MergeSkillProfiles(userProfiles []SkillProfile) []SkillProfile {
 		}
 	}
 	return defaults
+}
+
+// KarpathyGuidelines returns behavioral guidelines keyed by violation tag.
+// Injected into worker prompts when prior rejections match the tag.
+// Based on: https://github.com/forrestchang/andrej-karpathy-skills
+func KarpathyGuidelines() map[string]string {
+	return map[string]string{
+		"assumptions": "IMPORTANT: Before writing any code, explicitly state your assumptions about the task requirements. " +
+			"If anything is ambiguous, implement the simplest interpretation and note what you assumed. Do NOT silently guess.",
+		"overengineered": "IMPORTANT: Write the minimum code that solves exactly what was asked. " +
+			"No premature abstractions, no speculative features, no 'just in case' error handling. " +
+			"If a simple function works, do not create a class hierarchy.",
+		"scope_creep": "IMPORTANT: Only modify code directly related to this task. " +
+			"Do NOT improve surrounding code, add comments to unrelated functions, reformat files, " +
+			"or refactor code you weren't asked to touch. Surgical precision.",
+		"no_verification": "IMPORTANT: Before committing, you MUST verify your changes work. " +
+			"Run existing tests, write a quick test for new logic, and confirm the build passes. " +
+			"Do NOT commit code you haven't tested.",
+	}
+}
+
+// violationKeywords maps violation tags to keyword patterns found in rejection output.
+var violationKeywords = map[string][]string{
+	"assumptions":     {"assumption", "assumed", "misunderstand", "wrong interpretation", "not what was asked", "misread"},
+	"overengineered":  {"overengineer", "unnecessary abstraction", "too complex", "bloat", "over-architected", "overkill", "unnecessary"},
+	"scope_creep":     {"unrelated change", "scope", "out of scope", "didn't ask", "beyond the task", "unrelated", "not requested"},
+	"no_verification": {"no test", "untested", "didn't verify", "missing test", "test fail", "not tested", "without testing"},
+}
+
+// ClassifyViolations scans rejection output for keyword patterns and returns matching violation tags.
+func ClassifyViolations(output string) []string {
+	lower := strings.ToLower(output)
+	var tags []string
+	for tag, keywords := range violationKeywords {
+		for _, kw := range keywords {
+			if strings.Contains(lower, kw) {
+				tags = append(tags, tag)
+				break
+			}
+		}
+	}
+	return tags
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/config"
+	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
@@ -220,7 +221,10 @@ func getDiffStats(ctx context.Context, repoPath, baseBranch, taskBranch string) 
 
 	cmd2 := exec.CommandContext(ctx, "git", "diff", "--name-only", baseBranch+"..."+taskBranch)
 	cmd2.Dir = repoPath
-	out2, _ := cmd2.Output()
+	out2, err2 := cmd2.Output()
+	if err2 != nil {
+		return diffLines, 0, diff, fmt.Errorf("git diff --name-only: %w", err2)
+	}
 	names := strings.TrimSpace(string(out2))
 	if names == "" {
 		fileCount = 0
@@ -327,9 +331,12 @@ func (rp *ReviewPipeline) fallbackTmuxReview(req ReviewRequest, t *project.Task,
 	managerWorker, ok := rp.mgr.workers[req.ManagerID]
 	rp.mgr.mu.RUnlock()
 	if !ok {
+		log.Printf("WARN: fallbackTmuxReview: manager %s not found, review for task %s dropped", req.ManagerID, t.ID)
 		return
 	}
-	rp.executeReviewTmux(context.Background(), req, managerWorker, t, p)
+	if err := rp.executeReviewTmux(context.Background(), req, managerWorker, t, p); err != nil {
+		log.Printf("ERROR: fallbackTmuxReview failed for task %s: %v", t.ID, err)
+	}
 }
 
 // handleDebateResult processes the outcome of a debate/single-pass review.
@@ -388,12 +395,8 @@ func (rp *ReviewPipeline) handleDebateResult(result *DebateResult, req ReviewReq
 
 	if approved {
 		rp.mgr.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
-		rp.mgr.emit(Event{
-			Type:      EventReviewApproved,
-			ProjectID: p.ID,
-			TaskID:    t.ID,
-			Message:   rp.mgr.msgf("Task %q approved by debate review", "任務 %q 已由辯論審查核准", t.Title),
-		})
+		rp.cleanupAfterApproval(t, p.RepoPath, rp.mgr.gitOps)
+		// Note: EventReviewApproved already emitted above via eventType.
 		promoted, _ := rp.mgr.projectStore.PromoteReady(p.ID)
 		for _, pt := range promoted {
 			rp.mgr.emit(Event{
@@ -411,10 +414,11 @@ func (rp *ReviewPipeline) handleDebateResult(result *DebateResult, req ReviewReq
 	} else {
 		t.RejectionCount++
 		t.RejectionHistory = append(t.RejectionHistory, project.Rejection{
-			Stage:      t.Status,
-			RejectorID: "debate-review",
-			Reason:     sanitizeForYAML(output),
-			Timestamp:  time.Now(),
+			Stage:         t.Status,
+			RejectorID:    "debate-review",
+			Reason:        sanitizeForYAML(output),
+			ViolationTags: config.ClassifyViolations(output),
+			Timestamp:     time.Now(),
 		})
 
 		cb := rp.mgr.circuitBreaker
@@ -443,12 +447,7 @@ func (rp *ReviewPipeline) handleDebateResult(result *DebateResult, req ReviewReq
 		t.Status = project.TaskReady
 		rp.mgr.projectStore.SaveTask(t)
 
-		rp.mgr.emit(Event{
-			Type:      EventReviewRejected,
-			ProjectID: p.ID,
-			TaskID:    t.ID,
-			Message:   rp.mgr.msgf("Task %q rejected by debate (%d/%d)", "任務 %q 被辯論審查退回（%d/%d）", t.Title, t.RejectionCount, project.MaxRejectionsBeforeEscalation),
-		})
+		// Note: EventReviewRejected already emitted above via eventType.
 
 		if t.AssigneeID != "" {
 			rp.mgr.mu.RLock()
@@ -544,6 +543,7 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			WorkerID:  managerWorker.ID,
 			Message:   rp.mgr.msgf("Task %q approved by %s", "任務 %q 已由 %s 核准", originalTask.Title, managerWorker.Name),
 		})
+		rp.cleanupAfterApproval(originalTask, p.RepoPath, rp.mgr.gitOps)
 
 		// Promote newly unblocked tasks
 		promoted, _ := rp.mgr.projectStore.PromoteReady(p.ID)
@@ -568,10 +568,11 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 		// Record rejection
 		originalTask.RejectionCount++
 		originalTask.RejectionHistory = append(originalTask.RejectionHistory, project.Rejection{
-			Stage:      originalTask.Status,
-			RejectorID: managerWorker.ID,
-			Reason:     sanitizeForYAML(output),
-			Timestamp:  time.Now(),
+			Stage:         originalTask.Status,
+			RejectorID:    managerWorker.ID,
+			Reason:        sanitizeForYAML(output),
+			ViolationTags: config.ClassifyViolations(output),
+			Timestamp:     time.Now(),
 		})
 
 		// Check circuit breaker before re-queuing
@@ -832,4 +833,18 @@ func parseReviewVerdict(output string) reviewVerdict {
 		return verdictApproved
 	}
 	return verdictRejected
+}
+
+// cleanupAfterApproval removes the git worktree after a task is approved.
+// If no worktree was used (WorktreePath is empty), this is a no-op.
+func (rp *ReviewPipeline) cleanupAfterApproval(t *project.Task, repoPath string, g gitops.GitOps) {
+	if t.WorktreePath == "" {
+		return
+	}
+	if g != nil {
+		if err := g.CleanupWorktree(repoPath, t.WorktreePath); err != nil {
+			log.Printf("WARN: failed to cleanup worktree %s: %v", t.WorktreePath, err)
+		}
+	}
+	t.WorktreePath = ""
 }

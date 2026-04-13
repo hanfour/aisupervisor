@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ type Spawner struct {
 	language           string // "en" or "zh-TW"
 	personalityStore   *personality.Store
 	knowledgeInjector  *knowledge.Injector
+	useWorktrees       bool // Enable git worktree isolation per task
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -88,6 +90,57 @@ func (s *Spawner) SetLanguage(lang string) {
 // SetProjectStore sets the project store for dependency context lookups.
 func (s *Spawner) SetProjectStore(ps projectStoreReader) {
 	s.projectStore = ps
+}
+
+// SetUseWorktrees enables git worktree isolation per task.
+func (s *Spawner) SetUseWorktrees(enabled bool) {
+	s.useWorktrees = enabled
+}
+
+func (s *Spawner) worktreePath(repoPath, taskID string) string {
+	return filepath.Join(repoPath, ".worktrees", taskID)
+}
+
+// buildKarpathyOverlay generates targeted behavioral guidelines based on rejection history.
+// Returns empty string if no violation tags are present.
+func buildKarpathyOverlay(t *project.Task, lang string) string {
+	if len(t.RejectionHistory) == 0 {
+		return ""
+	}
+
+	seen := make(map[string]bool)
+	for _, r := range t.RejectionHistory {
+		for _, tag := range r.ViolationTags {
+			seen[tag] = true
+		}
+	}
+	if len(seen) == 0 {
+		return ""
+	}
+
+	guidelines := config.KarpathyGuidelines()
+	var sb strings.Builder
+
+	if lang == "zh-TW" {
+		sb.WriteString("--- 行為準則（根據先前審查回饋）---\n")
+	} else {
+		sb.WriteString("--- Behavioral Guidelines (from prior review feedback) ---\n")
+	}
+
+	for tag := range seen {
+		if g, ok := guidelines[tag]; ok {
+			sb.WriteString(g)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	if lang == "zh-TW" {
+		sb.WriteString("--- 準則結束 ---\n\n")
+	} else {
+		sb.WriteString("--- End Guidelines ---\n\n")
+	}
+
+	return sb.String()
 }
 
 // SetPersonalityStore sets the personality store for skill score lookups.
@@ -353,25 +406,45 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		}
 	}
 
-	// 2. Create tmux session (kill stale session if it exists)
+	// 2. Set up working directory (worktree or repo root)
+	var workDir string
+	if s.useWorktrees && !isNonCodeTask && t.BranchName != "" {
+		wtPath := s.worktreePath(p.RepoPath, t.ID)
+		if err := s.gitOps.CreateWorktree(p.RepoPath, wtPath, t.BranchName); err != nil {
+			return fmt.Errorf("create worktree: %w", err)
+		}
+		workDir = wtPath
+		t.WorktreePath = wtPath
+	} else {
+		workDir = p.RepoPath
+	}
+
+	// 3. Create tmux session (kill stale session if it exists)
 	if exists, _ := s.tmuxClient.HasSession(tmuxName); exists {
 		s.tmuxClient.KillSession(tmuxName)
 	}
 	if err := s.tmuxClient.CreateSession(tmuxName); err != nil {
+		// Cleanup worktree if session creation fails
+		if t.WorktreePath != "" {
+			if wtErr := s.gitOps.CleanupWorktree(p.RepoPath, t.WorktreePath); wtErr != nil {
+				log.Printf("WARNING: failed to cleanup worktree after session failure: %v", wtErr)
+			}
+			t.WorktreePath = ""
+		}
 		return fmt.Errorf("creating tmux session: %w", err)
 	}
 
-	// 3. cd to repo path
-	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(p.RepoPath))+" Enter")
+	// 4. cd to working directory
+	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(workDir))+" Enter")
 	s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 
-	// 4. Checkout task branch (skip for non-code tasks)
-	if !isNonCodeTask && t.BranchName != "" {
+	// 5. Checkout task branch (only when NOT using worktrees — worktree is already on correct branch)
+	if !s.useWorktrees && !isNonCodeTask && t.BranchName != "" {
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("git checkout %s", t.BranchName)+" Enter")
 		s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 	}
 
-	// 5. Launch CLI tool (claude or aider)
+	// 6. Launch CLI tool (claude or aider)
 	// Unset CLAUDECODE to avoid "nested session" detection when the supervisor
 	// itself is running inside a Claude Code session (e.g. during development).
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "unset CLAUDECODE"+" Enter")
@@ -391,14 +464,14 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, cliTool+" Enter")
 	}
 
-	// 6. Wait for CLI to be ready
+	// 7. Wait for CLI to be ready
 	if err := s.waitForReady(ctx, tmuxName, 120*time.Second, readyRe); err != nil {
 		// Don't kill session on failure to allow debugging
 		log.Printf("WARNING: CLI ready timeout for %s in tmux session %s", cliTool, tmuxName)
 		return fmt.Errorf("waiting for %s ready: %w", cliTool, err)
 	}
 
-	// 7. Send task prompt
+	// 8. Send task prompt
 	deps := s.resolveDeps(t)
 	prompt := s.buildPromptForTier(t, p, w.EffectiveTier(), deps)
 
@@ -419,14 +492,14 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 	time.Sleep(delay)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
-	// 8. Update worker state
+	// 9. Update worker state
 	w.TmuxSession = tmuxName
 	w.Window = 0
 	w.Pane = 0
 	w.Status = WorkerWorking
 	w.CurrentTaskID = t.ID
 
-	// 9. Create MonitoredSession and register with supervisor
+	// 10. Create MonitoredSession and register with supervisor
 	toolType := "claude_code"
 	if cliTool == "aider" {
 		toolType = "aider"
@@ -448,7 +521,7 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		s.sessionMgr.Add(ms)
 	}
 
-	// 10. Wire into supervisor monitoring pipeline
+	// 11. Wire into supervisor monitoring pipeline
 	if s.sup != nil {
 		go s.sup.Monitor(ctx, ms)
 	}
@@ -725,6 +798,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 	var sb strings.Builder
 
 	if lang == "en" {
+		if overlay := buildKarpathyOverlay(t, "en"); overlay != "" {
+			sb.WriteString(overlay)
+		}
 		sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
 		sb.WriteString(fmt.Sprintf("Project: %s\n", p.Name))
 		if p.Description != "" {
@@ -773,6 +849,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 			sb.WriteString("Only output this JSON block when you have concrete work to delegate. Do NOT delegate if you can complete the task yourself.\n")
 		}
 	} else {
+		if overlay := buildKarpathyOverlay(t, "zh-TW"); overlay != "" {
+			sb.WriteString(overlay)
+		}
 		sb.WriteString("重要：請立即開始寫程式碼。不要建立規劃文件、設計文件或架構文件。直接寫程式碼。\n\n")
 		sb.WriteString(fmt.Sprintf("專案：%s\n", p.Name))
 		if p.Description != "" {

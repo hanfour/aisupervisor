@@ -130,7 +130,7 @@ func runDebate(ctx context.Context, cp ai.ChatProvider, diff, pkbContext string,
 	wg.Wait()
 
 	if errA != nil && errB != nil {
-		return nil, fmt.Errorf("both analysis agents failed: %v; %v", errA, errB)
+		return nil, fmt.Errorf("both analysis agents failed: %w; %w", errA, errB)
 	}
 
 	var allFindings []Finding
@@ -168,8 +168,15 @@ func runDebate(ctx context.Context, cp ai.ChatProvider, diff, pkbContext string,
 	survived := merged
 	if errV1 == nil && errV2 == nil {
 		survived = tallyVotes(merged, votes1, votes2)
+	} else if errV1 == nil {
+		// One voter available — use single-voter tally (finding survives if KEEP)
+		log.Printf("debate: vote agent 2 failed (%v), using single voter", errV2)
+		survived = tallyVotes(merged, votes1, votes1)
+	} else if errV2 == nil {
+		log.Printf("debate: vote agent 1 failed (%v), using single voter", errV1)
+		survived = tallyVotes(merged, votes2, votes2)
 	} else {
-		log.Printf("debate: vote agent failure (v1=%v, v2=%v), passing all %d findings to synthesis", errV1, errV2, len(merged))
+		log.Printf("debate: both vote agents failed (v1=%v, v2=%v), passing all %d findings to synthesis", errV1, errV2, len(merged))
 	}
 
 	if len(survived) == 0 {

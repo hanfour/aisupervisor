@@ -88,6 +88,7 @@ type Task struct {
 	// HelpRequestHandled stores the help content already processed, to prevent duplicate handling.
 	HelpRequestHandled string `yaml:"help_request_handled,omitempty" json:"-"`
 
+	WorktreePath     string         `yaml:"worktree_path,omitempty" json:"worktreePath,omitempty"`
 	ErrorLog         []string       `yaml:"error_log,omitempty" json:"errorLog,omitempty"`
 	RetryCount       int            `yaml:"retry_count,omitempty" json:"retryCount,omitempty"`
 	CreatedAt        time.Time      `yaml:"created_at" json:"createdAt"`
@@ -98,10 +99,11 @@ type Task struct {
 
 // Rejection records a single review rejection event.
 type Rejection struct {
-	Stage      TaskStatus `yaml:"stage" json:"stage"`
-	RejectorID string     `yaml:"rejector_id" json:"rejectorId"`
-	Reason     string     `yaml:"reason" json:"reason"`
-	Timestamp  time.Time  `yaml:"timestamp" json:"timestamp"`
+	Stage         TaskStatus `yaml:"stage" json:"stage"`
+	RejectorID    string     `yaml:"rejector_id" json:"rejectorId"`
+	Reason        string     `yaml:"reason" json:"reason"`
+	ViolationTags []string   `yaml:"violation_tags,omitempty" json:"violationTags,omitempty"`
+	Timestamp     time.Time  `yaml:"timestamp" json:"timestamp"`
 }
 
 // BounceRecord tracks a task being bounced between agents.

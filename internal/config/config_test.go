@@ -137,3 +137,57 @@ func TestValidateValidReadyCheck(t *testing.T) {
 		t.Fatalf("valid ready_check should pass: %v", err)
 	}
 }
+
+func TestKarpathyGuidelines_AllTagsHaveEntries(t *testing.T) {
+	guidelines := KarpathyGuidelines()
+	expectedTags := []string{"assumptions", "overengineered", "scope_creep", "no_verification"}
+	for _, tag := range expectedTags {
+		if _, ok := guidelines[tag]; !ok {
+			t.Errorf("missing guideline for tag %q", tag)
+		}
+	}
+}
+
+func TestClassifyViolations_ScopeCreep(t *testing.T) {
+	output := "REJECTED: The changes include unrelated reformatting and out of scope modifications to the config parser."
+	tags := ClassifyViolations(output)
+	found := false
+	for _, tag := range tags {
+		if tag == "scope_creep" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected scope_creep tag, got %v", tags)
+	}
+}
+
+func TestClassifyViolations_MultipleViolations(t *testing.T) {
+	output := "REJECTED: Code is overengineered with unnecessary abstraction layers. Also, no test was written for the new endpoint."
+	tags := ClassifyViolations(output)
+	if len(tags) < 2 {
+		t.Errorf("expected at least 2 tags, got %v", tags)
+	}
+}
+
+func TestClassifyViolations_NoMatch(t *testing.T) {
+	output := "REJECTED: The logic is incorrect, the sorting algorithm returns wrong results."
+	tags := ClassifyViolations(output)
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags for generic rejection, got %v", tags)
+	}
+}
+
+func TestClassifyViolations_CaseInsensitive(t *testing.T) {
+	output := "REJECTED: Worker made an ASSUMPTION about the API format without checking."
+	tags := ClassifyViolations(output)
+	found := false
+	for _, tag := range tags {
+		if tag == "assumptions" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected assumptions tag, got %v", tags)
+	}
+}

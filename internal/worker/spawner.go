@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
-
-	"path/filepath"
 
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
@@ -383,6 +382,13 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		s.tmuxClient.KillSession(tmuxName)
 	}
 	if err := s.tmuxClient.CreateSession(tmuxName); err != nil {
+		// Cleanup worktree if session creation fails
+		if t.WorktreePath != "" {
+			if wtErr := s.gitOps.CleanupWorktree(p.RepoPath, t.WorktreePath); wtErr != nil {
+				log.Printf("WARNING: failed to cleanup worktree after session failure: %v", wtErr)
+			}
+			t.WorktreePath = ""
+		}
 		return fmt.Errorf("creating tmux session: %w", err)
 	}
 
@@ -396,7 +402,7 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 	}
 
-	// 5. Launch CLI tool (claude or aider)
+	// 6. Launch CLI tool (claude or aider)
 	// Unset CLAUDECODE to avoid "nested session" detection when the supervisor
 	// itself is running inside a Claude Code session (e.g. during development).
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "unset CLAUDECODE"+" Enter")
@@ -416,14 +422,14 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, cliTool+" Enter")
 	}
 
-	// 6. Wait for CLI to be ready
+	// 7. Wait for CLI to be ready
 	if err := s.waitForReady(ctx, tmuxName, 120*time.Second, readyRe); err != nil {
 		// Don't kill session on failure to allow debugging
 		log.Printf("WARNING: CLI ready timeout for %s in tmux session %s", cliTool, tmuxName)
 		return fmt.Errorf("waiting for %s ready: %w", cliTool, err)
 	}
 
-	// 7. Send task prompt
+	// 8. Send task prompt
 	deps := s.resolveDeps(t)
 	prompt := s.buildPromptForTier(t, p, w.EffectiveTier(), deps)
 
@@ -444,14 +450,14 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 	time.Sleep(delay)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
-	// 8. Update worker state
+	// 9. Update worker state
 	w.TmuxSession = tmuxName
 	w.Window = 0
 	w.Pane = 0
 	w.Status = WorkerWorking
 	w.CurrentTaskID = t.ID
 
-	// 9. Create MonitoredSession and register with supervisor
+	// 10. Create MonitoredSession and register with supervisor
 	toolType := "claude_code"
 	if cliTool == "aider" {
 		toolType = "aider"
@@ -473,7 +479,7 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		s.sessionMgr.Add(ms)
 	}
 
-	// 10. Wire into supervisor monitoring pipeline
+	// 11. Wire into supervisor monitoring pipeline
 	if s.sup != nil {
 		go s.sup.Monitor(ctx, ms)
 	}

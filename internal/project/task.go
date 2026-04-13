@@ -99,10 +99,11 @@ type Task struct {
 
 // Rejection records a single review rejection event.
 type Rejection struct {
-	Stage      TaskStatus `yaml:"stage" json:"stage"`
-	RejectorID string     `yaml:"rejector_id" json:"rejectorId"`
-	Reason     string     `yaml:"reason" json:"reason"`
-	Timestamp  time.Time  `yaml:"timestamp" json:"timestamp"`
+	Stage         TaskStatus `yaml:"stage" json:"stage"`
+	RejectorID    string     `yaml:"rejector_id" json:"rejectorId"`
+	Reason        string     `yaml:"reason" json:"reason"`
+	ViolationTags []string   `yaml:"violation_tags,omitempty" json:"violationTags,omitempty"`
+	Timestamp     time.Time  `yaml:"timestamp" json:"timestamp"`
 }
 
 // BounceRecord tracks a task being bounced between agents.

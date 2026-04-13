@@ -414,10 +414,11 @@ func (rp *ReviewPipeline) handleDebateResult(result *DebateResult, req ReviewReq
 	} else {
 		t.RejectionCount++
 		t.RejectionHistory = append(t.RejectionHistory, project.Rejection{
-			Stage:      t.Status,
-			RejectorID: "debate-review",
-			Reason:     sanitizeForYAML(output),
-			Timestamp:  time.Now(),
+			Stage:         t.Status,
+			RejectorID:    "debate-review",
+			Reason:        sanitizeForYAML(output),
+			ViolationTags: config.ClassifyViolations(output),
+			Timestamp:     time.Now(),
 		})
 
 		cb := rp.mgr.circuitBreaker
@@ -567,10 +568,11 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 		// Record rejection
 		originalTask.RejectionCount++
 		originalTask.RejectionHistory = append(originalTask.RejectionHistory, project.Rejection{
-			Stage:      originalTask.Status,
-			RejectorID: managerWorker.ID,
-			Reason:     sanitizeForYAML(output),
-			Timestamp:  time.Now(),
+			Stage:         originalTask.Status,
+			RejectorID:    managerWorker.ID,
+			Reason:        sanitizeForYAML(output),
+			ViolationTags: config.ClassifyViolations(output),
+			Timestamp:     time.Now(),
 		})
 
 		// Check circuit breaker before re-queuing

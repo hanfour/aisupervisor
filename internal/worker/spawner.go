@@ -515,6 +515,15 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 	time.Sleep(delay)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
+	// Record trajectory: spawn (before prompt)
+	s.recordTrajectory(TrajectoryEntry{
+		Timestamp: time.Now(),
+		WorkerID:  w.ID,
+		TaskID:    t.ID,
+		Event:     TrajectoryEventSpawn,
+		Details:   fmt.Sprintf("spawned %s in tmux session %s", cliTool, tmuxName),
+	})
+
 	// Record trajectory: prompt_sent
 	s.recordTrajectory(TrajectoryEntry{
 		Timestamp: time.Now(),
@@ -530,15 +539,6 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 	w.Pane = 0
 	w.Status = WorkerWorking
 	w.CurrentTaskID = t.ID
-
-	// Record trajectory: spawn
-	s.recordTrajectory(TrajectoryEntry{
-		Timestamp: time.Now(),
-		WorkerID:  w.ID,
-		TaskID:    t.ID,
-		Event:     TrajectoryEventSpawn,
-		Details:   fmt.Sprintf("spawned %s in tmux session %s", cliTool, tmuxName),
-	})
 
 	// 10. Create MonitoredSession and register with supervisor
 	toolType := "claude_code"

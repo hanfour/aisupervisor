@@ -3,6 +3,7 @@ package worker
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -38,7 +39,11 @@ type TrajectoryRecorder struct {
 // Default directory is ~/.local/share/aisupervisor/trajectories/ if dir is empty.
 func NewTrajectoryRecorder(dir string) *TrajectoryRecorder {
 	if dir == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = os.TempDir()
+			log.Printf("WARNING: UserHomeDir failed, using temp dir for trajectories: %v", err)
+		}
 		dir = filepath.Join(home, ".local", "share", "aisupervisor", "trajectories")
 	}
 	return &TrajectoryRecorder{dir: dir}

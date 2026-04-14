@@ -20,6 +20,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/feature"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/growth"
+	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
@@ -76,6 +77,7 @@ type Manager struct {
 	growthEngine        *growth.Engine
 	featureManager      *feature.Manager
 	reviewCfg           config.ReviewConfig
+	graphProvider       *knowledge.UnifiedGraphProvider
 }
 
 type workersFile struct {
@@ -155,6 +157,7 @@ func New(
 	m.circuitBreaker = NewCircuitBreaker(m)
 	m.commMatrix = NewCommunicationMatrix(m)
 	m.humanGate = NewHumanGate(m, DefaultHumanGateConfig(), dataDir)
+	m.graphProvider = knowledge.NewUnifiedGraphProvider()
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	m.shutdownCancel = bgCancel
@@ -417,6 +420,11 @@ func (m *Manager) ListProjects() []*project.Project {
 
 func (m *Manager) GetProject(id string) (*project.Project, bool) {
 	return m.projectStore.GetProject(id)
+}
+
+// GraphProvider returns the unified code graph provider.
+func (m *Manager) GraphProvider() *knowledge.UnifiedGraphProvider {
+	return m.graphProvider
 }
 
 // --- Task operations ---

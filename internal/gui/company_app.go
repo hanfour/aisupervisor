@@ -19,6 +19,7 @@ import (
 	openaiBackend "github.com/hanfourmini/aisupervisor/internal/ai/openai"
 	"github.com/hanfourmini/aisupervisor/internal/company"
 	"github.com/hanfourmini/aisupervisor/internal/config"
+	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/installer"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
@@ -171,6 +172,22 @@ func (c *CompanyApp) GetProject(id string) (*ProjectDTO, error) {
 	}
 	dto := ProjectToDTO(p)
 	return &dto, nil
+}
+
+// GetProjectGraph returns the code graph for a project's repository.
+// Used by the frontend to visualize code communities and dependencies.
+func (c *CompanyApp) GetProjectGraph(projectID string) (*knowledge.CodeGraph, error) {
+	provider := c.company.GraphProvider()
+	if provider == nil {
+		return nil, fmt.Errorf("graph provider not initialized")
+	}
+
+	p, ok := c.company.GetProject(projectID)
+	if !ok {
+		return nil, fmt.Errorf("project %q not found", projectID)
+	}
+
+	return provider.GetGraph(p.RepoPath)
 }
 
 // DeleteProject removes a project and all its tasks.

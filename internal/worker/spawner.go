@@ -42,6 +42,7 @@ type Spawner struct {
 	personalityStore   *personality.Store
 	knowledgeInjector  *knowledge.Injector
 	useWorktrees       bool // Enable git worktree isolation per task
+	trajectoryRecorder *TrajectoryRecorder
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -63,6 +64,27 @@ func NewSpawner(
 		tierConfigs:    make(map[WorkerTier]TierSpawnConfig),
 		skillProfiles:  make(map[string]config.SkillProfile),
 		skillOverrides: make(map[string]config.SkillProfileOverride),
+	}
+}
+
+// SetTrajectoryRecorder sets the trajectory recorder for this spawner.
+func (s *Spawner) SetTrajectoryRecorder(rec *TrajectoryRecorder) {
+	s.trajectoryRecorder = rec
+}
+
+// TrajectoryRecorder returns the trajectory recorder, if set.
+func (s *Spawner) TrajectoryRecorder() *TrajectoryRecorder {
+	return s.trajectoryRecorder
+}
+
+// recordTrajectory is a convenience method that records a trajectory entry if the
+// recorder is configured. Logs but does not propagate errors.
+func (s *Spawner) recordTrajectory(entry TrajectoryEntry) {
+	if s.trajectoryRecorder == nil {
+		return
+	}
+	if err := s.trajectoryRecorder.Record(entry); err != nil {
+		log.Printf("WARNING: trajectory record failed: %v", err)
 	}
 }
 
@@ -493,12 +515,30 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 	time.Sleep(delay)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
+	// Record trajectory: prompt_sent
+	s.recordTrajectory(TrajectoryEntry{
+		Timestamp: time.Now(),
+		WorkerID:  w.ID,
+		TaskID:    t.ID,
+		Event:     TrajectoryEventPromptSent,
+		Details:   fmt.Sprintf("prompt sent (%d chars)", len(prompt)),
+	})
+
 	// 9. Update worker state
 	w.TmuxSession = tmuxName
 	w.Window = 0
 	w.Pane = 0
 	w.Status = WorkerWorking
 	w.CurrentTaskID = t.ID
+
+	// Record trajectory: spawn
+	s.recordTrajectory(TrajectoryEntry{
+		Timestamp: time.Now(),
+		WorkerID:  w.ID,
+		TaskID:    t.ID,
+		Event:     TrajectoryEventSpawn,
+		Details:   fmt.Sprintf("spawned %s in tmux session %s", cliTool, tmuxName),
+	})
 
 	// 10. Create MonitoredSession and register with supervisor
 	toolType := "claude_code"

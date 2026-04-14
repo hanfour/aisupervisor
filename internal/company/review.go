@@ -543,6 +543,18 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			WorkerID:  managerWorker.ID,
 			Message:   rp.mgr.msgf("Task %q approved by %s", "任務 %q 已由 %s 核准", originalTask.Title, managerWorker.Name),
 		})
+		// Record trajectory: review_approved
+		if rp.mgr.spawner != nil {
+			if rec := rp.mgr.spawner.TrajectoryRecorder(); rec != nil {
+				_ = rec.Record(worker.TrajectoryEntry{
+					Timestamp: time.Now(),
+					WorkerID:  managerWorker.ID,
+					TaskID:    originalTask.ID,
+					Event:     worker.TrajectoryEventReviewApproved,
+					Details:   fmt.Sprintf("approved by %s", managerWorker.Name),
+				})
+			}
+		}
 		rp.cleanupAfterApproval(originalTask, p.RepoPath, rp.mgr.gitOps)
 
 		// Promote newly unblocked tasks
@@ -594,6 +606,18 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			WorkerID:  managerWorker.ID,
 			Message:   rp.mgr.msgf("Task %q rejected by %s (%d/%d)", "任務 %q 已由 %s 退回（%d/%d）", originalTask.Title, managerWorker.Name, originalTask.RejectionCount, project.MaxRejectionsBeforeEscalation),
 		})
+		// Record trajectory: review_rejected
+		if rp.mgr.spawner != nil {
+			if rec := rp.mgr.spawner.TrajectoryRecorder(); rec != nil {
+				_ = rec.Record(worker.TrajectoryEntry{
+					Timestamp: time.Now(),
+					WorkerID:  managerWorker.ID,
+					TaskID:    originalTask.ID,
+					Event:     worker.TrajectoryEventReviewRejected,
+					Details:   fmt.Sprintf("rejected by %s (attempt %d)", managerWorker.Name, originalTask.RejectionCount),
+				})
+			}
+		}
 
 		rp.mgr.emit(Event{
 			Type:      EventTaskRevision,

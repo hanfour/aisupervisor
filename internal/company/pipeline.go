@@ -11,6 +11,7 @@ import (
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
+	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
 )
@@ -434,7 +435,15 @@ func workerSkillScore(scores personality.SkillScores, taskType project.TaskType)
 //  3. Fallback: any idle tier-compatible worker
 //
 // Filters by tier compatibility. Returns empty string if no match found.
-func matchWorker(t *project.Task, idle []idleWorkerSnapshot, assigned map[string]bool) string {
+func matchWorker(t *project.Task, idle []idleWorkerSnapshot, assigned map[string]bool, graph ...*knowledge.CodeGraph) string {
+	// Community preference: if graph is available, prefer worker in same community
+	if len(graph) > 0 && graph[0] != nil {
+		communityMatch := findBestWorkerForCommunity(t, idle, graph[0], assigned)
+		if communityMatch != "" {
+			return communityMatch
+		}
+	}
+
 	preferred := preferredProfiles(t.Type)
 
 	// First pass: profile match + best skill score
@@ -481,5 +490,29 @@ func matchWorker(t *project.Task, idle []idleWorkerSnapshot, assigned map[string
 		return bestID
 	}
 
+	return ""
+}
+
+// findBestWorkerForCommunity returns the idle worker whose last community matches
+// the task's target community. Returns "" if no match found or graph is nil.
+func findBestWorkerForCommunity(task *project.Task, idle []idleWorkerSnapshot, graph *knowledge.CodeGraph, assigned map[string]bool) string {
+	if graph == nil || len(task.Files) == 0 {
+		return ""
+	}
+
+	// Determine the task's community from its first file
+	taskCommunity := knowledge.GetCommunityForFile(graph, task.Files[0])
+	if taskCommunity == nil {
+		return ""
+	}
+
+	for _, w := range idle {
+		if assigned[w.ID] {
+			continue
+		}
+		if w.LastCommunityID == taskCommunity.ID {
+			return w.ID
+		}
+	}
 	return ""
 }

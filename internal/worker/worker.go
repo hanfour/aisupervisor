@@ -75,6 +75,7 @@ type Worker struct {
 	LastRecoveryAt   time.Time         `yaml:"-" json:"-"` // transient: last recovery attempt time
 	SkillTree        *growth.SkillTree `yaml:"skill_tree,omitempty" json:"skillTree,omitempty"`
 	CreatedAt        time.Time         `yaml:"created_at" json:"createdAt"`
+	LastCommunityID  int               `yaml:"last_community_id,omitempty" json:"lastCommunityId,omitempty"`
 }
 
 // EffectiveTier returns the worker's tier, defaulting to TierEngineer if unset.

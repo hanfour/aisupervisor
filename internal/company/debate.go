@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
+	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 )
 
 type ReviewStrategy string
@@ -42,6 +44,50 @@ func selectStrategy(diffLines, fileCount int, debateThreshold, lightMaxLines, li
 		return ReviewLight
 	}
 	return ReviewStandard
+}
+
+// shouldEscalateReview returns true if the changed files span 3+ communities
+// or touch any god node, indicating a cross-cutting change that needs debate review.
+func shouldEscalateReview(files []string, graph *knowledge.CodeGraph) bool {
+	if graph == nil || len(files) == 0 {
+		return false
+	}
+
+	// Check for god node touches
+	godSet := make(map[string]bool, len(graph.GodNodes))
+	for _, g := range graph.GodNodes {
+		godSet[g] = true
+	}
+	for _, f := range files {
+		if godSet[f] {
+			return true
+		}
+	}
+
+	// Count distinct communities touched
+	communityIDs := make(map[int]bool)
+	for _, f := range files {
+		if c := knowledge.GetCommunityForFile(graph, f); c != nil {
+			communityIDs[c.ID] = true
+		}
+	}
+	return len(communityIDs) >= 3
+}
+
+// extractChangedFiles parses a unified diff and returns the file paths that were changed.
+func extractChangedFiles(diff string) []string {
+	var files []string
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "+++ b/") {
+			path := strings.TrimPrefix(line, "+++ b/")
+			if !seen[path] {
+				seen[path] = true
+				files = append(files, path)
+			}
+		}
+	}
+	return files
 }
 
 func severityRank(s string) int {

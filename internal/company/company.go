@@ -20,6 +20,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/feature"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/growth"
+	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
@@ -76,6 +77,7 @@ type Manager struct {
 	growthEngine        *growth.Engine
 	featureManager      *feature.Manager
 	reviewCfg           config.ReviewConfig
+	graphProvider       *knowledge.UnifiedGraphProvider
 }
 
 type workersFile struct {
@@ -155,6 +157,7 @@ func New(
 	m.circuitBreaker = NewCircuitBreaker(m)
 	m.commMatrix = NewCommunicationMatrix(m)
 	m.humanGate = NewHumanGate(m, DefaultHumanGateConfig(), dataDir)
+	m.graphProvider = knowledge.NewUnifiedGraphProvider()
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	m.shutdownCancel = bgCancel
@@ -417,6 +420,11 @@ func (m *Manager) ListProjects() []*project.Project {
 
 func (m *Manager) GetProject(id string) (*project.Project, bool) {
 	return m.projectStore.GetProject(id)
+}
+
+// GraphProvider returns the unified code graph provider.
+func (m *Manager) GraphProvider() *knowledge.UnifiedGraphProvider {
+	return m.graphProvider
 }
 
 // --- Task operations ---
@@ -870,6 +878,16 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	// Record growth log for every completion (before locking)
 	m.updateWorkerGrowth(w, t, result.Success)
 
+	// Compute community ID outside lock (GetGraph may be slow)
+	communityID := -1
+	if m.graphProvider != nil && len(t.Files) > 0 {
+		if graph, err := m.graphProvider.GetGraph(p.RepoPath); err == nil {
+			if c := knowledge.GetCommunityForFile(graph, t.Files[0]); c != nil {
+				communityID = c.ID
+			}
+		}
+	}
+
 	// Track completed tasks for micro-retro trigger
 	if result.Success && t.ParentTaskID == "" {
 		m.mu.Lock()
@@ -885,6 +903,9 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	m.mu.Lock()
 	// Reset recovery attempts on completion (under lock to avoid data race)
 	w.RecoveryAttempts = 0
+	if communityID >= 0 {
+		w.LastCommunityID = communityID
+	}
 
 	if result.Success && t.Type == project.TaskTypeTraining {
 		m.handleTrainingIteration(w, t, p)
@@ -1684,10 +1705,11 @@ func extractJSON(text string) string {
 
 // idleWorkerSnapshot holds the immutable fields needed for task matching.
 type idleWorkerSnapshot struct {
-	ID           string
-	SkillProfile string
-	Tier         worker.WorkerTier
-	SkillScores  personality.SkillScores
+	ID              string
+	SkillProfile    string
+	Tier            worker.WorkerTier
+	SkillScores     personality.SkillScores
+	LastCommunityID int
 }
 
 // drainReadyQueue assigns ready tasks to idle workers until no more matches.
@@ -1708,7 +1730,7 @@ func (m *Manager) drainReadyQueue(ctx context.Context) {
 	var idle []idleWorkerSnapshot
 	for _, w := range m.workers {
 		if w.Status == worker.WorkerIdle {
-			snap := idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile, Tier: w.EffectiveTier()}
+			snap := idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile, Tier: w.EffectiveTier(), LastCommunityID: w.LastCommunityID}
 			if m.personalityStore != nil {
 				if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
 					snap.SkillScores = profile.SkillScores
@@ -1719,9 +1741,20 @@ func (m *Manager) drainReadyQueue(ctx context.Context) {
 	}
 	m.mu.RUnlock()
 
+	// Obtain code graph for community-based assignment (best effort)
+	var codeGraph *knowledge.CodeGraph
+	if m.graphProvider != nil {
+		for _, t := range readyTasks {
+			if p, ok := m.projectStore.GetProject(t.ProjectID); ok {
+				codeGraph, _ = m.graphProvider.GetGraph(p.RepoPath)
+				break
+			}
+		}
+	}
+
 	assignedMap := make(map[string]bool)
 	for _, t := range readyTasks {
-		best := matchWorker(t, idle, assignedMap)
+		best := matchWorker(t, idle, assignedMap, codeGraph)
 		if best == "" {
 			continue
 		}

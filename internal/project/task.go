@@ -89,6 +89,8 @@ type Task struct {
 	// HelpRequestHandled stores the help content already processed, to prevent duplicate handling.
 	HelpRequestHandled string `yaml:"help_request_handled,omitempty" json:"-"`
 
+	// Files lists the primary files this task affects (used for graph-based assignment).
+	Files            []string       `yaml:"files,omitempty" json:"files,omitempty"`
 	WorktreePath     string         `yaml:"worktree_path,omitempty" json:"worktreePath,omitempty"`
 	ErrorLog         []string       `yaml:"error_log,omitempty" json:"errorLog,omitempty"`
 	RetryCount       int            `yaml:"retry_count,omitempty" json:"retryCount,omitempty"`

@@ -878,6 +878,15 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	// Record growth log for every completion (before locking)
 	m.updateWorkerGrowth(w, t, result.Success)
 
+	// Update worker's last community for future graph-based assignment
+	if m.graphProvider != nil && len(t.Files) > 0 {
+		if graph, err := m.graphProvider.GetGraph(p.RepoPath); err == nil {
+			if c := knowledge.GetCommunityForFile(graph, t.Files[0]); c != nil {
+				w.LastCommunityID = c.ID
+			}
+		}
+	}
+
 	// Track completed tasks for micro-retro trigger
 	if result.Success && t.ParentTaskID == "" {
 		m.mu.Lock()
@@ -1692,10 +1701,11 @@ func extractJSON(text string) string {
 
 // idleWorkerSnapshot holds the immutable fields needed for task matching.
 type idleWorkerSnapshot struct {
-	ID           string
-	SkillProfile string
-	Tier         worker.WorkerTier
-	SkillScores  personality.SkillScores
+	ID              string
+	SkillProfile    string
+	Tier            worker.WorkerTier
+	SkillScores     personality.SkillScores
+	LastCommunityID int
 }
 
 // drainReadyQueue assigns ready tasks to idle workers until no more matches.
@@ -1716,7 +1726,7 @@ func (m *Manager) drainReadyQueue(ctx context.Context) {
 	var idle []idleWorkerSnapshot
 	for _, w := range m.workers {
 		if w.Status == worker.WorkerIdle {
-			snap := idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile, Tier: w.EffectiveTier()}
+			snap := idleWorkerSnapshot{ID: w.ID, SkillProfile: w.SkillProfile, Tier: w.EffectiveTier(), LastCommunityID: w.LastCommunityID}
 			if m.personalityStore != nil {
 				if profile := m.personalityStore.GetProfile(w.ID); profile != nil {
 					snap.SkillScores = profile.SkillScores
@@ -1727,9 +1737,20 @@ func (m *Manager) drainReadyQueue(ctx context.Context) {
 	}
 	m.mu.RUnlock()
 
+	// Obtain code graph for community-based assignment (best effort)
+	var codeGraph *knowledge.CodeGraph
+	if m.graphProvider != nil {
+		for _, t := range readyTasks {
+			if p, ok := m.projectStore.GetProject(t.ProjectID); ok {
+				codeGraph, _ = m.graphProvider.GetGraph(p.RepoPath)
+				break
+			}
+		}
+	}
+
 	assignedMap := make(map[string]bool)
 	for _, t := range readyTasks {
-		best := matchWorker(t, idle, assignedMap)
+		best := matchWorker(t, idle, assignedMap, codeGraph)
 		if best == "" {
 			continue
 		}

@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,6 +42,8 @@ type Spawner struct {
 	language           string // "en" or "zh-TW"
 	personalityStore   *personality.Store
 	knowledgeInjector  *knowledge.Injector
+	useWorktrees       bool // Enable git worktree isolation per task
+	trajectoryRecorder *TrajectoryRecorder
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -60,6 +65,27 @@ func NewSpawner(
 		tierConfigs:    make(map[WorkerTier]TierSpawnConfig),
 		skillProfiles:  make(map[string]config.SkillProfile),
 		skillOverrides: make(map[string]config.SkillProfileOverride),
+	}
+}
+
+// SetTrajectoryRecorder sets the trajectory recorder for this spawner.
+func (s *Spawner) SetTrajectoryRecorder(rec *TrajectoryRecorder) {
+	s.trajectoryRecorder = rec
+}
+
+// TrajectoryRecorder returns the trajectory recorder, if set.
+func (s *Spawner) TrajectoryRecorder() *TrajectoryRecorder {
+	return s.trajectoryRecorder
+}
+
+// recordTrajectory is a convenience method that records a trajectory entry if the
+// recorder is configured. Logs but does not propagate errors.
+func (s *Spawner) recordTrajectory(entry TrajectoryEntry) {
+	if s.trajectoryRecorder == nil {
+		return
+	}
+	if err := s.trajectoryRecorder.Record(entry); err != nil {
+		log.Printf("WARNING: trajectory record failed: %v", err)
 	}
 }
 
@@ -90,6 +116,86 @@ func (s *Spawner) SetProjectStore(ps projectStoreReader) {
 	s.projectStore = ps
 }
 
+// SetUseWorktrees enables git worktree isolation per task.
+func (s *Spawner) SetUseWorktrees(enabled bool) {
+	s.useWorktrees = enabled
+}
+
+func (s *Spawner) worktreePath(repoPath, taskID string) string {
+	return filepath.Join(repoPath, ".worktrees", taskID)
+}
+
+// buildKarpathyOverlay generates targeted behavioral guidelines based on rejection history.
+// Returns empty string if no violation tags are present.
+func buildKarpathyOverlay(t *project.Task, lang string) string {
+	if len(t.RejectionHistory) == 0 {
+		return ""
+	}
+
+	seen := make(map[string]bool)
+	for _, r := range t.RejectionHistory {
+		for _, tag := range r.ViolationTags {
+			seen[tag] = true
+		}
+	}
+	if len(seen) == 0 {
+		return ""
+	}
+
+	guidelines := config.KarpathyGuidelines()
+	var sb strings.Builder
+
+	if lang == "zh-TW" {
+		sb.WriteString("--- 行為準則（根據先前審查回饋）---\n")
+	} else {
+		sb.WriteString("--- Behavioral Guidelines (from prior review feedback) ---\n")
+	}
+
+	for tag := range seen {
+		if g, ok := guidelines[tag]; ok {
+			sb.WriteString(g)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	if lang == "zh-TW" {
+		sb.WriteString("--- 準則結束 ---\n\n")
+	} else {
+		sb.WriteString("--- End Guidelines ---\n\n")
+	}
+
+	return sb.String()
+}
+
+// MaxDelegationDepth is the maximum nesting level for delegated tasks.
+const MaxDelegationDepth = 2
+
+// shouldIncludeDelegation returns true if the task's depth allows further delegation.
+func shouldIncludeDelegation(t *project.Task) bool {
+	return t.DelegationDepth < MaxDelegationDepth
+}
+
+const maxGraphReportLen = 4000
+
+// readGraphReport reads the Graphify GRAPH_REPORT.md if it exists in the repo.
+// Returns formatted section string, or empty string if not found.
+func readGraphReport(repoPath string) string {
+	reportPath := filepath.Join(repoPath, "graphify-out", "GRAPH_REPORT.md")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	if len(content) > maxGraphReportLen {
+		content = content[:maxGraphReportLen] + "\n... (truncated)"
+	}
+	var sb strings.Builder
+	sb.WriteString("--- Project Architecture (Knowledge Graph) ---\n")
+	sb.WriteString(content)
+	sb.WriteString("\n--- End Architecture ---\n\n")
+	return sb.String()
+}
+
 // SetPersonalityStore sets the personality store for skill score lookups.
 func (s *Spawner) SetPersonalityStore(ps *personality.Store) {
 	s.personalityStore = ps
@@ -106,6 +212,12 @@ func (s *Spawner) LoadSkillProfiles(profiles []config.SkillProfile) {
 func (s *Spawner) SetKnowledgeInjector(inj *knowledge.Injector) {
 	s.knowledgeInjector = inj
 }
+
+// KnowledgeInjector returns the knowledge injector (may be nil).
+func (s *Spawner) KnowledgeInjector() *knowledge.Injector {
+	return s.knowledgeInjector
+}
+
 
 // LoadSkillOverrides populates per-worker skill profile overrides from config.
 func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOverride) {
@@ -174,9 +286,13 @@ func (s *Spawner) buildSkillArgs(w *Worker) string {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
-	if len(sp.DisallowedTools) > 0 {
+	// Merge profile-specific and global autonomous disallowed tools.
+	// Global tools (Skill, EnterPlanMode, ExitPlanMode) prevent infinite loops
+	// caused by interactive skills overriding worker instructions.
+	disallowed := mergeDisallowedTools(sp.DisallowedTools, config.AutonomousDisallowedTools())
+	if len(disallowed) > 0 {
 		parts = append(parts, "--disallowedTools")
-		for _, tool := range sp.DisallowedTools {
+		for _, tool := range disallowed {
 			parts = append(parts, shellEscape(tool))
 		}
 	}
@@ -230,6 +346,17 @@ func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
 		}
 	}
 
+	// Always block interactive skill tools for autonomous workers.
+	// Use mergeDisallowedTools for consistency with buildSkillArgs and to
+	// support future growth configs that may carry their own disallowed tools.
+	disallowed := mergeDisallowedTools(nil, config.AutonomousDisallowedTools())
+	if len(disallowed) > 0 {
+		parts = append(parts, "--disallowedTools")
+		for _, tool := range disallowed {
+			parts = append(parts, shellEscape(tool))
+		}
+	}
+
 	if cfg.ExtraPrompt != "" {
 		parts = append(parts, "--append-system-prompt", shellEscape(cfg.ExtraPrompt))
 	}
@@ -244,6 +371,10 @@ func (s *Spawner) buildGrowthSkillArgs(w *Worker) string {
 }
 
 // buildAISAgentArgs builds CLI flags for the ais-agent runtime.
+// Note: ais-agent does not load .claude/ skills or SessionStart hooks,
+// so it is not susceptible to the interactive skill loop. No disallowed
+// tools are needed here. If ais-agent gains skill support in the future,
+// add autonomousDisallowedTools enforcement here as well.
 func (s *Spawner) buildAISAgentArgs(w *Worker, cfg growth.LevelConfig) string {
 	var parts []string
 
@@ -293,7 +424,17 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 		}
 		if err := s.spawnForTaskInner(ctx, w, t, p); err != nil {
 			lastErr = err
-			continue
+			action := ClassifyError(err)
+			log.Printf("SpawnForTask: error classified as %s: %v", action, err)
+			switch action {
+			case ActionAbandon:
+				return fmt.Errorf("spawn abandoned (unrecoverable): %w", err)
+			case ActionCompress:
+				log.Printf("SpawnForTask: context too long for worker %s, cannot compress at spawn", w.ID)
+				return fmt.Errorf("spawn failed (context too long): %w", err)
+			default:
+				continue
+			}
 		}
 		return nil
 	}
@@ -329,25 +470,45 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		}
 	}
 
-	// 2. Create tmux session (kill stale session if it exists)
+	// 2. Set up working directory (worktree or repo root)
+	var workDir string
+	if s.useWorktrees && !isNonCodeTask && t.BranchName != "" {
+		wtPath := s.worktreePath(p.RepoPath, t.ID)
+		if err := s.gitOps.CreateWorktree(p.RepoPath, wtPath, t.BranchName); err != nil {
+			return fmt.Errorf("create worktree: %w", err)
+		}
+		workDir = wtPath
+		t.WorktreePath = wtPath
+	} else {
+		workDir = p.RepoPath
+	}
+
+	// 3. Create tmux session (kill stale session if it exists)
 	if exists, _ := s.tmuxClient.HasSession(tmuxName); exists {
 		s.tmuxClient.KillSession(tmuxName)
 	}
 	if err := s.tmuxClient.CreateSession(tmuxName); err != nil {
+		// Cleanup worktree if session creation fails
+		if t.WorktreePath != "" {
+			if wtErr := s.gitOps.CleanupWorktree(p.RepoPath, t.WorktreePath); wtErr != nil {
+				log.Printf("WARNING: failed to cleanup worktree after session failure: %v", wtErr)
+			}
+			t.WorktreePath = ""
+		}
 		return fmt.Errorf("creating tmux session: %w", err)
 	}
 
-	// 3. cd to repo path
-	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(p.RepoPath))+" Enter")
+	// 4. cd to working directory
+	s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("cd %s", shellEscape(workDir))+" Enter")
 	s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 
-	// 4. Checkout task branch (skip for non-code tasks)
-	if !isNonCodeTask && t.BranchName != "" {
+	// 5. Checkout task branch (only when NOT using worktrees — worktree is already on correct branch)
+	if !s.useWorktrees && !isNonCodeTask && t.BranchName != "" {
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, fmt.Sprintf("git checkout %s", t.BranchName)+" Enter")
 		s.waitForPaneContent(ctx, tmuxName, isShellPromptReady, 5*time.Second)
 	}
 
-	// 5. Launch CLI tool (claude or aider)
+	// 6. Launch CLI tool (claude or aider)
 	// Unset CLAUDECODE to avoid "nested session" detection when the supervisor
 	// itself is running inside a Claude Code session (e.g. during development).
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "unset CLAUDECODE"+" Enter")
@@ -367,14 +528,14 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		s.tmuxClient.SendKeys(tmuxName, 0, 0, cliTool+" Enter")
 	}
 
-	// 6. Wait for CLI to be ready
+	// 7. Wait for CLI to be ready
 	if err := s.waitForReady(ctx, tmuxName, 120*time.Second, readyRe); err != nil {
 		// Don't kill session on failure to allow debugging
 		log.Printf("WARNING: CLI ready timeout for %s in tmux session %s", cliTool, tmuxName)
 		return fmt.Errorf("waiting for %s ready: %w", cliTool, err)
 	}
 
-	// 7. Send task prompt
+	// 8. Send task prompt
 	deps := s.resolveDeps(t)
 	prompt := s.buildPromptForTier(t, p, w.EffectiveTier(), deps)
 
@@ -395,14 +556,32 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 	time.Sleep(delay)
 	s.tmuxClient.SendKeys(tmuxName, 0, 0, "Enter")
 
-	// 8. Update worker state
+	// Record trajectory: spawn (before prompt)
+	s.recordTrajectory(TrajectoryEntry{
+		Timestamp: time.Now(),
+		WorkerID:  w.ID,
+		TaskID:    t.ID,
+		Event:     TrajectoryEventSpawn,
+		Details:   fmt.Sprintf("spawned %s in tmux session %s", cliTool, tmuxName),
+	})
+
+	// Record trajectory: prompt_sent
+	s.recordTrajectory(TrajectoryEntry{
+		Timestamp: time.Now(),
+		WorkerID:  w.ID,
+		TaskID:    t.ID,
+		Event:     TrajectoryEventPromptSent,
+		Details:   fmt.Sprintf("prompt sent (%d chars)", len(prompt)),
+	})
+
+	// 9. Update worker state
 	w.TmuxSession = tmuxName
 	w.Window = 0
 	w.Pane = 0
 	w.Status = WorkerWorking
 	w.CurrentTaskID = t.ID
 
-	// 9. Create MonitoredSession and register with supervisor
+	// 10. Create MonitoredSession and register with supervisor
 	toolType := "claude_code"
 	if cliTool == "aider" {
 		toolType = "aider"
@@ -424,7 +603,7 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		s.sessionMgr.Add(ms)
 	}
 
-	// 10. Wire into supervisor monitoring pipeline
+	// 11. Wire into supervisor monitoring pipeline
 	if s.sup != nil {
 		go s.sup.Monitor(ctx, ms)
 	}
@@ -442,6 +621,72 @@ func promptRenderDelay(promptLen int) time.Duration {
 		total = 5 * time.Second
 	}
 	return total
+}
+
+// compressRejectionHistory builds a text summary of a task's rejection history.
+// If total Reason text across all rejections fits within maxLen, all reasons are
+// returned verbatim. Otherwise, only the last 2 rejections are kept in full and
+// older ones are compressed to a one-line summary with violation tags.
+func compressRejectionHistory(t *project.Task, maxLen int) string {
+	if len(t.RejectionHistory) == 0 {
+		return ""
+	}
+
+	// Calculate total length of all reason text
+	totalLen := 0
+	for _, r := range t.RejectionHistory {
+		totalLen += len(r.Reason)
+	}
+
+	var sb strings.Builder
+
+	// If under limit or 2 or fewer rejections, return all in full
+	if totalLen <= maxLen || len(t.RejectionHistory) <= 2 {
+		for i, r := range t.RejectionHistory {
+			if i > 0 {
+				sb.WriteString("\n\n")
+			}
+			sb.WriteString(fmt.Sprintf("Rejection %d", i+1))
+			if len(r.ViolationTags) > 0 {
+				sb.WriteString(fmt.Sprintf(" [%s]", strings.Join(r.ViolationTags, ", ")))
+			}
+			sb.WriteString(":\n")
+			sb.WriteString(r.Reason)
+		}
+		return sb.String()
+	}
+
+	// Over limit with >2 rejections: compress old ones, keep last 2 in full
+	oldCount := len(t.RejectionHistory) - 2
+	allTags := make(map[string]bool)
+	for _, r := range t.RejectionHistory[:oldCount] {
+		for _, tag := range r.ViolationTags {
+			allTags[tag] = true
+		}
+	}
+
+	tagList := make([]string, 0, len(allTags))
+	for tag := range allTags {
+		tagList = append(tagList, tag)
+	}
+	// Sort for deterministic output
+	sort.Strings(tagList)
+
+	sb.WriteString(fmt.Sprintf("Previously rejected %d times for: [%s]", oldCount, strings.Join(tagList, ", ")))
+
+	// Append last 2 in full
+	recent := t.RejectionHistory[oldCount:]
+	for i, r := range recent {
+		sb.WriteString("\n\n")
+		sb.WriteString(fmt.Sprintf("Rejection %d", oldCount+i+1))
+		if len(r.ViolationTags) > 0 {
+			sb.WriteString(fmt.Sprintf(" [%s]", strings.Join(r.ViolationTags, ", ")))
+		}
+		sb.WriteString(":\n")
+		sb.WriteString(r.Reason)
+	}
+
+	return sb.String()
 }
 
 // SendPromptToExisting sends a prompt to an already-running tmux session.
@@ -636,7 +881,11 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 	prompt := s.buildPromptForTierInner(t, p, tier, deps)
 	// Append knowledge context if injector is available
 	if s.knowledgeInjector != nil && t.AssigneeID != "" {
-		knowledgeCtx, err := s.knowledgeInjector.BuildContext(t.AssigneeID, t.ProjectID)
+		tier := knowledge.TierL2RoomRecall
+		if t.Type == project.TaskTypePRD {
+			tier = knowledge.TierL3DeepSearch
+		}
+		knowledgeCtx, err := s.knowledgeInjector.BuildContext(t.AssigneeID, t.ProjectID, tier)
 		if err == nil && knowledgeCtx != "" {
 			prompt += "\n\n" + knowledgeCtx
 		}
@@ -694,15 +943,29 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		lang = "zh-TW"
 	}
 
+	// Inject compressed rejection history if the task has been rejected before
+	rejectionContext := compressRejectionHistory(t, 3000)
+
 	var sb strings.Builder
 
 	if lang == "en" {
+		if overlay := buildKarpathyOverlay(t, "en"); overlay != "" {
+			sb.WriteString(overlay)
+		}
+		if graphReport := readGraphReport(p.RepoPath); graphReport != "" {
+			sb.WriteString(graphReport)
+		}
 		sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
 		sb.WriteString(fmt.Sprintf("Project: %s\n", p.Name))
 		if p.Description != "" {
 			sb.WriteString(fmt.Sprintf("Description: %s\n\n", p.Description))
 		}
 		sb.WriteString(t.Prompt)
+		if rejectionContext != "" {
+			sb.WriteString("\n\n--- Previous Rejection History ---\n")
+			sb.WriteString(rejectionContext)
+			sb.WriteString("\n--- End Rejection History ---\n")
+		}
 		if t.BranchName != "" {
 			sb.WriteString(fmt.Sprintf("\n\nYou are working on branch: %s", t.BranchName))
 		}
@@ -734,7 +997,7 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		sb.WriteString("\n\n--- When Done ---\n")
 		sb.WriteString("1. Commit all changes with a descriptive message\n")
 		sb.WriteString("2. Type /stop to signal completion\n")
-		if tier == TierManager || tier == TierConsultant {
+		if (tier == TierManager || tier == TierConsultant) && shouldIncludeDelegation(t) {
 			sb.WriteString("\n--- Delegation ---\n")
 			sb.WriteString("If you need to delegate sub-tasks to subordinates, output EXACTLY this JSON format:\n")
 			sb.WriteString(`{"delegate": [{"title": "Short task title", "prompt": "Detailed step-by-step instructions for the assignee", "priority": 1}]}`)
@@ -745,12 +1008,23 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 			sb.WriteString("Only output this JSON block when you have concrete work to delegate. Do NOT delegate if you can complete the task yourself.\n")
 		}
 	} else {
+		if overlay := buildKarpathyOverlay(t, "zh-TW"); overlay != "" {
+			sb.WriteString(overlay)
+		}
+		if graphReport := readGraphReport(p.RepoPath); graphReport != "" {
+			sb.WriteString(graphReport)
+		}
 		sb.WriteString("重要：請立即開始寫程式碼。不要建立規劃文件、設計文件或架構文件。直接寫程式碼。\n\n")
 		sb.WriteString(fmt.Sprintf("專案：%s\n", p.Name))
 		if p.Description != "" {
 			sb.WriteString(fmt.Sprintf("描述：%s\n\n", p.Description))
 		}
 		sb.WriteString(t.Prompt)
+		if rejectionContext != "" {
+			sb.WriteString("\n\n--- 過往退回記錄 ---\n")
+			sb.WriteString(rejectionContext)
+			sb.WriteString("\n--- 退回記錄結束 ---\n")
+		}
 		if t.BranchName != "" {
 			sb.WriteString(fmt.Sprintf("\n\n你正在分支上工作：%s", t.BranchName))
 		}
@@ -783,7 +1057,7 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		sb.WriteString("\n\n--- 完成時 ---\n")
 		sb.WriteString("1. 用描述性訊息提交所有變更\n")
 		sb.WriteString("2. 輸入 /stop 表示完成\n")
-		if tier == TierManager || tier == TierConsultant {
+		if (tier == TierManager || tier == TierConsultant) && shouldIncludeDelegation(t) {
 			sb.WriteString("\n--- 委派 ---\n")
 			sb.WriteString("當你需要將工作委派給下屬時，請嚴格按照以下 JSON 格式輸出：\n")
 			sb.WriteString(`{"delegate": [{"title": "簡短任務標題", "prompt": "給被指派者的詳細步驟指示", "priority": 1}]}`)
@@ -1079,4 +1353,24 @@ func (s *Spawner) resolveDeps(t *project.Task) []depContext {
 
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// mergeDisallowedTools combines profile-specific and global disallowed tools,
+// deduplicating entries.
+func mergeDisallowedTools(profile, global []string) []string {
+	seen := make(map[string]bool, len(profile)+len(global))
+	var result []string
+	for _, t := range profile {
+		if !seen[t] {
+			seen[t] = true
+			result = append(result, t)
+		}
+	}
+	for _, t := range global {
+		if !seen[t] {
+			seen[t] = true
+			result = append(result, t)
+		}
+	}
+	return result
 }

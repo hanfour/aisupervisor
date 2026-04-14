@@ -93,6 +93,10 @@ func (m *Manager) handleDelegationOutput(w *worker.Worker, t *project.Task, p *p
 			log.Printf("delegation: failed to create task %q: %v", cmd.Title, err)
 			continue
 		}
+		newTask.DelegationDepth = t.DelegationDepth + 1
+		if err := m.projectStore.SaveTask(newTask); err != nil {
+			log.Printf("delegation: failed to save task depth for %s: %v", newTask.ID, err)
+		}
 
 		m.emit(Event{
 			Type:      EventDelegationCreated,

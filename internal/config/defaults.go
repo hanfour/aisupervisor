@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // DefaultSkillProfiles returns the built-in skill profiles.
 // User-defined profiles in config.yaml override these by matching ID.
 //
@@ -10,6 +12,17 @@ package config
 //
 // Permission modes: "default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"
 // Model aliases: "sonnet", "opus", "haiku", "sonnet[1m]", "opusplan"
+
+// autonomousDisallowedTools lists tools that autonomous workers must never use.
+// Do not modify this slice directly; use AutonomousDisallowedTools() to get a copy.
+// These prevent infinite loops caused by interactive skills (brainstorming,
+// writing-plans, etc.) overriding worker instructions via SessionStart hooks.
+var autonomousDisallowedTools = []string{
+	"Skill",         // prevents superpowers/interactive skill invocation
+	"EnterPlanMode", // prevents planning mode loops
+	"ExitPlanMode",  // paired with EnterPlanMode
+}
+
 func DefaultSkillProfiles() []SkillProfile {
 	return []SkillProfile{
 		{
@@ -23,8 +36,9 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Debug issues systematically: reproduce first, then isolate, then fix. " +
 				"Prefer simple, readable solutions over clever ones. " +
 				"Commit frequently with clear messages. Start coding immediately — no planning docs.",
-			PermissionMode: "bypassPermissions",
-			Model:          "sonnet",
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "bypassPermissions",
+			Model:           "sonnet",
 		},
 		{
 			ID:          "hacker",
@@ -37,9 +51,10 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Document findings with severity ratings (CVSS), impact assessment, and remediation advice. " +
 				"Use OWASP methodology for web app testing. Check for OWASP Top 10 issues systematically. " +
 				"When fixing vulnerabilities, verify the fix doesn't introduce regressions.",
-			AllowedTools:   []string{"Bash", "Edit", "Read", "Write", "Grep", "Glob", "WebFetch"},
-			PermissionMode: "acceptEdits",
-			Model:          "sonnet",
+			AllowedTools:    []string{"Bash", "Edit", "Read", "Write", "Grep", "Glob", "WebFetch"},
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "acceptEdits",
+			Model:           "sonnet",
 		},
 		{
 			ID:          "designer",
@@ -53,7 +68,7 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Match the existing design system's color palette, spacing, and typography. " +
 				"Test at multiple viewport sizes. Ensure interactive elements have clear hover/focus states.",
 			AllowedTools:    []string{"Edit", "Write", "Read", "Glob", "Grep", "Bash"},
-			DisallowedTools: []string{"Bash(rm -rf *)", "Bash(git push *)"},
+			DisallowedTools: append([]string{"Bash(rm -rf *)", "Bash(git push *)"}, autonomousDisallowedTools...),
 			PermissionMode:  "bypassPermissions",
 			Model:           "sonnet",
 		},
@@ -69,9 +84,10 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Provide actionable recommendations with specific file paths and line numbers. " +
 				"Use metrics (cyclomatic complexity, test coverage, dependency counts) to support findings. " +
 				"Do not modify code unless explicitly asked — your role is analysis and recommendation.",
-			AllowedTools:   []string{"Read", "Grep", "Glob", "Bash(git log *)", "Bash(git diff *)", "Bash(wc *)", "Bash(cloc *)", "Bash(go test -count *)", "Bash(go vet *)"},
-			PermissionMode: "plan",
-			Model:          "sonnet",
+			AllowedTools:    []string{"Read", "Grep", "Glob", "Bash(git log *)", "Bash(git diff *)", "Bash(wc *)", "Bash(cloc *)", "Bash(go test -count *)", "Bash(go vet *)"},
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "plan",
+			Model:           "sonnet",
 		},
 		{
 			ID:          "architect",
@@ -85,9 +101,10 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Produce concise design proposals — focus on interfaces, data flow, and key decisions. " +
 				"Use diagrams (Mermaid) to communicate complex relationships. " +
 				"Review code for architectural alignment and flag violations early.",
-			AllowedTools:   []string{"Read", "Grep", "Glob", "Edit", "Write", "Task", "WebSearch"},
-			PermissionMode: "acceptEdits",
-			Model:          "opus",
+			AllowedTools:    []string{"Read", "Grep", "Glob", "Edit", "Write", "WebSearch"},
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "acceptEdits",
+			Model:           "opus",
 		},
 		{
 			ID:          "devops",
@@ -101,9 +118,10 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Validate configurations before applying (dry-run, lint). " +
 				"Include health checks and graceful shutdown handling. " +
 				"Document environment variables and secrets management.",
-			AllowedTools:   []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep"},
-			PermissionMode: "bypassPermissions",
-			Model:          "sonnet",
+			AllowedTools:    []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep"},
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "bypassPermissions",
+			Model:           "sonnet",
 		},
 		{
 			ID:          "reviewer",
@@ -117,9 +135,10 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Categorize issues as blocking (must fix) or non-blocking (nice to have). " +
 				"End your review with a clear verdict: either **APPROVED** or **REJECTED** followed by specific reasons. " +
 				"Be constructive — explain why something is an issue and suggest how to fix it.",
-			AllowedTools:   []string{"Read", "Grep", "Glob", "Bash(git diff *)", "Bash(git log *)", "Bash(go test *)", "Bash(npm test *)", "Bash(pytest *)"},
-			PermissionMode: "acceptEdits",
-			Model:          "opus",
+			AllowedTools:    []string{"Read", "Grep", "Glob", "Bash(git diff *)", "Bash(git log *)", "Bash(go test *)", "Bash(npm test *)", "Bash(pytest *)"},
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "acceptEdits",
+			Model:           "opus",
 		},
 		{
 			ID:          "assistant",
@@ -134,9 +153,10 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Supported document types: quotes, contracts, service invoices, meeting notes, and to-do lists. " +
 				"Use clear headings, tables where appropriate, and professional formatting. " +
 				"Always commit your output files when done.",
-			AllowedTools:   []string{"Read", "Write", "Edit", "Glob", "Grep", "Bash(ls *)", "Bash(mkdir *)"},
-			PermissionMode: "bypassPermissions",
-			Model:          "sonnet",
+			AllowedTools:    []string{"Read", "Write", "Edit", "Glob", "Grep", "Bash(ls *)", "Bash(mkdir *)"},
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "bypassPermissions",
+			Model:           "sonnet",
 		},
 		{
 			ID:          "hr",
@@ -152,9 +172,10 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Produce a recruitment report in Markdown with: candidate profiles, match scores, and recommendations. " +
 				"Output reports to docs/hr/ (create the directory if it doesn't exist). " +
 				"Always commit your output files when done.",
-			AllowedTools:   []string{"Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Bash(ls *)", "Bash(mkdir *)"},
-			PermissionMode: "bypassPermissions",
-			Model:          "sonnet",
+			AllowedTools:    []string{"Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Bash(ls *)", "Bash(mkdir *)"},
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "bypassPermissions",
+			Model:           "sonnet",
 		},
 		{
 			ID:          "researcher",
@@ -168,11 +189,17 @@ func DefaultSkillProfiles() []SkillProfile {
 				"Focus on accuracy — verify claims against source material. " +
 				"Highlight unknowns and areas needing further investigation. " +
 				"Produce actionable summaries that help the team make informed decisions.",
-			AllowedTools:   []string{"Read", "Grep", "Glob", "WebSearch", "WebFetch", "Bash(git log *)", "Bash(git diff *)"},
-			PermissionMode: "plan",
-			Model:          "opus",
+			AllowedTools:    []string{"Read", "Grep", "Glob", "WebSearch", "WebFetch", "Bash(git log *)", "Bash(git diff *)"},
+			DisallowedTools: autonomousDisallowedTools,
+			PermissionMode:  "plan",
+			Model:           "opus",
 		},
 	}
+}
+
+// AutonomousDisallowedTools returns tools that all autonomous workers must never use.
+func AutonomousDisallowedTools() []string {
+	return append([]string{}, autonomousDisallowedTools...)
 }
 
 // MergeSkillProfiles merges user-defined profiles with defaults.
@@ -192,4 +219,46 @@ func MergeSkillProfiles(userProfiles []SkillProfile) []SkillProfile {
 		}
 	}
 	return defaults
+}
+
+// KarpathyGuidelines returns behavioral guidelines keyed by violation tag.
+// Injected into worker prompts when prior rejections match the tag.
+// Based on: https://github.com/forrestchang/andrej-karpathy-skills
+func KarpathyGuidelines() map[string]string {
+	return map[string]string{
+		"assumptions": "IMPORTANT: Before writing any code, explicitly state your assumptions about the task requirements. " +
+			"If anything is ambiguous, implement the simplest interpretation and note what you assumed. Do NOT silently guess.",
+		"overengineered": "IMPORTANT: Write the minimum code that solves exactly what was asked. " +
+			"No premature abstractions, no speculative features, no 'just in case' error handling. " +
+			"If a simple function works, do not create a class hierarchy.",
+		"scope_creep": "IMPORTANT: Only modify code directly related to this task. " +
+			"Do NOT improve surrounding code, add comments to unrelated functions, reformat files, " +
+			"or refactor code you weren't asked to touch. Surgical precision.",
+		"no_verification": "IMPORTANT: Before committing, you MUST verify your changes work. " +
+			"Run existing tests, write a quick test for new logic, and confirm the build passes. " +
+			"Do NOT commit code you haven't tested.",
+	}
+}
+
+// violationKeywords maps violation tags to keyword patterns found in rejection output.
+var violationKeywords = map[string][]string{
+	"assumptions":     {"assumption", "assumed", "misunderstand", "wrong interpretation", "not what was asked", "misread"},
+	"overengineered":  {"overengineer", "unnecessary abstraction", "too complex", "bloat", "over-architected", "overkill", "unnecessary"},
+	"scope_creep":     {"unrelated change", "scope", "out of scope", "didn't ask", "beyond the task", "unrelated", "not requested"},
+	"no_verification": {"no test", "untested", "didn't verify", "missing test", "test fail", "not tested", "without testing"},
+}
+
+// ClassifyViolations scans rejection output for keyword patterns and returns matching violation tags.
+func ClassifyViolations(output string) []string {
+	lower := strings.ToLower(output)
+	var tags []string
+	for tag, keywords := range violationKeywords {
+		for _, kw := range keywords {
+			if strings.Contains(lower, kw) {
+				tags = append(tags, tag)
+				break
+			}
+		}
+	}
+	return tags
 }

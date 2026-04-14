@@ -75,6 +75,7 @@ type Manager struct {
 	completedTaskCount  int                     // counter for micro-retro trigger
 	growthEngine        *growth.Engine
 	featureManager      *feature.Manager
+	reviewCfg           config.ReviewConfig
 }
 
 type workersFile struct {
@@ -782,6 +783,8 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 		return fmt.Errorf("spawner not configured")
 	}
 	if err := m.spawner.SpawnForTask(ctx, w, t, p); err != nil {
+		t.ErrorLog = append(t.ErrorLog, fmt.Sprintf("[%s] spawn failed: %v", time.Now().Format(time.RFC3339), err))
+		m.projectStore.SaveTask(t)
 		m.projectStore.UpdateTaskStatus(taskID, project.TaskReady)
 		// Schedule a delayed retry via drainReadyQueue
 		go func() {
@@ -1054,6 +1057,8 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 		})
 
 		// Auto-retry if under the retry limit
+		failMsg := fmt.Sprintf("[%s] task failed (worker: %s)", time.Now().Format(time.RFC3339), w.Name)
+		t.ErrorLog = append(t.ErrorLog, failMsg)
 		if t.RetryCount < maxRetries {
 			t.RetryCount++
 			m.projectStore.SaveTask(t)
@@ -1066,6 +1071,8 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 				Message:   m.msgf("Task %q failed, auto-retrying (%d/%d)", "任務 %q 失敗，自動重試（%d/%d）", t.Title, t.RetryCount, maxRetries),
 			})
 		} else {
+			t.ErrorLog = append(t.ErrorLog, fmt.Sprintf("[%s] max retries (%d) exceeded, marking as failed", time.Now().Format(time.RFC3339), maxRetries))
+			m.projectStore.SaveTask(t)
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskFailed)
 			m.emit(Event{
 				Type:      EventTaskFailed,
@@ -1152,6 +1159,8 @@ func (m *Manager) handleTrainingIteration(w *worker.Worker, t *project.Task, p *
 	result, err := m.trainingLoop.EvaluateAndDecide(context.Background(), p.RepoPath, t.BranchName, cfg)
 	if err != nil {
 		log.Printf("training: evaluate failed for task %s: %v", t.ID, err)
+		t.ErrorLog = append(t.ErrorLog, fmt.Sprintf("[%s] training evaluation failed: %v", time.Now().Format(time.RFC3339), err))
+		m.projectStore.SaveTask(t)
 		m.emit(Event{
 			Type:      EventTaskFailed,
 			ProjectID: p.ID,
@@ -1463,6 +1472,17 @@ func (m *Manager) SetAutoAssignConfig(cfg config.AutoAssignConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.autoAssignCfg = cfg
+}
+
+// SetReviewConfig sets the debate review pipeline configuration.
+func (m *Manager) SetReviewConfig(cfg config.ReviewConfig) {
+	m.mu.Lock()
+	m.reviewCfg = cfg
+	m.mu.Unlock()
+	// Write to ReviewPipeline under its own lock to avoid race with executeReview.
+	m.review.mu.Lock()
+	m.review.reviewCfg = cfg
+	m.review.mu.Unlock()
 }
 
 // recordCompletionMetrics captures token usage, analytics snapshot, and budget checks.

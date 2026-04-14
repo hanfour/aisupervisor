@@ -60,7 +60,8 @@ type Task struct {
 	DependsOn    []string   `yaml:"depends_on,omitempty" json:"dependsOn,omitempty"`
 	Milestone    string     `yaml:"milestone,omitempty" json:"milestone,omitempty"`
 	ReviewerID   string     `yaml:"reviewer_id,omitempty" json:"reviewerId,omitempty"`
-	ParentTaskID string     `yaml:"parent_task_id,omitempty" json:"parentTaskId,omitempty"`
+	ParentTaskID    string     `yaml:"parent_task_id,omitempty" json:"parentTaskId,omitempty"`
+	DelegationDepth int        `yaml:"delegation_depth,omitempty" json:"delegationDepth,omitempty"`
 	ReviewCount      int            `yaml:"review_count,omitempty" json:"reviewCount,omitempty"`
 	RejectionCount   int            `yaml:"rejection_count,omitempty" json:"rejectionCount,omitempty"`
 	RejectionHistory []Rejection    `yaml:"rejection_history,omitempty" json:"rejectionHistory,omitempty"`
@@ -88,6 +89,8 @@ type Task struct {
 	// HelpRequestHandled stores the help content already processed, to prevent duplicate handling.
 	HelpRequestHandled string `yaml:"help_request_handled,omitempty" json:"-"`
 
+	WorktreePath     string         `yaml:"worktree_path,omitempty" json:"worktreePath,omitempty"`
+	ErrorLog         []string       `yaml:"error_log,omitempty" json:"errorLog,omitempty"`
 	RetryCount       int            `yaml:"retry_count,omitempty" json:"retryCount,omitempty"`
 	CreatedAt        time.Time      `yaml:"created_at" json:"createdAt"`
 	StartedAt        *time.Time     `yaml:"started_at,omitempty" json:"startedAt,omitempty"`
@@ -97,10 +100,11 @@ type Task struct {
 
 // Rejection records a single review rejection event.
 type Rejection struct {
-	Stage      TaskStatus `yaml:"stage" json:"stage"`
-	RejectorID string     `yaml:"rejector_id" json:"rejectorId"`
-	Reason     string     `yaml:"reason" json:"reason"`
-	Timestamp  time.Time  `yaml:"timestamp" json:"timestamp"`
+	Stage         TaskStatus `yaml:"stage" json:"stage"`
+	RejectorID    string     `yaml:"rejector_id" json:"rejectorId"`
+	Reason        string     `yaml:"reason" json:"reason"`
+	ViolationTags []string   `yaml:"violation_tags,omitempty" json:"violationTags,omitempty"`
+	Timestamp     time.Time  `yaml:"timestamp" json:"timestamp"`
 }
 
 // BounceRecord tracks a task being bounced between agents.

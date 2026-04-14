@@ -34,12 +34,25 @@ type Config struct {
 	SkillsMPAPIKey       string                         `yaml:"skillsmp_api_key,omitempty"`
 	ReviewTimeout        int                            `yaml:"review_timeout_minutes,omitempty"`   // minutes before auto-approving stuck reviews (default 15)
 	AutoAssign           AutoAssignConfig               `yaml:"auto_assign,omitempty"`
+	Review               ReviewConfig                   `yaml:"review,omitempty"`
+	APIKeys              []APIKeyConfig                 `yaml:"api_keys,omitempty" json:"apiKeys,omitempty"`
 }
 
 // AutoAssignConfig controls proactive task assignment to idle workers.
 type AutoAssignConfig struct {
 	Enabled      bool `yaml:"enabled"`
 	IdleTimeout  int  `yaml:"idle_timeout_seconds,omitempty"` // seconds before auto-assigning (default 120)
+}
+
+// ReviewConfig controls the debate review pipeline.
+type ReviewConfig struct {
+	AnalysisModel    string `yaml:"analysis_model,omitempty"`
+	VoteModel        string `yaml:"vote_model,omitempty"`
+	SynthesisModel   string `yaml:"synthesis_model,omitempty"`
+	DebateThreshold  int    `yaml:"debate_threshold,omitempty"`
+	LightMaxLines    int    `yaml:"light_max_lines,omitempty"`
+	LightMaxFiles int `yaml:"light_max_files,omitempty"`
+	FastConverge  int `yaml:"fast_converge,omitempty"`
 }
 
 // SkillProfileOverride holds per-worker customizations layered on top of the base SkillProfile.
@@ -205,6 +218,18 @@ type VerificationConfig struct {
 }
 
 // HumanGateConfig controls when human intervention is required.
+// APIKeyConfig defines a single API key for credential pooling.
+type APIKeyConfig struct {
+	ID       string `yaml:"id" json:"id"`
+	Key      string `yaml:"key" json:"key"`
+	Provider string `yaml:"provider" json:"provider"`
+}
+
+// DefaultAPIKeys returns an empty slice — single-key mode by default.
+func DefaultAPIKeys() []APIKeyConfig {
+	return nil
+}
+
 type HumanGateConfig struct {
 	Enabled              bool    `yaml:"enabled"`
 	TokenBudgetThreshold int64   `yaml:"token_budget_threshold,omitempty"`
@@ -261,6 +286,15 @@ func DefaultConfig() *Config {
 			Path:    filepath.Join(home, ".local", "share", "aisupervisor", "audit.jsonl"),
 		},
 		Language: "zh-TW",
+		Review: ReviewConfig{
+			AnalysisModel:    "opus",
+			VoteModel:        "haiku",
+			SynthesisModel:   "sonnet",
+			DebateThreshold:  300,
+			LightMaxLines:    50,
+			LightMaxFiles: 3,
+			FastConverge:  5,
+		},
 	}
 }
 

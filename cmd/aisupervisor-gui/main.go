@@ -188,6 +188,7 @@ func main() {
 		companyApp.SetTrainingDir(trainingDir)
 	}
 	companyApp.SetSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
+	companyMgr.SetReviewConfig(cfg.Review)
 	if cfg.UpdateURL != "" {
 		companyApp.SetUpdateURL(cfg.UpdateURL)
 	}

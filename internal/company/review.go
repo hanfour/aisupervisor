@@ -2,12 +2,17 @@ package company
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/config"
+	"github.com/hanfourmini/aisupervisor/internal/gitops"
+	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/training"
@@ -37,12 +42,14 @@ type ReviewPipeline struct {
 	reviewQueue     []ReviewRequest
 	mgr             *Manager
 	reviewStartMeta map[string]reviewMeta // keyed by original task ID
+	reviewCfg       config.ReviewConfig
 }
 
 func newReviewPipeline(mgr *Manager) *ReviewPipeline {
 	return &ReviewPipeline{
 		mgr:             mgr,
 		reviewStartMeta: make(map[string]reviewMeta),
+		reviewCfg:       mgr.reviewCfg,
 	}
 }
 
@@ -144,6 +151,19 @@ func (rp *ReviewPipeline) DrainQueue(ctx context.Context) {
 }
 
 func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, managerWorker *worker.Worker, t *project.Task, p *project.Project) error {
+	// Use debate pipeline if ChatProvider is available.
+	// Copy reviewCfg under lock to avoid race with SetReviewConfig.
+	if rp.mgr.chatProvider != nil {
+		rp.mu.Lock()
+		cfg := rp.reviewCfg
+		rp.mu.Unlock()
+		go rp.runChatReview(req, t, p, cfg)
+		return nil
+	}
+	return rp.executeReviewTmux(ctx, req, managerWorker, t, p)
+}
+
+func (rp *ReviewPipeline) executeReviewTmux(ctx context.Context, req ReviewRequest, managerWorker *worker.Worker, t *project.Task, p *project.Project) error {
 	// Create a review sub-task
 	reviewPrompt := rp.buildReviewPrompt(t, p)
 	reviewTask := &project.Task{
@@ -186,6 +206,260 @@ func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, 
 	}
 
 	return nil
+}
+
+// getDiffStats returns diff line count, file count, and diff content for a branch pair.
+func getDiffStats(ctx context.Context, repoPath, baseBranch, taskBranch string) (diffLines int, fileCount int, diff string, err error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", baseBranch+"..."+taskBranch)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, "", fmt.Errorf("git diff: %w", err)
+	}
+	diff = string(out)
+	diffLines = strings.Count(diff, "\n")
+
+	cmd2 := exec.CommandContext(ctx, "git", "diff", "--name-only", baseBranch+"..."+taskBranch)
+	cmd2.Dir = repoPath
+	out2, err2 := cmd2.Output()
+	if err2 != nil {
+		return diffLines, 0, diff, fmt.Errorf("git diff --name-only: %w", err2)
+	}
+	names := strings.TrimSpace(string(out2))
+	if names == "" {
+		fileCount = 0
+	} else {
+		fileCount = len(strings.Split(names, "\n"))
+	}
+	return
+}
+
+// parseDebateResult extracts a DebateResult from raw output (direct JSON or markdown-wrapped).
+func parseDebateResult(output string) (*DebateResult, error) {
+	var result DebateResult
+	if err := json.Unmarshal([]byte(output), &result); err == nil && result.Status != "" {
+		return &result, nil
+	}
+	extracted := extractChatJSON(output)
+	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
+		return nil, fmt.Errorf("no valid DebateResult JSON found")
+	}
+	if result.Status == "" {
+		return nil, fmt.Errorf("DebateResult has empty status")
+	}
+	return &result, nil
+}
+
+// reviewConfigWithDefaults applies defaults to a ReviewConfig with zero values.
+func reviewConfigWithDefaults(cfg config.ReviewConfig) config.ReviewConfig {
+	if cfg.DebateThreshold <= 0 {
+		cfg.DebateThreshold = 300
+	}
+	if cfg.LightMaxLines <= 0 {
+		cfg.LightMaxLines = 50
+	}
+	if cfg.LightMaxFiles <= 0 {
+		cfg.LightMaxFiles = 3
+	}
+	if cfg.FastConverge <= 0 {
+		cfg.FastConverge = 5
+	}
+	if cfg.AnalysisModel == "" {
+		cfg.AnalysisModel = "opus"
+	}
+	if cfg.VoteModel == "" {
+		cfg.VoteModel = "haiku"
+	}
+	if cfg.SynthesisModel == "" {
+		cfg.SynthesisModel = "sonnet"
+	}
+	return cfg
+}
+
+// runChatReview runs the debate/single-pass review pipeline via ChatProvider.
+// cfg is passed by value (copied under lock by caller) to avoid races.
+func (rp *ReviewPipeline) runChatReview(req ReviewRequest, t *project.Task, p *project.Project, cfg config.ReviewConfig) {
+	cfg = reviewConfigWithDefaults(cfg)
+
+	baseBranch := p.BaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	diffLines, fileCount, diff, err := getDiffStats(ctx, p.RepoPath, baseBranch, t.BranchName)
+	if err != nil {
+		log.Printf("debate: getDiffStats failed: %v, falling back to tmux review", err)
+		rp.fallbackTmuxReview(req, t, p)
+		return
+	}
+
+	strategy := selectStrategy(diffLines, fileCount, cfg.DebateThreshold, cfg.LightMaxLines, cfg.LightMaxFiles)
+	log.Printf("debate: task=%s strategy=%s (lines=%d files=%d)", t.ID, strategy, diffLines, fileCount)
+
+	// Build PKB context if knowledge injector is available via spawner
+	var pkbContext string
+	if inj := rp.mgr.spawner.KnowledgeInjector(); inj != nil {
+		pkbCtx, _ := inj.BuildContext("", p.ID, knowledge.TierL2RoomRecall)
+		pkbContext = pkbCtx
+	}
+
+	var result *DebateResult
+	switch strategy {
+	case ReviewLight:
+		result, err = runSinglePassReview(ctx, rp.mgr.chatProvider, diff, pkbContext, cfg.SynthesisModel, rp.mgr.GetLanguage(), ReviewLight)
+	case ReviewStandard:
+		result, err = runSinglePassReview(ctx, rp.mgr.chatProvider, diff, pkbContext, cfg.AnalysisModel, rp.mgr.GetLanguage(), ReviewStandard)
+	case ReviewDebate:
+		result, err = runDebate(ctx, rp.mgr.chatProvider, diff, pkbContext, cfg.AnalysisModel, cfg.VoteModel, cfg.SynthesisModel, cfg.FastConverge, rp.mgr.GetLanguage())
+	}
+
+	if err != nil {
+		log.Printf("debate: review failed: %v, falling back to tmux", err)
+		rp.fallbackTmuxReview(req, t, p)
+		return
+	}
+
+	rp.handleDebateResult(result, req, t, p)
+}
+
+// fallbackTmuxReview falls back to the legacy tmux-based review when debate pipeline fails.
+func (rp *ReviewPipeline) fallbackTmuxReview(req ReviewRequest, t *project.Task, p *project.Project) {
+	rp.mgr.mu.RLock()
+	managerWorker, ok := rp.mgr.workers[req.ManagerID]
+	rp.mgr.mu.RUnlock()
+	if !ok {
+		log.Printf("WARN: fallbackTmuxReview: manager %s not found, review for task %s dropped", req.ManagerID, t.ID)
+		return
+	}
+	if err := rp.executeReviewTmux(context.Background(), req, managerWorker, t, p); err != nil {
+		log.Printf("ERROR: fallbackTmuxReview failed for task %s: %v", t.ID, err)
+	}
+}
+
+// handleDebateResult processes the outcome of a debate/single-pass review.
+func (rp *ReviewPipeline) handleDebateResult(result *DebateResult, req ReviewRequest, t *project.Task, p *project.Project) {
+	approved := result.Status == "APPROVED"
+
+	// Build output string for training/personality
+	var output string
+	if approved {
+		output = "APPROVED\n" + result.Summary
+	} else {
+		var sb strings.Builder
+		sb.WriteString("REJECTED\n")
+		sb.WriteString(result.Summary + "\n\n")
+		for _, c := range result.Comments {
+			sb.WriteString(fmt.Sprintf("[%s] %s:%d — %s\n", c.Severity, c.File, c.Line, c.Body))
+		}
+		output = sb.String()
+	}
+
+	// Emit appropriate event based on verdict
+	eventType := EventReviewApproved
+	if !approved {
+		eventType = EventReviewRejected
+	}
+	rp.mgr.emit(Event{
+		Type:      eventType,
+		ProjectID: p.ID,
+		TaskID:    t.ID,
+		Message:   rp.mgr.msgf("Debate review for task %q: %s (%d findings)", "任務 %q 的辯論審查：%s（%d 個發現）", t.Title, result.Status, len(result.Comments)),
+	})
+
+	// Update personality
+	if rp.mgr.personalityStore != nil && t.AssigneeID != "" {
+		rp.mgr.personalityStore.UpdateProfile(t.AssigneeID, func(profile *personality.CharacterProfile) {
+			if approved {
+				personality.ApplyEvent(profile, personality.EventReviewApproved)
+				personality.ApplySkillEvent(&profile.SkillScores, personality.SkillEventReviewApproved)
+				profile.TasksCompleted++
+				if profile.TasksCompleted%10 == 0 {
+					personality.DecayTowardBaseline(&profile.SkillScores)
+				}
+			} else {
+				personality.ApplyEvent(profile, personality.EventReviewRejected)
+				skillEvent := personality.ClassifyRejectionType(output)
+				personality.ApplySkillEvent(&profile.SkillScores, skillEvent)
+			}
+			personality.UpdateAutoMood(profile)
+		})
+		rp.mgr.emit(Event{
+			Type:     EventMoodChanged,
+			WorkerID: t.AssigneeID,
+			Message:  rp.mgr.msgf("Mood changed after debate review", "辯論審查後心情變化"),
+		})
+	}
+
+	if approved {
+		rp.mgr.projectStore.UpdateTaskStatus(t.ID, project.TaskDone)
+		rp.cleanupAfterApproval(t, p.RepoPath, rp.mgr.gitOps)
+		// Note: EventReviewApproved already emitted above via eventType.
+		promoted, _ := rp.mgr.projectStore.PromoteReady(p.ID)
+		for _, pt := range promoted {
+			rp.mgr.emit(Event{
+				Type:      EventTaskCreated,
+				ProjectID: p.ID,
+				TaskID:    pt.ID,
+				Message:   rp.mgr.msgf("Task %q is now ready", "任務 %q 已就緒", pt.Title),
+			})
+		}
+		if len(promoted) > 0 {
+			go rp.mgr.engageIdleManagers(context.Background(), p.ID)
+			go rp.mgr.drainReadyQueue(context.Background())
+		}
+		go rp.mgr.checkProjectCompletion(p.ID)
+	} else {
+		t.RejectionCount++
+		t.RejectionHistory = append(t.RejectionHistory, project.Rejection{
+			Stage:         t.Status,
+			RejectorID:    "debate-review",
+			Reason:        sanitizeForYAML(output),
+			ViolationTags: config.ClassifyViolations(output),
+			Timestamp:     time.Now(),
+		})
+
+		cb := rp.mgr.circuitBreaker
+		if cb.CheckBounceLoop(t, "debate-review", t.AssigneeID) || project.ShouldEscalate(t) {
+			cb.RecordBounce(t, "debate-review", t.AssigneeID, t.Status, "debate bounce loop")
+			cb.Escalate(t, fmt.Sprintf("debate: %d rejections", t.RejectionCount))
+			rp.mgr.projectStore.SaveTask(t)
+			return
+		}
+		cb.RecordBounce(t, "debate-review", t.AssigneeID, t.Status, sanitizeForYAML(output))
+
+		rp.mgr.projectStore.UpdateTaskStatus(t.ID, project.TaskRevision)
+
+		basePrompt := t.Prompt
+		if idx := strings.Index(basePrompt, "\n\n--- Review Feedback ---\n"); idx != -1 {
+			basePrompt = basePrompt[:idx]
+		}
+		if idx := strings.Index(basePrompt, "\n\n--- 審查回饋 ---\n"); idx != -1 {
+			basePrompt = basePrompt[:idx]
+		}
+		if rp.mgr.GetLanguage() == "en" {
+			t.Prompt = fmt.Sprintf("%s\n\n--- Review Feedback (attempt %d) ---\n%s\n\nPlease address the above feedback and resubmit.", basePrompt, t.RejectionCount, output)
+		} else {
+			t.Prompt = fmt.Sprintf("%s\n\n--- 審查回饋（第 %d 次）---\n%s\n\n請針對以上回饋進行修改後重新提交。", basePrompt, t.RejectionCount, output)
+		}
+		t.Status = project.TaskReady
+		rp.mgr.projectStore.SaveTask(t)
+
+		// Note: EventReviewRejected already emitted above via eventType.
+
+		if t.AssigneeID != "" {
+			rp.mgr.mu.RLock()
+			eng, ok := rp.mgr.workers[t.AssigneeID]
+			rp.mgr.mu.RUnlock()
+			if ok && eng.Status == worker.WorkerIdle {
+				go func() {
+					rp.mgr.AssignTask(context.Background(), eng.ID, t.ID)
+				}()
+			}
+		}
+	}
 }
 
 // HandleReviewResult processes the outcome of a manager review.
@@ -269,6 +543,19 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			WorkerID:  managerWorker.ID,
 			Message:   rp.mgr.msgf("Task %q approved by %s", "任務 %q 已由 %s 核准", originalTask.Title, managerWorker.Name),
 		})
+		// Record trajectory: review_approved
+		if rp.mgr.spawner != nil {
+			if rec := rp.mgr.spawner.TrajectoryRecorder(); rec != nil {
+				_ = rec.Record(worker.TrajectoryEntry{
+					Timestamp: time.Now(),
+					WorkerID:  managerWorker.ID,
+					TaskID:    originalTask.ID,
+					Event:     worker.TrajectoryEventReviewApproved,
+					Details:   fmt.Sprintf("approved by %s", managerWorker.Name),
+				})
+			}
+		}
+		rp.cleanupAfterApproval(originalTask, p.RepoPath, rp.mgr.gitOps)
 
 		// Promote newly unblocked tasks
 		promoted, _ := rp.mgr.projectStore.PromoteReady(p.ID)
@@ -293,10 +580,11 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 		// Record rejection
 		originalTask.RejectionCount++
 		originalTask.RejectionHistory = append(originalTask.RejectionHistory, project.Rejection{
-			Stage:      originalTask.Status,
-			RejectorID: managerWorker.ID,
-			Reason:     sanitizeForYAML(output),
-			Timestamp:  time.Now(),
+			Stage:         originalTask.Status,
+			RejectorID:    managerWorker.ID,
+			Reason:        sanitizeForYAML(output),
+			ViolationTags: config.ClassifyViolations(output),
+			Timestamp:     time.Now(),
 		})
 
 		// Check circuit breaker before re-queuing
@@ -318,6 +606,18 @@ func (rp *ReviewPipeline) HandleReviewResult(managerWorker *worker.Worker, revie
 			WorkerID:  managerWorker.ID,
 			Message:   rp.mgr.msgf("Task %q rejected by %s (%d/%d)", "任務 %q 已由 %s 退回（%d/%d）", originalTask.Title, managerWorker.Name, originalTask.RejectionCount, project.MaxRejectionsBeforeEscalation),
 		})
+		// Record trajectory: review_rejected
+		if rp.mgr.spawner != nil {
+			if rec := rp.mgr.spawner.TrajectoryRecorder(); rec != nil {
+				_ = rec.Record(worker.TrajectoryEntry{
+					Timestamp: time.Now(),
+					WorkerID:  managerWorker.ID,
+					TaskID:    originalTask.ID,
+					Event:     worker.TrajectoryEventReviewRejected,
+					Details:   fmt.Sprintf("rejected by %s (attempt %d)", managerWorker.Name, originalTask.RejectionCount),
+				})
+			}
+		}
 
 		rp.mgr.emit(Event{
 			Type:      EventTaskRevision,
@@ -557,4 +857,18 @@ func parseReviewVerdict(output string) reviewVerdict {
 		return verdictApproved
 	}
 	return verdictRejected
+}
+
+// cleanupAfterApproval removes the git worktree after a task is approved.
+// If no worktree was used (WorktreePath is empty), this is a no-op.
+func (rp *ReviewPipeline) cleanupAfterApproval(t *project.Task, repoPath string, g gitops.GitOps) {
+	if t.WorktreePath == "" {
+		return
+	}
+	if g != nil {
+		if err := g.CleanupWorktree(repoPath, t.WorktreePath); err != nil {
+			log.Printf("WARN: failed to cleanup worktree %s: %v", t.WorktreePath, err)
+		}
+	}
+	t.WorktreePath = ""
 }

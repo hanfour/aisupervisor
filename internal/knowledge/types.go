@@ -13,6 +13,29 @@ const (
 	KnowledgeLessonLearnt KnowledgeType = "lesson_learnt"
 )
 
+type KnowledgeTier int
+
+const (
+	TierL0Identity   KnowledgeTier = 0 // ~50 tokens: name, type, tech stack
+	TierL1Essential  KnowledgeTier = 1 // ~200 tokens: conventions, patterns, decisions
+	TierL2RoomRecall KnowledgeTier = 2 // ~500 tokens: architecture, module summaries
+	TierL3DeepSearch KnowledgeTier = 3 // ~800+ tokens: full API surface, all modules
+)
+
+// TierForType returns the minimum tier that includes a given knowledge type.
+func TierForType(kt KnowledgeType) KnowledgeTier {
+	switch kt {
+	case KnowledgeDecision, KnowledgeFeedback:
+		return TierL1Essential
+	case KnowledgeArchitecture, KnowledgeGotcha, KnowledgeTaskSummary:
+		return TierL2RoomRecall
+	case KnowledgeLessonLearnt:
+		return TierL3DeepSearch
+	default:
+		return TierL0Identity
+	}
+}
+
 type Entry struct {
 	ID          string        `yaml:"id" json:"id"`
 	ProjectID   string        `yaml:"project_id" json:"projectId"`
@@ -25,4 +48,5 @@ type Entry struct {
 	Relevance   float64       `yaml:"relevance" json:"relevance"`
 	CreatedAt   time.Time     `yaml:"created_at" json:"createdAt"`
 	AccessCount int           `yaml:"access_count" json:"accessCount"`
+	Tier        KnowledgeTier `yaml:"tier" json:"tier"`
 }

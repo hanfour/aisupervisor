@@ -6,6 +6,7 @@ import (
 	"log"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -541,6 +542,72 @@ func promptRenderDelay(promptLen int) time.Duration {
 	return total
 }
 
+// compressRejectionHistory builds a text summary of a task's rejection history.
+// If total Reason text across all rejections fits within maxLen, all reasons are
+// returned verbatim. Otherwise, only the last 2 rejections are kept in full and
+// older ones are compressed to a one-line summary with violation tags.
+func compressRejectionHistory(t *project.Task, maxLen int) string {
+	if len(t.RejectionHistory) == 0 {
+		return ""
+	}
+
+	// Calculate total length of all reason text
+	totalLen := 0
+	for _, r := range t.RejectionHistory {
+		totalLen += len(r.Reason)
+	}
+
+	var sb strings.Builder
+
+	// If under limit or 2 or fewer rejections, return all in full
+	if totalLen <= maxLen || len(t.RejectionHistory) <= 2 {
+		for i, r := range t.RejectionHistory {
+			if i > 0 {
+				sb.WriteString("\n\n")
+			}
+			sb.WriteString(fmt.Sprintf("Rejection %d", i+1))
+			if len(r.ViolationTags) > 0 {
+				sb.WriteString(fmt.Sprintf(" [%s]", strings.Join(r.ViolationTags, ", ")))
+			}
+			sb.WriteString(":\n")
+			sb.WriteString(r.Reason)
+		}
+		return sb.String()
+	}
+
+	// Over limit with >2 rejections: compress old ones, keep last 2 in full
+	oldCount := len(t.RejectionHistory) - 2
+	allTags := make(map[string]bool)
+	for _, r := range t.RejectionHistory[:oldCount] {
+		for _, tag := range r.ViolationTags {
+			allTags[tag] = true
+		}
+	}
+
+	tagList := make([]string, 0, len(allTags))
+	for tag := range allTags {
+		tagList = append(tagList, tag)
+	}
+	// Sort for deterministic output
+	sort.Strings(tagList)
+
+	sb.WriteString(fmt.Sprintf("Previously rejected %d times for: [%s]", oldCount, strings.Join(tagList, ", ")))
+
+	// Append last 2 in full
+	recent := t.RejectionHistory[oldCount:]
+	for i, r := range recent {
+		sb.WriteString("\n\n")
+		sb.WriteString(fmt.Sprintf("Rejection %d", oldCount+i+1))
+		if len(r.ViolationTags) > 0 {
+			sb.WriteString(fmt.Sprintf(" [%s]", strings.Join(r.ViolationTags, ", ")))
+		}
+		sb.WriteString(":\n")
+		sb.WriteString(r.Reason)
+	}
+
+	return sb.String()
+}
+
 // SendPromptToExisting sends a prompt to an already-running tmux session.
 // Used for resume after pause, where the session is still alive.
 func (s *Spawner) SendPromptToExisting(w *Worker, prompt string) error {
@@ -795,6 +862,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		lang = "zh-TW"
 	}
 
+	// Inject compressed rejection history if the task has been rejected before
+	rejectionContext := compressRejectionHistory(t, 3000)
+
 	var sb strings.Builder
 
 	if lang == "en" {
@@ -807,6 +877,11 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 			sb.WriteString(fmt.Sprintf("Description: %s\n\n", p.Description))
 		}
 		sb.WriteString(t.Prompt)
+		if rejectionContext != "" {
+			sb.WriteString("\n\n--- Previous Rejection History ---\n")
+			sb.WriteString(rejectionContext)
+			sb.WriteString("\n--- End Rejection History ---\n")
+		}
 		if t.BranchName != "" {
 			sb.WriteString(fmt.Sprintf("\n\nYou are working on branch: %s", t.BranchName))
 		}
@@ -858,6 +933,11 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 			sb.WriteString(fmt.Sprintf("描述：%s\n\n", p.Description))
 		}
 		sb.WriteString(t.Prompt)
+		if rejectionContext != "" {
+			sb.WriteString("\n\n--- 過往退回記錄 ---\n")
+			sb.WriteString(rejectionContext)
+			sb.WriteString("\n--- 退回記錄結束 ---\n")
+		}
 		if t.BranchName != "" {
 			sb.WriteString(fmt.Sprintf("\n\n你正在分支上工作：%s", t.BranchName))
 		}

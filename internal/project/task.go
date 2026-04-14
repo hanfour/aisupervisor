@@ -60,7 +60,8 @@ type Task struct {
 	DependsOn    []string   `yaml:"depends_on,omitempty" json:"dependsOn,omitempty"`
 	Milestone    string     `yaml:"milestone,omitempty" json:"milestone,omitempty"`
 	ReviewerID   string     `yaml:"reviewer_id,omitempty" json:"reviewerId,omitempty"`
-	ParentTaskID string     `yaml:"parent_task_id,omitempty" json:"parentTaskId,omitempty"`
+	ParentTaskID    string     `yaml:"parent_task_id,omitempty" json:"parentTaskId,omitempty"`
+	DelegationDepth int        `yaml:"delegation_depth,omitempty" json:"delegationDepth,omitempty"`
 	ReviewCount      int            `yaml:"review_count,omitempty" json:"reviewCount,omitempty"`
 	RejectionCount   int            `yaml:"rejection_count,omitempty" json:"rejectionCount,omitempty"`
 	RejectionHistory []Rejection    `yaml:"rejection_history,omitempty" json:"rejectionHistory,omitempty"`

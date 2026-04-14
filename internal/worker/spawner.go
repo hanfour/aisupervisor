@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -140,6 +141,35 @@ func buildKarpathyOverlay(t *project.Task, lang string) string {
 		sb.WriteString("--- End Guidelines ---\n\n")
 	}
 
+	return sb.String()
+}
+
+// MaxDelegationDepth is the maximum nesting level for delegated tasks.
+const MaxDelegationDepth = 2
+
+// shouldIncludeDelegation returns true if the task's depth allows further delegation.
+func shouldIncludeDelegation(t *project.Task) bool {
+	return t.DelegationDepth < MaxDelegationDepth
+}
+
+const maxGraphReportLen = 4000
+
+// readGraphReport reads the Graphify GRAPH_REPORT.md if it exists in the repo.
+// Returns formatted section string, or empty string if not found.
+func readGraphReport(repoPath string) string {
+	reportPath := filepath.Join(repoPath, "graphify-out", "GRAPH_REPORT.md")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	if len(content) > maxGraphReportLen {
+		content = content[:maxGraphReportLen] + "\n... (truncated)"
+	}
+	var sb strings.Builder
+	sb.WriteString("--- Project Architecture (Knowledge Graph) ---\n")
+	sb.WriteString(content)
+	sb.WriteString("\n--- End Architecture ---\n\n")
 	return sb.String()
 }
 
@@ -370,7 +400,17 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 		}
 		if err := s.spawnForTaskInner(ctx, w, t, p); err != nil {
 			lastErr = err
-			continue
+			action := ClassifyError(err)
+			log.Printf("SpawnForTask: error classified as %s: %v", action, err)
+			switch action {
+			case ActionAbandon:
+				return fmt.Errorf("spawn abandoned (unrecoverable): %w", err)
+			case ActionCompress:
+				log.Printf("SpawnForTask: context too long for worker %s, cannot compress at spawn", w.ID)
+				return fmt.Errorf("spawn failed (context too long): %w", err)
+			default:
+				continue
+			}
 		}
 		return nil
 	}
@@ -801,6 +841,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		if overlay := buildKarpathyOverlay(t, "en"); overlay != "" {
 			sb.WriteString(overlay)
 		}
+		if graphReport := readGraphReport(p.RepoPath); graphReport != "" {
+			sb.WriteString(graphReport)
+		}
 		sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
 		sb.WriteString(fmt.Sprintf("Project: %s\n", p.Name))
 		if p.Description != "" {
@@ -838,7 +881,7 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		sb.WriteString("\n\n--- When Done ---\n")
 		sb.WriteString("1. Commit all changes with a descriptive message\n")
 		sb.WriteString("2. Type /stop to signal completion\n")
-		if tier == TierManager || tier == TierConsultant {
+		if (tier == TierManager || tier == TierConsultant) && shouldIncludeDelegation(t) {
 			sb.WriteString("\n--- Delegation ---\n")
 			sb.WriteString("If you need to delegate sub-tasks to subordinates, output EXACTLY this JSON format:\n")
 			sb.WriteString(`{"delegate": [{"title": "Short task title", "prompt": "Detailed step-by-step instructions for the assignee", "priority": 1}]}`)
@@ -851,6 +894,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 	} else {
 		if overlay := buildKarpathyOverlay(t, "zh-TW"); overlay != "" {
 			sb.WriteString(overlay)
+		}
+		if graphReport := readGraphReport(p.RepoPath); graphReport != "" {
+			sb.WriteString(graphReport)
 		}
 		sb.WriteString("重要：請立即開始寫程式碼。不要建立規劃文件、設計文件或架構文件。直接寫程式碼。\n\n")
 		sb.WriteString(fmt.Sprintf("專案：%s\n", p.Name))
@@ -890,7 +936,7 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		sb.WriteString("\n\n--- 完成時 ---\n")
 		sb.WriteString("1. 用描述性訊息提交所有變更\n")
 		sb.WriteString("2. 輸入 /stop 表示完成\n")
-		if tier == TierManager || tier == TierConsultant {
+		if (tier == TierManager || tier == TierConsultant) && shouldIncludeDelegation(t) {
 			sb.WriteString("\n--- 委派 ---\n")
 			sb.WriteString("當你需要將工作委派給下屬時，請嚴格按照以下 JSON 格式輸出：\n")
 			sb.WriteString(`{"delegate": [{"title": "簡短任務標題", "prompt": "給被指派者的詳細步驟指示", "priority": 1}]}`)

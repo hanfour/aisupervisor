@@ -143,6 +143,14 @@ func buildKarpathyOverlay(t *project.Task, lang string) string {
 	return sb.String()
 }
 
+// MaxDelegationDepth is the maximum nesting level for delegated tasks.
+const MaxDelegationDepth = 2
+
+// shouldIncludeDelegation returns true if the task's depth allows further delegation.
+func shouldIncludeDelegation(t *project.Task) bool {
+	return t.DelegationDepth < MaxDelegationDepth
+}
+
 // SetPersonalityStore sets the personality store for skill score lookups.
 func (s *Spawner) SetPersonalityStore(ps *personality.Store) {
 	s.personalityStore = ps
@@ -838,7 +846,7 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		sb.WriteString("\n\n--- When Done ---\n")
 		sb.WriteString("1. Commit all changes with a descriptive message\n")
 		sb.WriteString("2. Type /stop to signal completion\n")
-		if tier == TierManager || tier == TierConsultant {
+		if (tier == TierManager || tier == TierConsultant) && shouldIncludeDelegation(t) {
 			sb.WriteString("\n--- Delegation ---\n")
 			sb.WriteString("If you need to delegate sub-tasks to subordinates, output EXACTLY this JSON format:\n")
 			sb.WriteString(`{"delegate": [{"title": "Short task title", "prompt": "Detailed step-by-step instructions for the assignee", "priority": 1}]}`)
@@ -890,7 +898,7 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		sb.WriteString("\n\n--- 完成時 ---\n")
 		sb.WriteString("1. 用描述性訊息提交所有變更\n")
 		sb.WriteString("2. 輸入 /stop 表示完成\n")
-		if tier == TierManager || tier == TierConsultant {
+		if (tier == TierManager || tier == TierConsultant) && shouldIncludeDelegation(t) {
 			sb.WriteString("\n--- 委派 ---\n")
 			sb.WriteString("當你需要將工作委派給下屬時，請嚴格按照以下 JSON 格式輸出：\n")
 			sb.WriteString(`{"delegate": [{"title": "簡短任務標題", "prompt": "給被指派者的詳細步驟指示", "priority": 1}]}`)

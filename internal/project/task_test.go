@@ -4,6 +4,16 @@ import (
 	"testing"
 )
 
+func TestTask_DelegationDepth(t *testing.T) {
+	task := Task{
+		ID:              "t1",
+		DelegationDepth: 2,
+	}
+	if task.DelegationDepth != 2 {
+		t.Errorf("expected depth 2, got %d", task.DelegationDepth)
+	}
+}
+
 func TestRejection_HasViolationTags(t *testing.T) {
 	r := Rejection{
 		Stage:         TaskReady,

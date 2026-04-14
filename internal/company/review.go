@@ -297,6 +297,18 @@ func (rp *ReviewPipeline) runChatReview(req ReviewRequest, t *project.Task, p *p
 	}
 
 	strategy := selectStrategy(diffLines, fileCount, cfg.DebateThreshold, cfg.LightMaxLines, cfg.LightMaxFiles)
+
+	// Graph-based escalation: force debate for cross-community or god-node changes
+	if strategy != ReviewDebate && rp.mgr.graphProvider != nil {
+		if graph, err := rp.mgr.graphProvider.GetGraph(p.RepoPath); err == nil {
+			changedFiles := extractChangedFiles(diff)
+			if shouldEscalateReview(changedFiles, graph) {
+				log.Printf("debate: escalating task=%s to debate (graph: cross-community or god-node)", t.ID)
+				strategy = ReviewDebate
+			}
+		}
+	}
+
 	log.Printf("debate: task=%s strategy=%s (lines=%d files=%d)", t.ID, strategy, diffLines, fileCount)
 
 	// Build PKB context if knowledge injector is available via spawner

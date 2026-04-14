@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -149,6 +150,27 @@ const MaxDelegationDepth = 2
 // shouldIncludeDelegation returns true if the task's depth allows further delegation.
 func shouldIncludeDelegation(t *project.Task) bool {
 	return t.DelegationDepth < MaxDelegationDepth
+}
+
+const maxGraphReportLen = 4000
+
+// readGraphReport reads the Graphify GRAPH_REPORT.md if it exists in the repo.
+// Returns formatted section string, or empty string if not found.
+func readGraphReport(repoPath string) string {
+	reportPath := filepath.Join(repoPath, "graphify-out", "GRAPH_REPORT.md")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	if len(content) > maxGraphReportLen {
+		content = content[:maxGraphReportLen] + "\n... (truncated)"
+	}
+	var sb strings.Builder
+	sb.WriteString("--- Project Architecture (Knowledge Graph) ---\n")
+	sb.WriteString(content)
+	sb.WriteString("\n--- End Architecture ---\n\n")
+	return sb.String()
 }
 
 // SetPersonalityStore sets the personality store for skill score lookups.
@@ -819,6 +841,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		if overlay := buildKarpathyOverlay(t, "en"); overlay != "" {
 			sb.WriteString(overlay)
 		}
+		if graphReport := readGraphReport(p.RepoPath); graphReport != "" {
+			sb.WriteString(graphReport)
+		}
 		sb.WriteString("IMPORTANT: Start writing code IMMEDIATELY. Do NOT create planning documents, design docs, or architecture files. Write code directly.\n\n")
 		sb.WriteString(fmt.Sprintf("Project: %s\n", p.Name))
 		if p.Description != "" {
@@ -869,6 +894,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 	} else {
 		if overlay := buildKarpathyOverlay(t, "zh-TW"); overlay != "" {
 			sb.WriteString(overlay)
+		}
+		if graphReport := readGraphReport(p.RepoPath); graphReport != "" {
+			sb.WriteString(graphReport)
 		}
 		sb.WriteString("重要：請立即開始寫程式碼。不要建立規劃文件、設計文件或架構文件。直接寫程式碼。\n\n")
 		sb.WriteString(fmt.Sprintf("專案：%s\n", p.Name))

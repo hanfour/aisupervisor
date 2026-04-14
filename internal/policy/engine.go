@@ -3,6 +3,7 @@ package policy
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -117,7 +118,7 @@ func compare(actual interface{}, operator string, expected interface{}) bool {
 		}
 		return false
 	case "contains":
-		return fmt.Sprintf("%v", actual) == fmt.Sprintf("%v", expected)
+		return strings.Contains(fmt.Sprintf("%v", actual), fmt.Sprintf("%v", expected))
 	default:
 		return false
 	}

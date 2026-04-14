@@ -59,6 +59,10 @@ func (l *Loop) Run(ctx context.Context, userPrompt string) error {
 			return nil
 
 		case "tool_use":
+			if len(resp.Message.ToolCalls) == 0 {
+				// Provider returned tool_use but no actual tool calls — treat as end_turn
+				return nil
+			}
 			for _, call := range resp.Message.ToolCalls {
 				result := l.executeTool(ctx, call)
 				l.context.AddToolResult(result)
@@ -66,7 +70,11 @@ func (l *Loop) Run(ctx context.Context, userPrompt string) error {
 			continue
 
 		case "max_tokens":
+			prevLen := len(l.context.Messages())
 			l.context.Truncate()
+			if len(l.context.Messages()) == prevLen {
+				return fmt.Errorf("context too large to truncate further")
+			}
 			continue
 
 		default:

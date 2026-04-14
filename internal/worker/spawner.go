@@ -378,7 +378,17 @@ func (s *Spawner) SpawnForTask(ctx context.Context, w *Worker, t *project.Task, 
 		}
 		if err := s.spawnForTaskInner(ctx, w, t, p); err != nil {
 			lastErr = err
-			continue
+			action := ClassifyError(err)
+			log.Printf("SpawnForTask: error classified as %s: %v", action, err)
+			switch action {
+			case ActionAbandon:
+				return fmt.Errorf("spawn abandoned (unrecoverable): %w", err)
+			case ActionCompress:
+				log.Printf("SpawnForTask: context too long for worker %s, cannot compress at spawn", w.ID)
+				return fmt.Errorf("spawn failed (context too long): %w", err)
+			default:
+				continue
+			}
 		}
 		return nil
 	}

@@ -35,6 +35,7 @@ type Config struct {
 	ReviewTimeout        int                            `yaml:"review_timeout_minutes,omitempty"`   // minutes before auto-approving stuck reviews (default 15)
 	AutoAssign           AutoAssignConfig               `yaml:"auto_assign,omitempty"`
 	Review               ReviewConfig                   `yaml:"review,omitempty"`
+	APIKeys              []APIKeyConfig                 `yaml:"api_keys,omitempty" json:"apiKeys,omitempty"`
 }
 
 // AutoAssignConfig controls proactive task assignment to idle workers.
@@ -217,6 +218,18 @@ type VerificationConfig struct {
 }
 
 // HumanGateConfig controls when human intervention is required.
+// APIKeyConfig defines a single API key for credential pooling.
+type APIKeyConfig struct {
+	ID       string `yaml:"id" json:"id"`
+	Key      string `yaml:"key" json:"key"`
+	Provider string `yaml:"provider" json:"provider"`
+}
+
+// DefaultAPIKeys returns an empty slice — single-key mode by default.
+func DefaultAPIKeys() []APIKeyConfig {
+	return nil
+}
+
 type HumanGateConfig struct {
 	Enabled              bool    `yaml:"enabled"`
 	TokenBudgetThreshold int64   `yaml:"token_budget_threshold,omitempty"`

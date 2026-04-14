@@ -878,11 +878,12 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	// Record growth log for every completion (before locking)
 	m.updateWorkerGrowth(w, t, result.Success)
 
-	// Update worker's last community for future graph-based assignment
+	// Compute community ID outside lock (GetGraph may be slow)
+	communityID := -1
 	if m.graphProvider != nil && len(t.Files) > 0 {
 		if graph, err := m.graphProvider.GetGraph(p.RepoPath); err == nil {
 			if c := knowledge.GetCommunityForFile(graph, t.Files[0]); c != nil {
-				w.LastCommunityID = c.ID
+				communityID = c.ID
 			}
 		}
 	}
@@ -902,6 +903,9 @@ func (m *Manager) handleTaskCompletion(w *worker.Worker, t *project.Task, p *pro
 	m.mu.Lock()
 	// Reset recovery attempts on completion (under lock to avoid data race)
 	w.RecoveryAttempts = 0
+	if communityID >= 0 {
+		w.LastCommunityID = communityID
+	}
 
 	if result.Success && t.Type == project.TaskTypeTraining {
 		m.handleTrainingIteration(w, t, p)

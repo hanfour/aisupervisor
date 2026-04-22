@@ -273,6 +273,21 @@ func reviewConfigWithDefaults(cfg config.ReviewConfig) config.ReviewConfig {
 	if cfg.SynthesisModel == "" {
 		cfg.SynthesisModel = "sonnet"
 	}
+	if cfg.MaxExperts == 0 {
+		cfg.MaxExperts = 5
+	}
+	if cfg.CLIExpertTimeoutS == 0 {
+		cfg.CLIExpertTimeoutS = 300
+	}
+	if cfg.APIExpertTimeoutS == 0 {
+		cfg.APIExpertTimeoutS = 60
+	}
+	if cfg.ConventionDecayDays == 0 {
+		cfg.ConventionDecayDays = 30
+	}
+	if cfg.CarmackFilterScale == "" {
+		cfg.CarmackFilterScale = "auto"
+	}
 	return cfg
 }
 

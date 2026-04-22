@@ -565,6 +565,15 @@ const translations = {
   'verify.score': { en: 'Score', zh: '分數' },
   'verify.bestScore': { en: 'Best Score', zh: '最佳分數' },
 
+  // --- Council Review Events ---
+  'event.phase0_completed': { en: 'Phase 0 Checks Completed', zh: 'Phase 0 檢查完成' },
+  'event.council_started': { en: 'Council Review Started', zh: '委員會審查已開始' },
+  'event.expert_completed': { en: 'Expert Review Completed', zh: '專家審查已完成' },
+  'event.council_synthesized': { en: 'Council Review Synthesized', zh: '委員會審查已合成' },
+  'event.convention_proposed': { en: 'Convention Proposed', zh: '慣例已提議' },
+  'event.convention_accepted': { en: 'Convention Accepted', zh: '慣例已確認' },
+  'event.convention_decayed': { en: 'Convention Expired', zh: '慣例已過期' },
+
   // --- Setup Wizard: Onboarding Chat (Step 3) ---
   'setup.chatPlaceholder': { en: 'Tell me what you\'d like to do...', zh: '說說你想做什麼...' },
   'setup.assistantName': { en: 'Assistant', zh: '小助理' },

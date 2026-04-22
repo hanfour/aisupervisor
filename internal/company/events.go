@@ -63,6 +63,13 @@ const (
 	EventIterationRollback         EventType = "iteration_rollback"
 	EventIterationRetry         EventType = "iteration_retry"
 	EventPlateauEarlyStop          EventType = "plateau_early_stop"
+	EventPhase0Completed       EventType = "phase0_completed"
+	EventCouncilStarted        EventType = "council_started"
+	EventExpertCompleted       EventType = "expert_completed"
+	EventCouncilSynthesized    EventType = "council_synthesized"
+	EventConventionProposed    EventType = "convention_proposed"
+	EventConventionAccepted    EventType = "convention_accepted"
+	EventConventionDecayed     EventType = "convention_decayed"
 )
 
 type Event struct {

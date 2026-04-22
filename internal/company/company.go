@@ -78,6 +78,9 @@ type Manager struct {
 	featureManager      *feature.Manager
 	reviewCfg           config.ReviewConfig
 	graphProvider       *knowledge.UnifiedGraphProvider
+	council             *CouncilEngine
+	conventions         *ConventionStore
+	expertReg           *ExpertRegistry
 }
 
 type workersFile struct {
@@ -158,6 +161,30 @@ func New(
 	m.commMatrix = NewCommunicationMatrix(m)
 	m.humanGate = NewHumanGate(m, DefaultHumanGateConfig(), dataDir)
 	m.graphProvider = knowledge.NewUnifiedGraphProvider()
+
+	// Initialize council review system
+	conventions, convErr := NewConventionStore(dataDir)
+	if convErr != nil {
+		log.Printf("warning: conventions store init failed: %v", convErr)
+		conventions, _ = NewConventionStore(os.TempDir())
+	}
+	expertReg := NewExpertRegistry()
+	m.conventions = conventions
+	m.expertReg = expertReg
+	m.council = &CouncilEngine{
+		chatProvider: chatProvider,
+		registry:     expertReg,
+		conventions:  conventions,
+		language:     m.language,
+		reviewCfg:    m.reviewCfg,
+		tmuxClient:   tmuxClient,
+		onExpertDone: func(domain ExpertDomain, findingCount int) {
+			m.emit(Event{
+				Type:    EventExpertCompleted,
+				Message: fmt.Sprintf("expert %s completed with %d findings", domain, findingCount),
+			})
+		},
+	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	m.shutdownCancel = bgCancel

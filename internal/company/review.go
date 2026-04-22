@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -151,13 +152,17 @@ func (rp *ReviewPipeline) DrainQueue(ctx context.Context) {
 }
 
 func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, managerWorker *worker.Worker, t *project.Task, p *project.Project) error {
-	// Use debate pipeline if ChatProvider is available.
+	// Use council pipeline if ChatProvider is available and council is enabled.
 	// Copy reviewCfg under lock to avoid race with SetReviewConfig.
 	if rp.mgr.chatProvider != nil {
 		rp.mu.Lock()
 		cfg := rp.reviewCfg
 		rp.mu.Unlock()
-		go rp.runChatReview(req, t, p, cfg)
+		if cfg.CouncilEnabled != nil && *cfg.CouncilEnabled && rp.mgr.council != nil {
+			go rp.runCouncilReview(req, t, p, cfg)
+		} else {
+			go rp.runChatReview(req, t, p, cfg)
+		}
 		return nil
 	}
 	return rp.executeReviewTmux(ctx, req, managerWorker, t, p)
@@ -273,6 +278,29 @@ func reviewConfigWithDefaults(cfg config.ReviewConfig) config.ReviewConfig {
 	if cfg.SynthesisModel == "" {
 		cfg.SynthesisModel = "sonnet"
 	}
+	if cfg.CouncilEnabled == nil {
+		t := true
+		cfg.CouncilEnabled = &t
+	}
+	if cfg.Phase0Enabled == nil {
+		t := true
+		cfg.Phase0Enabled = &t
+	}
+	if cfg.MaxExperts == 0 {
+		cfg.MaxExperts = 5
+	}
+	if cfg.CLIExpertTimeoutS == 0 {
+		cfg.CLIExpertTimeoutS = 300
+	}
+	if cfg.APIExpertTimeoutS == 0 {
+		cfg.APIExpertTimeoutS = 60
+	}
+	if cfg.ConventionDecayDays == 0 {
+		cfg.ConventionDecayDays = 30
+	}
+	if cfg.CarmackFilterScale == "" {
+		cfg.CarmackFilterScale = "auto"
+	}
 	return cfg
 }
 
@@ -335,6 +363,205 @@ func (rp *ReviewPipeline) runChatReview(req ReviewRequest, t *project.Task, p *p
 	}
 
 	rp.handleDebateResult(result, req, t, p)
+}
+
+// runCouncilReview runs the council-based multi-expert review pipeline.
+func (rp *ReviewPipeline) runCouncilReview(req ReviewRequest, t *project.Task, p *project.Project, cfg config.ReviewConfig) {
+	cfg = reviewConfigWithDefaults(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	baseBranch := p.BaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
+	diffLines, fileCount, diff, err := getDiffStats(ctx, p.RepoPath, baseBranch, t.BranchName)
+	if err != nil {
+		log.Printf("council: getDiffStats failed: %v, falling back to debate", err)
+		rp.runChatReview(req, t, p, cfg)
+		return
+	}
+
+	// Phase 0: automated pre-review checks
+	var phase0 *Phase0Report
+	if cfg.Phase0Enabled != nil && *cfg.Phase0Enabled {
+		workDir := p.RepoPath
+		if t.WorktreePath != "" {
+			workDir = t.WorktreePath
+		}
+		checks := detectChecks(workDir, p.VerifyCmd)
+		phase0 = runPhase0Checks(ctx, workDir, checks)
+		rp.mgr.emit(Event{
+			Type:      EventPhase0Completed,
+			ProjectID: p.ID,
+			TaskID:    t.ID,
+			Message:   phase0.Summary,
+		})
+	} else {
+		phase0 = &Phase0Report{AllGreen: true, Summary: "phase0 disabled"}
+	}
+
+	// Build Context Brief
+	briefBuilder := &ContextBriefBuilder{
+		totalBudget:   6000,
+		taskID:        t.ID,
+		projectID:     p.ID,
+		projectName:   p.Name,
+		baseBranch:    baseBranch,
+		diffStats:     fmt.Sprintf("%d lines changed, %d files", diffLines, fileCount),
+		changedFiles:  extractChangedFiles(diff),
+		phase0Summary: phase0.Summary,
+	}
+
+	// Inject knowledge context if available
+	if inj := rp.mgr.spawner.KnowledgeInjector(); inj != nil {
+		archCtx, _ := inj.BuildContext("", p.ID, knowledge.TierL2RoomRecall)
+		briefBuilder.architectureCtx = archCtx
+	}
+
+	// Inject relevant conventions
+	if rp.mgr.conventions != nil {
+		seen := map[string]bool{}
+		var convParts []string
+		for _, f := range extractChangedFiles(diff) {
+			for _, c := range rp.mgr.conventions.FindRelevant("", f) {
+				key := c.ID
+				if !seen[key] {
+					seen[key] = true
+					convParts = append(convParts, fmt.Sprintf("- [%s] %s (%s)", c.Domain, c.Description, c.FileGlob))
+				}
+			}
+		}
+		if len(convParts) > 0 {
+			briefBuilder.conventions = strings.Join(convParts, "\n")
+		}
+	}
+
+	// Inject rejection history
+	if len(t.RejectionHistory) > 0 {
+		var parts []string
+		for _, r := range t.RejectionHistory {
+			parts = append(parts, r.Reason)
+		}
+		briefBuilder.rejectionHistory = truncateOutput(strings.Join(parts, "\n---\n"), 1500)
+	}
+
+	brief, err := briefBuilder.Build()
+	if err != nil {
+		log.Printf("council: brief build failed: %v, falling back to debate", err)
+		rp.runChatReview(req, t, p, cfg)
+		return
+	}
+
+	// Get graph for expert selection (passed via request, not engine mutation)
+	var codeGraph *knowledge.CodeGraph
+	if rp.mgr.graphProvider != nil {
+		if g, gErr := rp.mgr.graphProvider.GetGraph(p.RepoPath); gErr == nil {
+			codeGraph = g
+		}
+	}
+
+	rp.mgr.emit(Event{
+		Type:      EventCouncilStarted,
+		ProjectID: p.ID,
+		TaskID:    t.ID,
+		Message:   fmt.Sprintf("council review started for %s (%d lines, %d files)", t.ID, diffLines, fileCount),
+	})
+
+	// Run Council
+	result, err := rp.mgr.council.RunCouncil(ctx, CouncilRequest{
+		Diff:      diff,
+		DiffLines: diffLines,
+		FileCount: fileCount,
+		Brief:     brief,
+		Phase0:    phase0,
+		Graph:     codeGraph,
+	})
+	if err != nil {
+		log.Printf("council: RunCouncil failed: %v, falling back to debate", err)
+		rp.runChatReview(req, t, p, cfg)
+		return
+	}
+
+	rp.mgr.emit(Event{
+		Type:      EventCouncilSynthesized,
+		ProjectID: p.ID,
+		TaskID:    t.ID,
+		Message:   fmt.Sprintf("council: %s (%d experts, %d findings)", result.Status, result.ExpertCount, len(result.Findings)),
+	})
+
+	rp.handleCouncilResult(result, req, t, p)
+}
+
+// handleCouncilResult converts CouncilResult to DebateResult and reuses existing handleDebateResult.
+func (rp *ReviewPipeline) handleCouncilResult(result *CouncilResult, req ReviewRequest, t *project.Task, p *project.Project) {
+	var comments []Finding
+	for _, ef := range result.Findings {
+		f := ef.Finding
+		f.Source = string(ef.Expert)
+		comments = append(comments, f)
+	}
+
+	debateResult := &DebateResult{
+		Status:   result.Status,
+		Summary:  fmt.Sprintf("[%d experts, %d findings] %s", result.ExpertCount, len(result.Findings), result.Summary),
+		Comments: comments,
+	}
+
+	rp.handleDebateResult(debateResult, req, t, p)
+
+	// Learn from approved reviews
+	if result.Status == "APPROVED" && rp.mgr.conventions != nil {
+		go rp.learnFromReview(result, t)
+	}
+}
+
+// learnFromReview extracts potential conventions from approved review findings.
+func (rp *ReviewPipeline) learnFromReview(result *CouncilResult, t *project.Task) {
+	for _, f := range result.Findings {
+		if f.Severity != "MEDIUM" {
+			continue
+		}
+		existing := rp.mgr.conventions.MatchesFinding(f)
+		if existing != nil {
+			rp.mgr.conventions.Accept(existing.ID)
+			rp.mgr.emit(Event{
+				Type:    EventConventionAccepted,
+				TaskID:  t.ID,
+				Message: fmt.Sprintf("convention %s reinforced", existing.ID),
+			})
+		} else {
+			rp.mgr.conventions.Propose(Convention{
+				Domain:      f.Expert,
+				Pattern:     f.Body,
+				Description: f.Body,
+				FileGlob:    inferGlobFromFile(f.File),
+				Source:      fmt.Sprintf("review:%s", t.ID),
+			})
+			rp.mgr.emit(Event{
+				Type:    EventConventionProposed,
+				TaskID:  t.ID,
+				Message: fmt.Sprintf("new convention candidate: %.50s", f.Body),
+			})
+		}
+	}
+	if err := rp.mgr.conventions.Save(); err != nil {
+		log.Printf("council: conventions save failed: %v", err)
+	}
+}
+
+// inferGlobFromFile returns a glob pattern based on the file extension (e.g., "*.go").
+// Returns "*" if file is empty or has no extension.
+func inferGlobFromFile(filePath string) string {
+	if filePath == "" {
+		return "*"
+	}
+	ext := filepath.Ext(filePath)
+	if ext == "" {
+		return "*"
+	}
+	return "*" + ext
 }
 
 // fallbackTmuxReview falls back to the legacy tmux-based review when debate pipeline fails.

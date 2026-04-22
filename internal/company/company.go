@@ -81,6 +81,7 @@ type Manager struct {
 	council             *CouncilEngine
 	conventions         *ConventionStore
 	expertReg           *ExpertRegistry
+	mailbox             *Mailbox
 }
 
 type workersFile struct {
@@ -185,6 +186,13 @@ func New(
 			})
 		},
 	}
+
+	mailbox, mbErr := NewMailbox(dataDir)
+	if mbErr != nil {
+		log.Printf("warning: mailbox init failed: %v", mbErr)
+		mailbox, _ = NewMailbox(os.TempDir())
+	}
+	m.mailbox = mailbox
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	m.shutdownCancel = bgCancel
@@ -861,6 +869,90 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 	return nil
 }
 
+// handleSyncAsk routes a synchronous question from sender to target.
+// If the target worker is idle, the question is injected directly into
+// their tmux pane and a goroutine watches for the reply.
+// Otherwise, the question is queued asynchronously via the mailbox.
+func (m *Manager) handleSyncAsk(sender *worker.Worker, targetID, question string) {
+	m.mu.RLock()
+	target, ok := m.workers[targetID]
+	m.mu.RUnlock()
+
+	if !ok || target.Status != worker.WorkerIdle {
+		// Async fallback via mailbox
+		m.mailbox.Send(Envelope{
+			StructuredMessage: StructuredMessage{
+				From: sender.ID, To: targetID,
+				Type: MsgQuestion, Priority: PriorityHigh,
+				Content: question, Timestamp: time.Now(),
+			},
+			TTL: 10 * time.Minute,
+		})
+		m.spawner.SendPromptToExisting(sender,
+			m.msgf("[System] %s is busy. Question queued. Continue working.",
+				"[系統] %s 目前忙碌，問題已排入郵箱。請繼續工作。", targetID))
+		m.emit(Event{Type: EventMessageSent, WorkerID: sender.ID,
+			Message: fmt.Sprintf("async question to %s", targetID)})
+		return
+	}
+
+	// Sync path: inject question directly
+	m.spawner.SendPromptToExisting(target,
+		fmt.Sprintf("[Question from %s] %s\nReply with REPLY:%s-sync:{your answer}",
+			sender.Name, question, sender.ID))
+	m.emit(Event{Type: EventMessageSent, WorkerID: sender.ID,
+		Message: fmt.Sprintf("sync question to %s", target.Name)})
+	go m.watchForSyncReply(sender, target, question, 3*time.Minute)
+}
+
+// watchForSyncReply polls the target worker's tmux pane for a REPLY pattern.
+// If no reply arrives within the timeout, the question is moved to the mailbox.
+func (m *Manager) watchForSyncReply(sender, target *worker.Worker, question string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			m.spawner.SendPromptToExisting(sender,
+				m.msgf("[System] No reply from %s. Question moved to mailbox.",
+					"[系統] %s 未回覆，問題已轉入郵箱。", target.Name))
+			m.mailbox.Send(Envelope{
+				StructuredMessage: StructuredMessage{
+					From: sender.ID, To: target.ID,
+					Type: MsgQuestion, Priority: PriorityHigh,
+					Content: question, Timestamp: time.Now(),
+				},
+				TTL: 30 * time.Minute,
+			})
+			return
+		case <-ticker.C:
+			content, err := m.tmuxClient.CapturePane(target.TmuxSession, target.Window, target.Pane, 50)
+			if err != nil {
+				continue
+			}
+			lines := strings.Split(content, "\n")
+			for i := len(lines) - 1; i >= 0; i-- {
+				line := strings.TrimSpace(lines[i])
+				if strings.HasPrefix(line, "REPLY:") {
+					parts := strings.SplitN(line, ":", 3)
+					if len(parts) == 3 {
+						reply := strings.TrimSpace(parts[2])
+						m.spawner.SendPromptToExisting(sender,
+							fmt.Sprintf("[Reply from %s] %s", target.Name, reply))
+						m.emit(Event{Type: EventMessageDelivered, WorkerID: target.ID,
+							Message: fmt.Sprintf("reply to %s", sender.Name)})
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
 func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *project.Task, p *project.Project) {
 	defer m.wg.Done()
 	defer func() {
@@ -882,6 +974,26 @@ func (m *Manager) watchCompletion(ctx context.Context, w *worker.Worker, t *proj
 			m.projectStore.UpdateTaskStatus(t.ID, project.TaskReady)
 		}
 		m.mu.Unlock()
+		return
+	}
+
+	// Handle ASK request — route question to target worker and resume monitoring
+	if result.Reason == "ask_request" && result.HelpRequest != "" {
+		askContent := strings.TrimPrefix(result.HelpRequest, "ASK:")
+		parts := strings.SplitN(askContent, ":", 2)
+		if len(parts) == 2 {
+			m.handleSyncAsk(w, parts[0], parts[1])
+		}
+		// Continue monitoring — the worker is still working
+		m.wg.Add(1)
+		go m.watchCompletion(ctx, w, t, p)
+		return
+	}
+
+	// Handle REPLY sent — reply is processed by watchForSyncReply goroutine, resume monitoring
+	if result.Reason == "reply_sent" {
+		m.wg.Add(1)
+		go m.watchCompletion(ctx, w, t, p)
 		return
 	}
 

@@ -574,6 +574,11 @@ const translations = {
   'event.convention_accepted': { en: 'Convention Accepted', zh: '慣例已確認' },
   'event.convention_decayed': { en: 'Convention Expired', zh: '慣例已過期' },
 
+  // --- Communication Events ---
+  'event.message_sent': { en: 'Message Sent', zh: '訊息已發送' },
+  'event.message_delivered': { en: 'Message Delivered', zh: '訊息已送達' },
+  'event.message_read': { en: 'Message Read', zh: '訊息已讀' },
+
   // --- Setup Wizard: Onboarding Chat (Step 3) ---
   'setup.chatPlaceholder': { en: 'Tell me what you\'d like to do...', zh: '說說你想做什麼...' },
   'setup.assistantName': { en: 'Assistant', zh: '小助理' },

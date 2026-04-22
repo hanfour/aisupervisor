@@ -70,6 +70,9 @@ const (
 	EventConventionProposed    EventType = "convention_proposed"
 	EventConventionAccepted    EventType = "convention_accepted"
 	EventConventionDecayed     EventType = "convention_decayed"
+	EventMessageSent           EventType = "message_sent"
+	EventMessageDelivered      EventType = "message_delivered"
+	EventMessageRead           EventType = "message_read"
 )
 
 type Event struct {

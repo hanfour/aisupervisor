@@ -44,6 +44,7 @@ type Spawner struct {
 	knowledgeInjector  *knowledge.Injector
 	useWorktrees       bool // Enable git worktree isolation per task
 	trajectoryRecorder *TrajectoryRecorder
+	pendingMessagesFn  func(workerID string) string
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -216,6 +217,13 @@ func (s *Spawner) SetKnowledgeInjector(inj *knowledge.Injector) {
 // KnowledgeInjector returns the knowledge injector (may be nil).
 func (s *Spawner) KnowledgeInjector() *knowledge.Injector {
 	return s.knowledgeInjector
+}
+
+// SetPendingMessages registers a callback that returns formatted pending
+// messages for a given worker ID. This is used to inject mailbox messages
+// into the worker prompt at spawn time.
+func (s *Spawner) SetPendingMessages(fn func(workerID string) string) {
+	s.pendingMessagesFn = fn
 }
 
 
@@ -890,6 +898,14 @@ func (s *Spawner) buildPromptForTier(t *project.Task, p *project.Project, tier W
 			prompt += "\n\n" + knowledgeCtx
 		}
 	}
+
+	// Inject pending mailbox messages for this worker
+	if s.pendingMessagesFn != nil && t.AssigneeID != "" {
+		if msgs := s.pendingMessagesFn(t.AssigneeID); msgs != "" {
+			prompt += "\n\n## Pending Messages\n\n" + msgs + "\n\nReply with REPLY:{messageID}:{your response} if needed.\n"
+		}
+	}
+
 	return prompt
 }
 

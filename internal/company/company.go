@@ -194,6 +194,22 @@ func New(
 	}
 	m.mailbox = mailbox
 
+	// Wire pending-messages callback so spawner injects mailbox messages at spawn time.
+	if spawner != nil {
+		spawner.SetPendingMessages(func(workerID string) string {
+			messages := m.mailbox.Peek(workerID)
+			if len(messages) == 0 {
+				return ""
+			}
+			var sb strings.Builder
+			for _, env := range messages {
+				sb.WriteString(fmt.Sprintf("From: %s [%s] %s\n> %s\n\n",
+					env.From, env.Type, env.Timestamp.Format("15:04"), env.Content))
+			}
+			return sb.String()
+		})
+	}
+
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	m.shutdownCancel = bgCancel
 
@@ -250,6 +266,27 @@ func New(
 					}
 				}
 				m.personalityStore.SaveIfDirty()
+			}
+		}
+	}()
+
+	// Idle mailbox polling: deliver pending messages to idle workers
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				m.mu.RLock()
+				for _, w := range m.workers {
+					if w.Status == worker.WorkerIdle {
+						m.processIdleMailbox(w)
+					}
+				}
+				m.mu.RUnlock()
+				m.mailbox.Expire(1 * time.Hour)
 			}
 		}
 	}()
@@ -867,6 +904,31 @@ func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error
 	go m.watchCompletion(workerCtx, w, t, p)
 
 	return nil
+}
+
+// processIdleMailbox delivers pending mailbox messages to an idle worker
+// by injecting prompts into their tmux session. Questions are injected
+// with a REPLY instruction; other message types are injected as notifications
+// and immediately marked as read.
+func (m *Manager) processIdleMailbox(w *worker.Worker) {
+	pending := m.mailbox.Deliver(w.ID)
+	if len(pending) == 0 {
+		return
+	}
+	for _, env := range pending {
+		switch env.Type {
+		case MsgQuestion:
+			prompt := fmt.Sprintf("[Question from %s]\n%s\n\nReply with REPLY:%s:{your answer}",
+				env.From, env.Content, env.ID)
+			m.spawner.SendPromptToExisting(w, prompt)
+		default:
+			prompt := fmt.Sprintf("[%s from %s] %s", env.Type, env.From, env.Content)
+			m.spawner.SendPromptToExisting(w, prompt)
+			m.mailbox.MarkRead(env.ID)
+		}
+		m.emit(Event{Type: EventMessageDelivered, WorkerID: w.ID,
+			Message: fmt.Sprintf("delivered %s from %s", env.Type, env.From)})
+	}
 }
 
 // handleSyncAsk routes a synchronous question from sender to target.

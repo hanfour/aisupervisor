@@ -15,15 +15,23 @@ import (
 
 // councilMockChat is a test double for ai.ChatProvider.
 type councilMockChat struct {
-	response string
-	err      error
-	// callCount tracks how many times Chat was called.
+	mu        sync.Mutex
+	response  string
+	err       error
 	callCount int
 }
 
 func (m *councilMockChat) Chat(_ context.Context, _ []ai.ChatMessage) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.callCount++
 	return m.response, m.err
+}
+
+func (m *councilMockChat) CallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.callCount
 }
 
 // --- RunCouncil tests ---

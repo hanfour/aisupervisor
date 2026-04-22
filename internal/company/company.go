@@ -178,6 +178,12 @@ func New(
 		language:     m.language,
 		reviewCfg:    m.reviewCfg,
 		tmuxClient:   tmuxClient,
+		onExpertDone: func(domain ExpertDomain, findingCount int) {
+			m.emit(Event{
+				Type:    EventExpertCompleted,
+				Message: fmt.Sprintf("expert %s completed with %d findings", domain, findingCount),
+			})
+		},
 	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())

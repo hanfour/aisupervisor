@@ -18,13 +18,13 @@ import (
 // CouncilEngine orchestrates the full council review pipeline:
 // Phase 0 → Expert Selection → Parallel Dispatch → Merge → Carmack Filter → Verdict.
 type CouncilEngine struct {
-	chatProvider ai.ChatProvider
-	registry     *ExpertRegistry
-	conventions  *ConventionStore
-	graph        *knowledge.CodeGraph
-	language     string
-	reviewCfg    config.ReviewConfig
-	tmuxClient   tmux.TmuxClient
+	chatProvider    ai.ChatProvider
+	registry        *ExpertRegistry
+	conventions     *ConventionStore
+	language        string
+	reviewCfg       config.ReviewConfig
+	tmuxClient      tmux.TmuxClient
+	onExpertDone    func(domain ExpertDomain, findingCount int) // optional callback for EventExpertCompleted
 }
 
 // CouncilRequest encapsulates all inputs needed to run a council review.
@@ -34,6 +34,7 @@ type CouncilRequest struct {
 	FileCount int
 	Brief     *ContextBrief
 	Phase0    *Phase0Report
+	Graph     *knowledge.CodeGraph
 }
 
 // RunCouncil executes the full council review pipeline and returns the result.
@@ -64,7 +65,7 @@ func (c *CouncilEngine) RunCouncil(ctx context.Context, req CouncilRequest) (*Co
 	changedFiles := extractChangedFiles(req.Diff)
 
 	// (c) Select experts via the registry.
-	selectedExperts := c.registry.SelectExperts(changedFiles, req.Diff, c.graph, req.Phase0)
+	selectedExperts := c.registry.SelectExperts(changedFiles, req.Diff, req.Graph, req.Phase0, req.DiffLines)
 
 	// (d) Dispatch experts in parallel.
 	expertFindings, err := c.dispatchExperts(ctx, selectedExperts, req.Brief, req.Diff)
@@ -223,6 +224,10 @@ func (c *CouncilEngine) dispatchExperts(ctx context.Context, experts []SelectedE
 		if r.err != nil {
 			log.Printf("council: expert %s failed: %v", r.domain, r.err)
 			continue
+		}
+		log.Printf("council: expert %s completed with %d findings", r.domain, len(r.findings))
+		if c.onExpertDone != nil {
+			c.onExpertDone(r.domain, len(r.findings))
 		}
 		allFindings = append(allFindings, r.findings...)
 	}

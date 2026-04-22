@@ -102,7 +102,7 @@ func parseConvID(id string) int {
 	return n
 }
 
-// Save writes both index.yaml and conventions.md atomically.
+// Save writes both index.yaml and conventions.md.
 func (cs *ConventionStore) Save() error {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
@@ -209,12 +209,12 @@ func (cs *ConventionStore) FindRelevant(domain ExpertDomain, filePath string) []
 		if c.AcceptCount < 2 {
 			continue
 		}
-		// Domain must match (empty domain on convention matches all).
-		if c.Domain != "" && c.Domain != domain {
+		// Domain must match. Empty query domain matches all conventions.
+		if domain != "" && c.Domain != "" && c.Domain != domain {
 			continue
 		}
-		// FileGlob matching.
-		if c.FileGlob != "*" {
+		// FileGlob matching. Empty glob or "*" matches everything.
+		if c.FileGlob != "" && c.FileGlob != "*" {
 			matched, err := filepath.Match(c.FileGlob, base)
 			if err != nil || !matched {
 				continue
@@ -226,7 +226,7 @@ func (cs *ConventionStore) FindRelevant(domain ExpertDomain, filePath string) []
 }
 
 // MatchesFinding returns the first convention that matches an ExpertFinding
-// based on domain and word similarity (Jaccard > 40%). Only accepted
+// based on domain and word similarity (Jaccard > 20%). Only accepted
 // conventions (AcceptCount >= 2) are considered. Returns nil if no match.
 func (cs *ConventionStore) MatchesFinding(f ExpertFinding) *Convention {
 	cs.mu.RLock()

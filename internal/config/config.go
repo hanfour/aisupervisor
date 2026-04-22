@@ -53,9 +53,9 @@ type ReviewConfig struct {
 	LightMaxLines    int    `yaml:"light_max_lines,omitempty"`
 	LightMaxFiles int `yaml:"light_max_files,omitempty"`
 	FastConverge  int `yaml:"fast_converge,omitempty"`
-	CouncilEnabled      bool   `yaml:"council_enabled,omitempty"`
+	CouncilEnabled      *bool  `yaml:"council_enabled,omitempty"`
 	MaxExperts          int    `yaml:"max_experts,omitempty"`
-	Phase0Enabled       bool   `yaml:"phase0_enabled,omitempty"`
+	Phase0Enabled       *bool  `yaml:"phase0_enabled,omitempty"`
 	CarmackFilterScale  string `yaml:"carmack_filter_scale,omitempty"`
 	CLIExpertTimeoutS   int    `yaml:"cli_expert_timeout_s,omitempty"`
 	APIExpertTimeoutS   int    `yaml:"api_expert_timeout_s,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -157,7 +158,7 @@ func (rp *ReviewPipeline) executeReview(ctx context.Context, req ReviewRequest, 
 		rp.mu.Lock()
 		cfg := rp.reviewCfg
 		rp.mu.Unlock()
-		if cfg.CouncilEnabled && rp.mgr.council != nil {
+		if cfg.CouncilEnabled != nil && *cfg.CouncilEnabled && rp.mgr.council != nil {
 			go rp.runCouncilReview(req, t, p, cfg)
 		} else {
 			go rp.runChatReview(req, t, p, cfg)
@@ -277,6 +278,14 @@ func reviewConfigWithDefaults(cfg config.ReviewConfig) config.ReviewConfig {
 	if cfg.SynthesisModel == "" {
 		cfg.SynthesisModel = "sonnet"
 	}
+	if cfg.CouncilEnabled == nil {
+		t := true
+		cfg.CouncilEnabled = &t
+	}
+	if cfg.Phase0Enabled == nil {
+		t := true
+		cfg.Phase0Enabled = &t
+	}
 	if cfg.MaxExperts == 0 {
 		cfg.MaxExperts = 5
 	}
@@ -376,7 +385,7 @@ func (rp *ReviewPipeline) runCouncilReview(req ReviewRequest, t *project.Task, p
 
 	// Phase 0: automated pre-review checks
 	var phase0 *Phase0Report
-	if cfg.Phase0Enabled {
+	if cfg.Phase0Enabled != nil && *cfg.Phase0Enabled {
 		workDir := p.RepoPath
 		if t.WorktreePath != "" {
 			workDir = t.WorktreePath
@@ -445,10 +454,11 @@ func (rp *ReviewPipeline) runCouncilReview(req ReviewRequest, t *project.Task, p
 		return
 	}
 
-	// Set graph on council engine if available
+	// Get graph for expert selection (passed via request, not engine mutation)
+	var codeGraph *knowledge.CodeGraph
 	if rp.mgr.graphProvider != nil {
-		if graph, gErr := rp.mgr.graphProvider.GetGraph(p.RepoPath); gErr == nil {
-			rp.mgr.council.graph = graph
+		if g, gErr := rp.mgr.graphProvider.GetGraph(p.RepoPath); gErr == nil {
+			codeGraph = g
 		}
 	}
 
@@ -466,6 +476,7 @@ func (rp *ReviewPipeline) runCouncilReview(req ReviewRequest, t *project.Task, p
 		FileCount: fileCount,
 		Brief:     brief,
 		Phase0:    phase0,
+		Graph:     codeGraph,
 	})
 	if err != nil {
 		log.Printf("council: RunCouncil failed: %v, falling back to debate", err)
@@ -525,6 +536,7 @@ func (rp *ReviewPipeline) learnFromReview(result *CouncilResult, t *project.Task
 				Domain:      f.Expert,
 				Pattern:     f.Body,
 				Description: f.Body,
+				FileGlob:    inferGlobFromFile(f.File),
 				Source:      fmt.Sprintf("review:%s", t.ID),
 			})
 			rp.mgr.emit(Event{
@@ -537,6 +549,19 @@ func (rp *ReviewPipeline) learnFromReview(result *CouncilResult, t *project.Task
 	if err := rp.mgr.conventions.Save(); err != nil {
 		log.Printf("council: conventions save failed: %v", err)
 	}
+}
+
+// inferGlobFromFile returns a glob pattern based on the file extension (e.g., "*.go").
+// Returns "*" if file is empty or has no extension.
+func inferGlobFromFile(filePath string) string {
+	if filePath == "" {
+		return "*"
+	}
+	ext := filepath.Ext(filePath)
+	if ext == "" {
+		return "*"
+	}
+	return "*" + ext
 }
 
 // fallbackTmuxReview falls back to the legacy tmux-based review when debate pipeline fails.

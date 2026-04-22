@@ -302,7 +302,11 @@ type scoredExpert struct {
 
 // SelectExperts chooses which domain experts to involve for a review based on
 // changed files, diff content, code graph topology, and phase-0 results.
-func (r *ExpertRegistry) SelectExperts(changedFiles []string, diff string, graph *knowledge.CodeGraph, phase0 *Phase0Report) []SelectedExpert {
+func (r *ExpertRegistry) SelectExperts(changedFiles []string, diff string, graph *knowledge.CodeGraph, phase0 *Phase0Report, diffLines ...int) []SelectedExpert {
+	totalDiffLines := 0
+	if len(diffLines) > 0 {
+		totalDiffLines = diffLines[0]
+	}
 	diffLower := strings.ToLower(diff)
 
 	scored := make([]scoredExpert, len(r.experts))
@@ -476,7 +480,7 @@ func (r *ExpertRegistry) SelectExperts(changedFiles []string, diff string, graph
 	for _, se := range selected {
 		assignedFiles := computeAssignedFiles(changedFiles, se.expert.FilePatterns)
 		mode := ExecAPI
-		if len(assignedFiles) > 3 {
+		if len(assignedFiles) > 3 || totalDiffLines > 100 {
 			mode = ExecCLI
 		}
 		result = append(result, SelectedExpert{

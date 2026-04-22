@@ -12,6 +12,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/knowledge"
+	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
 
 // CouncilEngine orchestrates the full council review pipeline:
@@ -23,6 +24,7 @@ type CouncilEngine struct {
 	graph        *knowledge.CodeGraph
 	language     string
 	reviewCfg    config.ReviewConfig
+	tmuxClient   tmux.TmuxClient
 }
 
 // CouncilRequest encapsulates all inputs needed to run a council review.
@@ -199,9 +201,13 @@ func (c *CouncilEngine) dispatchExperts(ctx context.Context, experts []SelectedE
 				findings, err := c.runExpertAPI(ctx, exp, brief, diff)
 				results[idx] = expertResult{findings: findings, err: err, domain: exp.Domain}
 			case ExecCLI:
-				// CLI mode is a placeholder for Task 9.
-				log.Printf("council: skipping CLI expert %s (not yet implemented)", exp.Domain)
-				results[idx] = expertResult{domain: exp.Domain}
+				if c.tmuxClient == nil {
+					log.Printf("council: CLI mode unavailable (no tmux client), skipping expert %s", exp.Domain)
+					results[idx] = expertResult{domain: exp.Domain}
+				} else {
+					findings, err := c.spawnExpertAgent(ctx, exp, brief, diff)
+					results[idx] = expertResult{findings: findings, err: err, domain: exp.Domain}
+				}
 			default:
 				log.Printf("council: unknown exec mode %q for expert %s", exp.Mode, exp.Domain)
 				results[idx] = expertResult{domain: exp.Domain}
@@ -417,4 +423,163 @@ func extractDiffFilePath(section string) string {
 		}
 	}
 	return ""
+}
+
+// ---------------------------------------------------------------------------
+// CLI Expert Agent
+// ---------------------------------------------------------------------------
+
+// spawnExpertAgent launches an expert as an independent Claude Code CLI session
+// in a dedicated tmux session with read-only tool access. It waits for the CLI
+// to become ready, sends the review prompt, waits for completion, captures the
+// output, and parses findings.
+func (c *CouncilEngine) spawnExpertAgent(ctx context.Context, expert SelectedExpert, brief *ContextBrief, diff string) ([]ExpertFinding, error) {
+	sessionName := fmt.Sprintf("ais-expert-%s-%d", expert.Domain, time.Now().UnixMilli()%100000)
+
+	timeout := time.Duration(c.reviewCfg.CLIExpertTimeoutS) * time.Second
+	if timeout == 0 {
+		timeout = 5 * time.Minute
+	}
+
+	// Create tmux session.
+	if err := c.tmuxClient.CreateSession(sessionName); err != nil {
+		return nil, fmt.Errorf("create expert session: %w", err)
+	}
+	defer c.tmuxClient.KillSession(sessionName)
+
+	// Launch Claude Code in read-only mode (Edit, Write, NotebookEdit, Bash disallowed).
+	cliCmd := fmt.Sprintf("claude --model %s --dangerously-skip-permissions --disallowedTools Edit,Write,NotebookEdit,Bash",
+		expertModelName(expert))
+	c.tmuxClient.SendKeys(sessionName, 0, 0, cliCmd)
+
+	// Wait for CLI to be ready (poll for prompt indicators).
+	readyCtx, readyCancel := context.WithTimeout(ctx, 90*time.Second)
+	defer readyCancel()
+	if err := c.waitForExpertReady(readyCtx, sessionName); err != nil {
+		return nil, fmt.Errorf("expert CLI not ready: %w", err)
+	}
+
+	// Build and send the review prompt.
+	filteredDiff := filterDiffForFiles(diff, expert.AssignedFiles)
+	prompt := buildExpertCLIPrompt(expert, brief, filteredDiff)
+
+	// Send prompt via literal keys (handles special chars).
+	c.tmuxClient.SendLiteralKeys(sessionName, 0, 0, prompt)
+	time.Sleep(2 * time.Second) // render delay
+	c.tmuxClient.SendKeys(sessionName, 0, 0, "")  // Enter
+
+	// Wait for completion.
+	completionCtx, completionCancel := context.WithTimeout(ctx, timeout)
+	defer completionCancel()
+	if err := c.waitForExpertCompletion(completionCtx, sessionName); err != nil {
+		return nil, fmt.Errorf("expert %s timed out: %w", expert.Domain, err)
+	}
+
+	// Capture output.
+	output, err := c.tmuxClient.CapturePane(sessionName, 0, 0, -500)
+	if err != nil {
+		return nil, fmt.Errorf("capture expert output: %w", err)
+	}
+
+	return parseExpertFindings(output, expert.Domain)
+}
+
+// expertModelName returns the model to use for a CLI expert, defaulting to "sonnet".
+func expertModelName(expert SelectedExpert) string {
+	if expert.Model != "" {
+		return expert.Model
+	}
+	return "sonnet"
+}
+
+// buildExpertCLIPrompt assembles the review prompt sent to a CLI expert session.
+func buildExpertCLIPrompt(expert SelectedExpert, brief *ContextBrief, filteredDiff string) string {
+	var sb strings.Builder
+	sb.WriteString("You are a code review expert specializing in ")
+	sb.WriteString(string(expert.Domain))
+	sb.WriteString(". Review the following code changes.\n\n")
+	sb.WriteString("## Context\n\n")
+	if brief != nil {
+		sb.WriteString(brief.Render())
+	}
+	sb.WriteString("\n\n## Diff to Review\n\n")
+	// Truncate diff if too long for CLI input.
+	if len(filteredDiff) > 8000 {
+		filteredDiff = filteredDiff[:4000] + "\n... (truncated) ...\n" + filteredDiff[len(filteredDiff)-4000:]
+	}
+	sb.WriteString(filteredDiff)
+	sb.WriteString("\n\n## Instructions\n\n")
+	sb.WriteString("Output your findings as a JSON array. Each finding: {\"file\":\"...\",\"line\":N,\"severity\":\"CRITICAL|HIGH|MEDIUM\",\"body\":\"...\"}\n")
+	sb.WriteString("If no issues found, output: []\n")
+	return sb.String()
+}
+
+// waitForExpertReady polls the tmux pane until Claude Code is ready to accept input.
+func (c *CouncilEngine) waitForExpertReady(ctx context.Context, session string) error {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			content, err := c.tmuxClient.CapturePane(session, 0, 0, -50)
+			if err != nil {
+				continue
+			}
+			lower := strings.ToLower(content)
+			if strings.Contains(lower, "what can i help") ||
+				strings.Contains(lower, "welcome") ||
+				strings.Contains(content, "> ") ||
+				strings.Contains(content, "❯") {
+				return nil
+			}
+			// Auto-accept trust/permissions dialogs.
+			if strings.Contains(lower, "trust") || strings.Contains(lower, "skip-permissions") {
+				c.tmuxClient.SendKeys(session, 0, 0, "y")
+			}
+		}
+	}
+}
+
+// waitForExpertCompletion polls the tmux pane until the expert CLI returns to
+// an idle prompt, indicating it has finished processing. It uses two heuristics:
+// (1) the last line is a prompt character and pane content is stable, or
+// (2) pane content has not changed for ~15 seconds.
+func (c *CouncilEngine) waitForExpertCompletion(ctx context.Context, session string) error {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	lastContent := ""
+	unchangedCount := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			content, err := c.tmuxClient.CapturePane(session, 0, 0, -100)
+			if err != nil {
+				continue
+			}
+			// Check for idle prompt (Claude Code returned to prompt).
+			trimmed := strings.TrimSpace(content)
+			lines := strings.Split(trimmed, "\n")
+			if len(lines) > 0 {
+				lastLine := strings.TrimSpace(lines[len(lines)-1])
+				if lastLine == ">" || lastLine == "❯" || strings.HasSuffix(lastLine, "> ") {
+					if unchangedCount >= 2 { // stable idle prompt
+						return nil
+					}
+				}
+			}
+			if content == lastContent {
+				unchangedCount++
+				if unchangedCount >= 5 { // no change for ~15 seconds
+					return nil
+				}
+			} else {
+				unchangedCount = 0
+				lastContent = content
+			}
+		}
+	}
 }

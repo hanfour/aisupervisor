@@ -177,6 +177,7 @@ func New(
 		conventions:  conventions,
 		language:     m.language,
 		reviewCfg:    m.reviewCfg,
+		tmuxClient:   tmuxClient,
 	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())

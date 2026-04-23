@@ -15,6 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hanfourmini/aisupervisor/internal/agent"
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
@@ -133,12 +134,19 @@ type workerChecker interface {
 
 // MeetingEngine orchestrates multi-participant meetings using AI chat providers.
 type MeetingEngine struct {
-	chatProvider  ai.ChatProvider
-	mailbox       *Mailbox
-	tmuxClient    tmux.TmuxClient
-	language      string
-	store         *MeetingStore
-	workerChecker workerChecker
+	chatProvider    ai.ChatProvider
+	mailbox         *Mailbox
+	tmuxClient      tmux.TmuxClient
+	runtimeRegistry *agent.RuntimeRegistry
+	language        string
+	store           *MeetingStore
+	workerChecker   workerChecker
+}
+
+// SetRuntimeRegistry wires a runtime registry so CLI-mode speech collection
+// can delegate to AgentRuntime plugins. Safe to call with nil.
+func (e *MeetingEngine) SetRuntimeRegistry(r *agent.RuntimeRegistry) {
+	e.runtimeRegistry = r
 }
 
 // ---------------------------------------------------------------------------

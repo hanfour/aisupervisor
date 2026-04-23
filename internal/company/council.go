@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/agent"
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/knowledge"
@@ -24,7 +25,14 @@ type CouncilEngine struct {
 	language        string
 	reviewCfg       config.ReviewConfig
 	tmuxClient      tmux.TmuxClient
+	runtimeRegistry *agent.RuntimeRegistry
 	onExpertDone    func(domain ExpertDomain, findingCount int) // optional callback for EventExpertCompleted
+}
+
+// SetRuntimeRegistry wires a runtime registry so CLI-mode expert spawning can
+// delegate to AgentRuntime plugins. Safe to call with nil (disables delegation).
+func (c *CouncilEngine) SetRuntimeRegistry(r *agent.RuntimeRegistry) {
+	c.runtimeRegistry = r
 }
 
 // CouncilRequest encapsulates all inputs needed to run a council review.

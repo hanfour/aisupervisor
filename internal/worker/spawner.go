@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/agent"
 	"github.com/hanfourmini/aisupervisor/internal/config"
 	"github.com/hanfourmini/aisupervisor/internal/gitops"
 	"github.com/hanfourmini/aisupervisor/internal/growth"
@@ -31,13 +33,13 @@ type TierSpawnConfig struct {
 }
 
 type Spawner struct {
-	tmuxClient    tmux.TmuxClient
-	gitOps        gitops.GitOps
-	sup           *supervisor.Supervisor
-	sessionMgr    *session.Manager
-	tierConfigs   map[WorkerTier]TierSpawnConfig
-	skillProfiles    map[string]config.SkillProfile
-	skillOverrides   map[string]config.SkillProfileOverride // keyed by workerID
+	tmuxClient         tmux.TmuxClient
+	gitOps             gitops.GitOps
+	sup                *supervisor.Supervisor
+	sessionMgr         *session.Manager
+	tierConfigs        map[WorkerTier]TierSpawnConfig
+	skillProfiles      map[string]config.SkillProfile
+	skillOverrides     map[string]config.SkillProfileOverride // keyed by workerID
 	projectStore       projectStoreReader
 	language           string // "en" or "zh-TW"
 	personalityStore   *personality.Store
@@ -45,6 +47,7 @@ type Spawner struct {
 	useWorktrees       bool // Enable git worktree isolation per task
 	trajectoryRecorder *TrajectoryRecorder
 	pendingMessagesFn  func(workerID string) string
+	runtimeRegistry    *agent.RuntimeRegistry // Phase 3: pluggable agent backends
 }
 
 // projectStoreReader is the subset of project.Store needed by Spawner.
@@ -59,10 +62,10 @@ func NewSpawner(
 	sessionMgr *session.Manager,
 ) *Spawner {
 	return &Spawner{
-		tmuxClient:    tmuxClient,
-		gitOps:        gitOps,
-		sup:           sup,
-		sessionMgr:    sessionMgr,
+		tmuxClient:     tmuxClient,
+		gitOps:         gitOps,
+		sup:            sup,
+		sessionMgr:     sessionMgr,
 		tierConfigs:    make(map[WorkerTier]TierSpawnConfig),
 		skillProfiles:  make(map[string]config.SkillProfile),
 		skillOverrides: make(map[string]config.SkillProfileOverride),
@@ -226,6 +229,18 @@ func (s *Spawner) SetPendingMessages(fn func(workerID string) string) {
 	s.pendingMessagesFn = fn
 }
 
+// SetRuntimeRegistry wires a runtime registry for plugin-based spawning.
+// When set, spawnForTaskInner will prefer the matching runtime over the legacy
+// inline CLI logic.
+func (s *Spawner) SetRuntimeRegistry(r *agent.RuntimeRegistry) {
+	s.runtimeRegistry = r
+}
+
+// RuntimeRegistry returns the currently wired runtime registry, if any.
+// Primarily used for tests and introspection.
+func (s *Spawner) RuntimeRegistry() *agent.RuntimeRegistry {
+	return s.runtimeRegistry
+}
 
 // LoadSkillOverrides populates per-worker skill profile overrides from config.
 func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOverride) {
@@ -489,6 +504,14 @@ func (s *Spawner) spawnForTaskInner(ctx context.Context, w *Worker, t *project.T
 		t.WorktreePath = wtPath
 	} else {
 		workDir = p.RepoPath
+	}
+
+	// 2b. Phase 3: delegate to AgentRuntime plugin when a registry is wired.
+	// This path replaces the legacy inline tmux/CLI bootstrap below.
+	if s.runtimeRegistry != nil {
+		if rt, ok := s.runtimeRegistry.Get(s.resolveRuntimeName(w)); ok && rt != nil {
+			return s.spawnViaRuntime(ctx, rt, w, t, p, workDir)
+		}
 	}
 
 	// 3. Create tmux session (kill stale session if it exists)
@@ -1365,6 +1388,190 @@ func (s *Spawner) resolveDeps(t *project.Task) []depContext {
 		}
 	}
 	return deps
+}
+
+// resolveRuntimeName picks which runtime plugin to use for a worker.
+// Priority (highest wins): tier CLITool → growth config CLITool → worker CLITool → "claude".
+//
+// This mirrors the precedence already baked into resolveCLI so that the legacy
+// and plugin paths agree on which CLI would be used.
+func (s *Spawner) resolveRuntimeName(w *Worker) string {
+	name := "claude"
+	if w != nil && w.CLITool != "" {
+		name = w.CLITool
+	}
+	if w != nil && w.SkillTree != nil {
+		gcfg := growth.EffectiveConfig(w.SkillTree, w.SkillTree.DominantBranch())
+		if gcfg.CLITool != "" {
+			name = gcfg.CLITool
+		}
+	}
+	if w != nil {
+		if tc, ok := s.tierConfigs[w.EffectiveTier()]; ok && tc.CLITool != "" {
+			name = tc.CLITool
+		}
+	}
+	return name
+}
+
+// buildSpawnConfig assembles an agent.SpawnConfig from the spawner's current
+// view of the worker's skill profile, growth config, and tier config. The
+// returned SpawnConfig carries enough information for any AgentRuntime plugin
+// to build its own CLI command without reaching back into spawner internals.
+func (s *Spawner) buildSpawnConfig(w *Worker, p *project.Project, workDir string, branch string) agent.SpawnConfig {
+	cfg := agent.SpawnConfig{
+		WorkDir: workDir,
+		Branch:  branch,
+		EnvVars: make(map[string]string),
+	}
+
+	// Start with the base skill profile (if any).
+	if w != nil && w.SkillProfile != "" {
+		if sp, ok := s.skillProfiles[w.SkillProfile]; ok {
+			cfg.SystemPrompt = sp.SystemPrompt
+			cfg.AllowedTools = append([]string(nil), sp.AllowedTools...)
+			cfg.DisallowedTools = append([]string(nil), sp.DisallowedTools...)
+			cfg.Model = sp.Model
+			cfg.PermissionMode = sp.PermissionMode
+			cfg.ExtraCLIArgs = sp.ExtraCLIArgs
+		}
+	}
+
+	// Growth/skill-tree can override model/permissions/tools and surface
+	// ais-agent-only knobs via EnvVars.
+	if w != nil && w.SkillTree != nil {
+		gcfg := growth.EffectiveConfig(w.SkillTree, w.SkillTree.DominantBranch())
+		if gcfg.Model != "" {
+			cfg.Model = gcfg.Model
+		}
+		if gcfg.PermissionMode != "" {
+			cfg.PermissionMode = gcfg.PermissionMode
+		}
+		if len(gcfg.AllowedTools) > 0 {
+			cfg.AllowedTools = append([]string(nil), gcfg.AllowedTools...)
+		}
+		if gcfg.ExtraPrompt != "" {
+			if cfg.SystemPrompt != "" {
+				cfg.SystemPrompt += "\n\n" + gcfg.ExtraPrompt
+			} else {
+				cfg.SystemPrompt = gcfg.ExtraPrompt
+			}
+		}
+		// ais-agent surfaces Provider and MaxTokenBudget via EnvVars so the
+		// shared SpawnConfig struct can stay backend-agnostic (see
+		// internal/agent/aisagent/runtime.go docs).
+		if gcfg.Provider != "" {
+			cfg.EnvVars["AIS_PROVIDER"] = gcfg.Provider
+		}
+		if gcfg.MaxTokenBudget > 0 {
+			cfg.EnvVars["AIS_MAX_TOKENS"] = strconv.Itoa(gcfg.MaxTokenBudget)
+		}
+	}
+
+	// Enforce autonomous DisallowedTools safety net. Runtimes that don't load
+	// .claude/ skills (e.g. ais-agent) may simply forward these flags without
+	// ill effect.
+	cfg.DisallowedTools = mergeDisallowedTools(cfg.DisallowedTools, config.AutonomousDisallowedTools())
+
+	return cfg
+}
+
+// spawnViaRuntime uses an AgentRuntime plugin for the CLI lifecycle. Git setup
+// and workdir selection happen in the caller (spawnForTaskInner); this function
+// owns Spawn → DetectReady → SendPrompt → MonitoredSession creation.
+func (s *Spawner) spawnViaRuntime(
+	ctx context.Context, rt agent.AgentRuntime,
+	w *Worker, t *project.Task, p *project.Project, workDir string,
+) error {
+	cfg := s.buildSpawnConfig(w, p, workDir, t.BranchName)
+
+	// For autonomous / non-code tasks (PRD, design, research, admin, HR), force
+	// bypass permissions so the CLI can run bash without interactive prompts.
+	isNonCodeTask := t.Type == project.TaskTypeResearch ||
+		t.Type == project.TaskTypePRD || t.Type == project.TaskTypeDesign ||
+		t.Type == project.TaskTypeAdmin || t.Type == project.TaskTypeHR
+	if isNonCodeTask && cfg.PermissionMode != "bypassPermissions" {
+		cfg.PermissionMode = "bypassPermissions"
+	}
+
+	runtimeSess, err := rt.Spawn(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("runtime %s spawn: %w", rt.Name(), err)
+	}
+
+	if err := rt.DetectReady(ctx, runtimeSess, 120*time.Second); err != nil {
+		_ = rt.Cleanup(runtimeSess)
+		return fmt.Errorf("runtime %s ready: %w", rt.Name(), err)
+	}
+
+	// Build prompt (same logic as legacy path).
+	deps := s.resolveDeps(t)
+	prompt := s.buildPromptForTier(t, p, w.EffectiveTier(), deps)
+	if s.personalityStore != nil {
+		if profile := s.personalityStore.GetProfile(w.ID); profile != nil {
+			skillPrompt := personality.GenerateSkillPrompt(profile.SkillScores)
+			if skillPrompt != "" {
+				prompt += skillPrompt
+			}
+		}
+	}
+
+	if err := rt.SendPrompt(runtimeSess, prompt); err != nil {
+		_ = rt.Cleanup(runtimeSess)
+		return fmt.Errorf("runtime %s send prompt: %w", rt.Name(), err)
+	}
+
+	// Trajectory recording (same events/content as legacy).
+	s.recordTrajectory(TrajectoryEntry{
+		Timestamp: time.Now(),
+		WorkerID:  w.ID,
+		TaskID:    t.ID,
+		Event:     TrajectoryEventSpawn,
+		Details:   fmt.Sprintf("spawned %s via runtime in tmux session %s", rt.Name(), runtimeSess.TmuxSession),
+	})
+	s.recordTrajectory(TrajectoryEntry{
+		Timestamp: time.Now(),
+		WorkerID:  w.ID,
+		TaskID:    t.ID,
+		Event:     TrajectoryEventPromptSent,
+		Details:   fmt.Sprintf("prompt sent (%d chars)", len(prompt)),
+	})
+
+	// Update worker state.
+	w.TmuxSession = runtimeSess.TmuxSession
+	w.Window = runtimeSess.Window
+	w.Pane = runtimeSess.Pane
+	w.Status = WorkerWorking
+	w.CurrentTaskID = t.ID
+
+	// MonitoredSession setup (same as legacy).
+	toolType := "claude_code"
+	switch rt.Name() {
+	case "aider":
+		toolType = "aider"
+	case "ais-agent":
+		toolType = "ais_agent"
+	}
+	ms := &session.MonitoredSession{
+		ID:          fmt.Sprintf("worker-%s", w.ID),
+		Name:        fmt.Sprintf("Worker: %s", w.Name),
+		TmuxSession: runtimeSess.TmuxSession,
+		Window:      runtimeSess.Window,
+		Pane:        runtimeSess.Pane,
+		ToolType:    toolType,
+		TaskGoal:    t.Title,
+		ProjectDir:  p.RepoPath,
+		Status:      session.StatusActive,
+	}
+	w.SessionID = ms.ID
+	if s.sessionMgr != nil {
+		s.sessionMgr.Add(ms)
+	}
+	if s.sup != nil {
+		go s.sup.Monitor(ctx, ms)
+	}
+
+	return nil
 }
 
 func shellEscape(s string) string {

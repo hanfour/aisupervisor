@@ -2,7 +2,9 @@ package company
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -466,4 +468,437 @@ func checkConsensus(speeches []Speech, threshold float64) (reached bool, verdict
 	}
 
 	return false, ""
+}
+
+// ---------------------------------------------------------------------------
+// Speech Collection (Task 4)
+// ---------------------------------------------------------------------------
+
+// collectSpeeches collects speeches from all participants in parallel.
+// mode determines execution: ExecAPI (ChatProvider) or ExecCLI (tmux).
+// Single participant failure is logged, not fatal.
+func (me *MeetingEngine) collectSpeeches(ctx context.Context, m *Meeting, roundNum int, prompt string, mode ExecMode) ([]Speech, error) {
+	if len(m.Participants) == 0 {
+		return nil, fmt.Errorf("no participants in meeting %s", m.ID)
+	}
+
+	type speechResult struct {
+		speech Speech
+		err    error
+	}
+
+	results := make([]speechResult, len(m.Participants))
+	var wg sync.WaitGroup
+
+	for i, pid := range m.Participants {
+		wg.Add(1)
+		go func(idx int, workerID string) {
+			defer wg.Done()
+
+			if mode == ExecCLI {
+				log.Printf("meeting: CLI mode not yet implemented for speech collection, falling back to API for worker %s", workerID)
+			}
+
+			// API mode (and CLI fallback).
+			if me.chatProvider == nil {
+				results[idx] = speechResult{err: fmt.Errorf("no chat provider available")}
+				return
+			}
+
+			role := "participant"
+			if workerID == m.ChairID {
+				role = "chair"
+			}
+
+			systemPrompt := fmt.Sprintf(
+				"You are worker %s participating in a %s meeting titled %q. Your role is %s. "+
+					"After your analysis, you MUST end your response with a vote line: VOTE:approve, VOTE:reject, or VOTE:abstain. "+
+					"If you have specific findings, include them as a JSON array like: ```json\n[{\"file\":\"...\",\"severity\":\"...\",\"body\":\"...\"}]\n```",
+				workerID, m.Type, m.Title, role,
+			)
+
+			messages := []ai.ChatMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: prompt},
+			}
+
+			text, err := me.chatProvider.Chat(ctx, messages)
+			if err != nil {
+				results[idx] = speechResult{err: fmt.Errorf("worker %s chat failed: %w", workerID, err)}
+				return
+			}
+
+			vote := parseVote(text)
+			findings := parseSpeechFindings(text)
+
+			results[idx] = speechResult{
+				speech: Speech{
+					WorkerID:  workerID,
+					Role:      role,
+					Content:   text,
+					Vote:      vote,
+					Findings:  findings,
+					Timestamp: time.Now(),
+				},
+			}
+		}(i, pid)
+	}
+
+	wg.Wait()
+
+	// Collect successful speeches, log failures.
+	var speeches []Speech
+	for _, r := range results {
+		if r.err != nil {
+			log.Printf("meeting: speech collection failure: %v", r.err)
+			continue
+		}
+		speeches = append(speeches, r.speech)
+	}
+
+	return speeches, nil
+}
+
+// parseVote scans content for a "VOTE:" prefix and returns the vote value.
+// Returns "approve", "reject", "abstain", or "" if no vote found.
+func parseVote(content string) string {
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		upper := strings.ToUpper(trimmed)
+		if strings.HasPrefix(upper, "VOTE:") {
+			val := strings.TrimSpace(trimmed[5:])
+			val = strings.ToLower(val)
+			switch val {
+			case "approve", "reject", "abstain":
+				return val
+			}
+		}
+	}
+	return ""
+}
+
+// parseSpeechFindings extracts Finding structs from a speech's content,
+// reusing the same JSON extraction strategies as council's parseExpertFindings.
+func parseSpeechFindings(content string) []Finding {
+	content = strings.TrimSpace(content)
+
+	// Strategy 1: Extract from ```json ... ``` block.
+	if start := strings.Index(content, "```json"); start != -1 {
+		inner := content[start+7:]
+		if end := strings.Index(inner, "```"); end != -1 {
+			extracted := strings.TrimSpace(inner[:end])
+			if findings, ok := tryParseFindingsArray(extracted); ok {
+				return findings
+			}
+		}
+	}
+
+	// Strategy 2: Find [{ ... }] substring.
+	if start := strings.Index(content, "[{"); start != -1 {
+		sub := content[start:]
+		depth := 0
+		end := -1
+		for i, ch := range sub {
+			switch ch {
+			case '[':
+				depth++
+			case ']':
+				depth--
+				if depth == 0 {
+					end = i + 1
+				}
+			}
+			if end > 0 {
+				break
+			}
+		}
+		if end > 0 {
+			extracted := sub[:end]
+			if findings, ok := tryParseFindingsArray(extracted); ok {
+				return findings
+			}
+		}
+	}
+
+	return nil
+}
+
+// tryParseFindingsArray attempts to unmarshal a string as []Finding.
+func tryParseFindingsArray(s string) ([]Finding, bool) {
+	var findings []Finding
+	if err := json.Unmarshal([]byte(s), &findings); err != nil {
+		return nil, false
+	}
+	return findings, true
+}
+
+// ---------------------------------------------------------------------------
+// RunRound & Synthesize (Task 5)
+// ---------------------------------------------------------------------------
+
+// RunRound executes one round of the meeting: collect speeches, check consensus.
+// Returns the round, whether consensus was reached, and any error.
+func (me *MeetingEngine) RunRound(ctx context.Context, m *Meeting, roundNum int, mode ExecMode, threshold float64) (*MeetingRound, bool, error) {
+	prompt := buildRoundPrompt(m, roundNum, nil)
+
+	speeches, err := me.collectSpeeches(ctx, m, roundNum, prompt, mode)
+	if err != nil {
+		return nil, false, fmt.Errorf("round %d collect speeches: %w", roundNum, err)
+	}
+
+	round := &MeetingRound{
+		Number:   roundNum,
+		Speeches: speeches,
+	}
+
+	reached, verdict := checkConsensus(speeches, threshold)
+	if reached {
+		round.Consensus = verdict
+	}
+
+	m.Rounds = append(m.Rounds, *round)
+
+	if me.store != nil {
+		if err := me.store.Update(m); err != nil {
+			log.Printf("meeting: failed to update store after round %d: %v", roundNum, err)
+		}
+	}
+
+	return round, reached, nil
+}
+
+// buildRoundPrompt builds the prompt for a round, including context from previous rounds.
+func buildRoundPrompt(m *Meeting, roundNum int, meetingConfig interface{}) string {
+	var sb strings.Builder
+
+	typeStr := string(m.Type)
+	if len(typeStr) > 0 {
+		typeStr = strings.ToUpper(typeStr[:1]) + typeStr[1:]
+	}
+	sb.WriteString(fmt.Sprintf("## %s Meeting: %s\n\n", typeStr, m.Title))
+
+	if len(m.Agenda) > 0 {
+		sb.WriteString("### Agenda\n")
+		for i, item := range m.Agenda {
+			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, item))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Add meeting-type-specific config context.
+	if meetingConfig != nil {
+		switch cfg := meetingConfig.(type) {
+		case *ReviewMeetingConfig:
+			if cfg.Brief != nil {
+				sb.WriteString("### Context\n")
+				sb.WriteString(cfg.Brief.Render())
+				sb.WriteString("\n\n")
+			}
+			if cfg.Diff != "" {
+				sb.WriteString("### Diff\n```\n")
+				diff := cfg.Diff
+				if len(diff) > 6000 {
+					diff = diff[:3000] + "\n... (truncated) ...\n" + diff[len(diff)-3000:]
+				}
+				sb.WriteString(diff)
+				sb.WriteString("\n```\n\n")
+			}
+		case *PlanningMeetingConfig:
+			if len(cfg.Goals) > 0 {
+				sb.WriteString("### Goals\n")
+				for _, g := range cfg.Goals {
+					sb.WriteString(fmt.Sprintf("- %s\n", g))
+				}
+				sb.WriteString("\n")
+			}
+			if len(cfg.Constraints) > 0 {
+				sb.WriteString("### Constraints\n")
+				for _, c := range cfg.Constraints {
+					sb.WriteString(fmt.Sprintf("- %s\n", c))
+				}
+				sb.WriteString("\n")
+			}
+		case *DebugMeetingConfig:
+			if cfg.ErrorLog != "" {
+				sb.WriteString("### Error Log\n```\n")
+				sb.WriteString(cfg.ErrorLog)
+				sb.WriteString("\n```\n\n")
+			}
+		}
+	}
+
+	// Include previous round summaries for rounds > 1.
+	if roundNum > 1 && len(m.Rounds) > 0 {
+		sb.WriteString("### Previous Round Discussions\n\n")
+		for _, r := range m.Rounds {
+			sb.WriteString(fmt.Sprintf("**Round %d:**\n", r.Number))
+			for _, s := range r.Speeches {
+				// Summarize each speech concisely.
+				summary := s.Content
+				if len(summary) > 200 {
+					summary = summary[:200] + "..."
+				}
+				sb.WriteString(fmt.Sprintf("- **%s** (%s): %s [Vote: %s]\n", s.WorkerID, s.Role, summary, s.Vote))
+			}
+			if r.Consensus != "" {
+				sb.WriteString(fmt.Sprintf("  → Consensus: %s\n", r.Consensus))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("### Round %d Instructions\n", roundNum))
+	sb.WriteString("Please share your analysis and perspective on the agenda items. ")
+	if roundNum > 1 {
+		sb.WriteString("Consider the points raised in previous rounds. Try to converge toward a decision. ")
+	}
+	sb.WriteString("End your response with your vote: VOTE:approve, VOTE:reject, or VOTE:abstain\n")
+
+	return sb.String()
+}
+
+// Synthesize produces the final verdict and summary after all rounds.
+func (me *MeetingEngine) Synthesize(ctx context.Context, m *Meeting) error {
+	if len(m.Rounds) == 0 {
+		return fmt.Errorf("cannot synthesize meeting %s: no rounds completed", m.ID)
+	}
+
+	lastRound := m.Rounds[len(m.Rounds)-1]
+
+	// If last round has consensus, use that.
+	if lastRound.Consensus != "" {
+		m.Verdict = lastRound.Consensus
+		m.Summary = fmt.Sprintf("Consensus reached in round %d: %s", lastRound.Number, lastRound.Consensus)
+	} else if me.chatProvider != nil {
+		// Use AI to synthesize from all rounds.
+		verdict, summary, err := me.aiSynthesize(ctx, m)
+		if err != nil {
+			log.Printf("meeting: AI synthesis failed, falling back to majority vote: %v", err)
+			m.Verdict, m.Summary = majorityVoteSummary(lastRound)
+		} else {
+			m.Verdict = verdict
+			m.Summary = summary
+		}
+	} else {
+		// No chat provider — use majority vote from last round.
+		m.Verdict, m.Summary = majorityVoteSummary(lastRound)
+	}
+
+	m.Status = MeetingCompleted
+	now := time.Now()
+	m.CompletedAt = &now
+
+	// Notify participants.
+	if me.mailbox != nil {
+		for _, pid := range m.Participants {
+			env := Envelope{
+				StructuredMessage: StructuredMessage{
+					From:    m.ChairID,
+					To:      pid,
+					Type:    MsgStatusUpdate,
+					Content: fmt.Sprintf("Meeting completed: %s — Verdict: %s", m.Title, m.Verdict),
+				},
+			}
+			_ = me.mailbox.Send(env)
+		}
+	}
+
+	// Update store.
+	if me.store != nil {
+		if err := me.store.Update(m); err != nil {
+			return fmt.Errorf("synthesize update store: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// aiSynthesize uses the chat provider to produce a final verdict and summary.
+func (me *MeetingEngine) aiSynthesize(ctx context.Context, m *Meeting) (verdict string, summary string, err error) {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("You are synthesizing the results of a %s meeting titled %q.\n\n", m.Type, m.Title))
+
+	for _, r := range m.Rounds {
+		sb.WriteString(fmt.Sprintf("## Round %d\n", r.Number))
+		for _, s := range r.Speeches {
+			sb.WriteString(fmt.Sprintf("**%s** (%s): %s\nVote: %s\n\n", s.WorkerID, s.Role, s.Content, s.Vote))
+		}
+	}
+
+	sb.WriteString("\nBased on all rounds of discussion, provide:\n")
+	sb.WriteString("1. A final verdict: approve, reject, or abstain\n")
+	sb.WriteString("2. A concise summary of the key points and reasoning\n\n")
+	sb.WriteString("Format your response as:\nVERDICT: <approve|reject|abstain>\nSUMMARY: <your summary>\n")
+
+	messages := []ai.ChatMessage{
+		{Role: "user", Content: sb.String()},
+	}
+
+	text, err := me.chatProvider.Chat(ctx, messages)
+	if err != nil {
+		return "", "", fmt.Errorf("AI synthesis chat: %w", err)
+	}
+
+	// Parse verdict and summary from response.
+	verdict = ""
+	summary = text // default to full response as summary
+
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		upper := strings.ToUpper(trimmed)
+		if strings.HasPrefix(upper, "VERDICT:") {
+			val := strings.TrimSpace(trimmed[8:])
+			val = strings.ToLower(val)
+			switch val {
+			case "approve", "reject", "abstain":
+				verdict = val
+			}
+		}
+		if strings.HasPrefix(upper, "SUMMARY:") {
+			summary = strings.TrimSpace(trimmed[8:])
+		}
+	}
+
+	if verdict == "" {
+		// Try to extract from VOTE: pattern as fallback.
+		verdict = parseVote(text)
+	}
+	if verdict == "" {
+		verdict = "abstain" // ultimate fallback
+	}
+
+	return verdict, summary, nil
+}
+
+// majorityVoteSummary computes verdict and summary from majority vote of the last round.
+func majorityVoteSummary(round MeetingRound) (string, string) {
+	votes := make(map[string]int)
+	total := 0
+
+	for _, s := range round.Speeches {
+		v := strings.ToLower(strings.TrimSpace(s.Vote))
+		if v == "" || v == "abstain" {
+			continue
+		}
+		votes[v]++
+		total++
+	}
+
+	if total == 0 {
+		return "abstain", fmt.Sprintf("No actionable votes in round %d; defaulting to abstain", round.Number)
+	}
+
+	// Find majority.
+	bestVote := ""
+	bestCount := 0
+	for v, c := range votes {
+		if c > bestCount {
+			bestCount = c
+			bestVote = v
+		}
+	}
+
+	return bestVote, fmt.Sprintf("Majority vote in round %d: %s (%d/%d)", round.Number, bestVote, bestCount, total)
 }

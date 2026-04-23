@@ -2,10 +2,15 @@ package company
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/hanfourmini/aisupervisor/internal/ai"
 )
 
 // mockWorkerChecker implements workerChecker for tests.
@@ -635,4 +640,533 @@ func searchSubstr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Mock chat provider for meeting tests
+// ---------------------------------------------------------------------------
+
+type meetingMockChat struct {
+	mu        sync.Mutex
+	responses []string
+	callIdx   int
+}
+
+func (m *meetingMockChat) Chat(ctx context.Context, msgs []ai.ChatMessage) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.responses) == 0 {
+		return "", fmt.Errorf("no responses configured")
+	}
+	idx := m.callIdx % len(m.responses)
+	m.callIdx++
+	return m.responses[idx], nil
+}
+
+// meetingFailChat fails on specific call indices.
+type meetingFailChat struct {
+	mu        sync.Mutex
+	responses []string
+	failIdx   map[int]bool // call indices that should fail
+	callIdx   int
+}
+
+func (m *meetingFailChat) Chat(ctx context.Context, msgs []ai.ChatMessage) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	idx := m.callIdx
+	m.callIdx++
+	if m.failIdx[idx] {
+		return "", fmt.Errorf("simulated failure at call %d", idx)
+	}
+	rIdx := idx % len(m.responses)
+	return m.responses[rIdx], nil
+}
+
+// ---------------------------------------------------------------------------
+// parseVote tests
+// ---------------------------------------------------------------------------
+
+func TestParseVote(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"approve", "Some analysis.\nVOTE:approve", "approve"},
+		{"reject", "Analysis here.\nVOTE:reject\n", "reject"},
+		{"abstain", "VOTE:abstain", "abstain"},
+		{"case insensitive prefix", "Some text\nvote:Approve", "approve"},
+		{"with spaces", "  VOTE:  reject  ", "reject"},
+		{"no match", "This has no vote at all", ""},
+		{"invalid vote value", "VOTE:maybe", ""},
+		{"mixed content", "I think this is good.\nVOTE:approve\nExtra text after.", "approve"},
+		{"empty string", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseVote(tt.content)
+			if got != tt.want {
+				t.Errorf("parseVote(%q) = %q, want %q", tt.content, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// collectSpeeches tests
+// ---------------------------------------------------------------------------
+
+func TestCollectSpeeches_APIMode(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+	mock := &meetingMockChat{
+		responses: []string{"I approve this change.\nVOTE:approve"},
+	}
+
+	engine := NewMeetingEngine(mock, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m := &Meeting{
+		ID:           "mtg-test-1",
+		Type:         MeetingReview,
+		Title:        "Test Meeting",
+		ChairID:      "worker-a",
+		Participants: []string{"worker-a"},
+	}
+
+	speeches, err := engine.collectSpeeches(context.Background(), m, 1, "Review the code", ExecAPI)
+	if err != nil {
+		t.Fatalf("collectSpeeches: %v", err)
+	}
+	if len(speeches) != 1 {
+		t.Fatalf("expected 1 speech, got %d", len(speeches))
+	}
+	if speeches[0].Vote != "approve" {
+		t.Fatalf("expected vote %q, got %q", "approve", speeches[0].Vote)
+	}
+	if speeches[0].WorkerID != "worker-a" {
+		t.Fatalf("expected worker-a, got %q", speeches[0].WorkerID)
+	}
+	if speeches[0].Role != "chair" {
+		t.Fatalf("expected role chair for chair worker, got %q", speeches[0].Role)
+	}
+}
+
+func TestCollectSpeeches_Parallel(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+	mock := &meetingMockChat{
+		responses: []string{
+			"Analysis A.\nVOTE:approve",
+			"Analysis B.\nVOTE:reject",
+			"Analysis C.\nVOTE:approve",
+		},
+	}
+
+	engine := NewMeetingEngine(mock, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m := &Meeting{
+		ID:           "mtg-test-2",
+		Type:         MeetingReview,
+		Title:        "Parallel Test",
+		ChairID:      "worker-a",
+		Participants: []string{"worker-a", "worker-b", "worker-c"},
+	}
+
+	speeches, err := engine.collectSpeeches(context.Background(), m, 1, "Review", ExecAPI)
+	if err != nil {
+		t.Fatalf("collectSpeeches: %v", err)
+	}
+	if len(speeches) != 3 {
+		t.Fatalf("expected 3 speeches, got %d", len(speeches))
+	}
+
+	// All participants should have speeches.
+	workerIDs := make(map[string]bool)
+	for _, s := range speeches {
+		workerIDs[s.WorkerID] = true
+	}
+	for _, pid := range m.Participants {
+		if !workerIDs[pid] {
+			t.Fatalf("missing speech for %s", pid)
+		}
+	}
+}
+
+func TestCollectSpeeches_OneFailure(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+
+	mock := &meetingFailChat{
+		responses: []string{
+			"Good code.\nVOTE:approve",
+			"Looks fine.\nVOTE:approve",
+		},
+		failIdx: map[int]bool{1: true}, // second call fails
+	}
+
+	engine := NewMeetingEngine(mock, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m := &Meeting{
+		ID:           "mtg-test-3",
+		Type:         MeetingReview,
+		Title:        "Failure Test",
+		ChairID:      "worker-a",
+		Participants: []string{"worker-a", "worker-b", "worker-c"},
+	}
+
+	speeches, err := engine.collectSpeeches(context.Background(), m, 1, "Review", ExecAPI)
+	if err != nil {
+		t.Fatalf("collectSpeeches should not return error for partial failure: %v", err)
+	}
+	// One of three should fail, so we get 2 speeches.
+	if len(speeches) != 2 {
+		t.Fatalf("expected 2 speeches (1 failure), got %d", len(speeches))
+	}
+}
+
+func TestCollectSpeeches_WithFindings(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+	mock := &meetingMockChat{
+		responses: []string{
+			"I found issues.\n```json\n[{\"file\":\"main.go\",\"severity\":\"HIGH\",\"body\":\"missing error check\"}]\n```\nVOTE:reject",
+		},
+	}
+
+	engine := NewMeetingEngine(mock, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m := &Meeting{
+		ID:           "mtg-test-4",
+		Type:         MeetingReview,
+		Title:        "Findings Test",
+		ChairID:      "worker-a",
+		Participants: []string{"worker-a"},
+	}
+
+	speeches, err := engine.collectSpeeches(context.Background(), m, 1, "Review", ExecAPI)
+	if err != nil {
+		t.Fatalf("collectSpeeches: %v", err)
+	}
+	if len(speeches) != 1 {
+		t.Fatalf("expected 1 speech, got %d", len(speeches))
+	}
+	if speeches[0].Vote != "reject" {
+		t.Fatalf("expected reject, got %q", speeches[0].Vote)
+	}
+	if len(speeches[0].Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(speeches[0].Findings))
+	}
+	if speeches[0].Findings[0].File != "main.go" {
+		t.Fatalf("expected file main.go, got %q", speeches[0].Findings[0].File)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RunRound tests
+// ---------------------------------------------------------------------------
+
+func TestRunRound_CollectsAndChecks(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+	mock := &meetingMockChat{
+		responses: []string{
+			"Looks good.\nVOTE:approve",
+			"I have concerns.\nVOTE:reject",
+			"Neutral.\nVOTE:abstain",
+		},
+	}
+
+	engine := NewMeetingEngine(mock, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m, _ := store.Create(MeetingRequest{
+		Type:         MeetingReview,
+		Title:        "Round Test",
+		ProjectID:    "proj-1",
+		ChairID:      "worker-a",
+		Participants: []string{"worker-a", "worker-b", "worker-c"},
+		Agenda:       []string{"review changes"},
+	})
+
+	round, reached, err := engine.RunRound(context.Background(), m, 1, ExecAPI, 0.67)
+	if err != nil {
+		t.Fatalf("RunRound: %v", err)
+	}
+
+	if round.Number != 1 {
+		t.Fatalf("expected round number 1, got %d", round.Number)
+	}
+	if len(round.Speeches) != 3 {
+		t.Fatalf("expected 3 speeches, got %d", len(round.Speeches))
+	}
+
+	// 1 approve, 1 reject, 1 abstain → denominator 2 (non-abstain), 1/2=0.5 < 0.67 → no consensus.
+	if reached {
+		t.Fatal("expected no consensus with split vote")
+	}
+
+	// Verify round was appended to meeting.
+	updated, _ := store.Get(m.ID)
+	if len(updated.Rounds) != 1 {
+		t.Fatalf("expected 1 round in store, got %d", len(updated.Rounds))
+	}
+}
+
+func TestRunRound_EarlyConsensus(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+	mock := &meetingMockChat{
+		responses: []string{
+			"All good!\nVOTE:approve",
+		},
+	}
+
+	engine := NewMeetingEngine(mock, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m, _ := store.Create(MeetingRequest{
+		Type:         MeetingReview,
+		Title:        "Consensus Test",
+		ProjectID:    "proj-1",
+		ChairID:      "worker-a",
+		Participants: []string{"worker-a", "worker-b", "worker-c"},
+	})
+
+	round, reached, err := engine.RunRound(context.Background(), m, 1, ExecAPI, 0.67)
+	if err != nil {
+		t.Fatalf("RunRound: %v", err)
+	}
+
+	// All 3 get "All good!\nVOTE:approve" (cycling single response) → unanimous.
+	if !reached {
+		t.Fatal("expected consensus reached with unanimous approve")
+	}
+	if round.Consensus != "approve" {
+		t.Fatalf("expected consensus %q, got %q", "approve", round.Consensus)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Synthesize tests
+// ---------------------------------------------------------------------------
+
+func TestSynthesize_WithConsensus(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+	mailbox, _ := NewMailbox(dir)
+
+	engine := NewMeetingEngine(nil, mailbox, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m, _ := store.Create(MeetingRequest{
+		Type:         MeetingReview,
+		Title:        "Synth Consensus Test",
+		ProjectID:    "proj-1",
+		ChairID:      "chair",
+		Participants: []string{"worker-a", "worker-b"},
+	})
+
+	// Drain schedule notifications.
+	mailbox.Deliver("worker-a")
+	mailbox.Deliver("worker-b")
+
+	// Add a round with consensus.
+	m.Rounds = []MeetingRound{
+		{
+			Number: 1,
+			Speeches: []Speech{
+				{WorkerID: "worker-a", Role: "participant", Vote: "approve", Content: "Approved"},
+				{WorkerID: "worker-b", Role: "chair", Vote: "approve", Content: "Approved"},
+			},
+			Consensus: "approve",
+		},
+	}
+	store.Update(m)
+
+	err := engine.Synthesize(context.Background(), m)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+
+	if m.Verdict != "approve" {
+		t.Fatalf("expected verdict %q, got %q", "approve", m.Verdict)
+	}
+	if m.Status != MeetingCompleted {
+		t.Fatalf("expected status %q, got %q", MeetingCompleted, m.Status)
+	}
+	if m.CompletedAt == nil {
+		t.Fatal("expected CompletedAt to be set")
+	}
+	if !strings.Contains(m.Summary, "Consensus") {
+		t.Fatalf("expected summary to mention consensus, got %q", m.Summary)
+	}
+
+	// Check completion notifications.
+	msgsA := mailbox.Peek("worker-a")
+	if len(msgsA) != 1 {
+		t.Fatalf("expected 1 completion notification for worker-a, got %d", len(msgsA))
+	}
+}
+
+func TestSynthesize_WithoutConsensus_AIFallback(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+
+	mock := &meetingMockChat{
+		responses: []string{
+			"VERDICT: approve\nSUMMARY: Overall the code looks good despite minor disagreements.",
+		},
+	}
+
+	engine := NewMeetingEngine(mock, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m, _ := store.Create(MeetingRequest{
+		Type:         MeetingReview,
+		Title:        "Synth AI Test",
+		ProjectID:    "proj-1",
+		ChairID:      "chair",
+		Participants: []string{"worker-a", "worker-b"},
+	})
+
+	// Add a round without consensus.
+	m.Rounds = []MeetingRound{
+		{
+			Number: 1,
+			Speeches: []Speech{
+				{WorkerID: "worker-a", Role: "participant", Vote: "approve", Content: "I approve"},
+				{WorkerID: "worker-b", Role: "chair", Vote: "reject", Content: "I reject"},
+			},
+			// No consensus.
+		},
+	}
+	store.Update(m)
+
+	err := engine.Synthesize(context.Background(), m)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+
+	if m.Verdict != "approve" {
+		t.Fatalf("expected AI verdict %q, got %q", "approve", m.Verdict)
+	}
+	if m.Status != MeetingCompleted {
+		t.Fatalf("expected completed status, got %q", m.Status)
+	}
+	if !strings.Contains(m.Summary, "Overall") {
+		t.Fatalf("expected AI summary, got %q", m.Summary)
+	}
+}
+
+func TestSynthesize_WithoutConsensus_MajorityVote(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+
+	// No chat provider — should fall back to majority vote.
+	engine := NewMeetingEngine(nil, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m, _ := store.Create(MeetingRequest{
+		Type:         MeetingReview,
+		Title:        "Synth Majority Test",
+		ProjectID:    "proj-1",
+		ChairID:      "chair",
+		Participants: []string{"worker-a", "worker-b", "worker-c"},
+	})
+
+	// Add round with no consensus but a majority.
+	m.Rounds = []MeetingRound{
+		{
+			Number: 1,
+			Speeches: []Speech{
+				{WorkerID: "worker-a", Vote: "reject", Content: "Issues found"},
+				{WorkerID: "worker-b", Vote: "reject", Content: "Agree"},
+				{WorkerID: "worker-c", Vote: "approve", Content: "Looks ok"},
+			},
+		},
+	}
+	store.Update(m)
+
+	err := engine.Synthesize(context.Background(), m)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+
+	if m.Verdict != "reject" {
+		t.Fatalf("expected majority verdict %q, got %q", "reject", m.Verdict)
+	}
+	if m.Status != MeetingCompleted {
+		t.Fatalf("expected completed status, got %q", m.Status)
+	}
+	if !strings.Contains(m.Summary, "Majority vote") {
+		t.Fatalf("expected majority vote summary, got %q", m.Summary)
+	}
+}
+
+func TestSynthesize_NoRounds(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewMeetingStore(dir)
+
+	engine := NewMeetingEngine(nil, nil, nil, "en", store, &mockWorkerChecker{statuses: map[string]string{}})
+
+	m, _ := store.Create(MeetingRequest{
+		Type:         MeetingReview,
+		Title:        "No Rounds Test",
+		ProjectID:    "proj-1",
+		ChairID:      "chair",
+		Participants: []string{"worker-a"},
+	})
+
+	err := engine.Synthesize(context.Background(), m)
+	if err == nil {
+		t.Fatal("expected error when synthesizing with no rounds")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildRoundPrompt tests
+// ---------------------------------------------------------------------------
+
+func TestBuildRoundPrompt_Basic(t *testing.T) {
+	m := &Meeting{
+		Type:  MeetingReview,
+		Title: "Code Review",
+		Agenda: []string{"check formatting", "verify tests"},
+	}
+
+	prompt := buildRoundPrompt(m, 1, nil)
+
+	if !strings.Contains(prompt, "Review Meeting: Code Review") {
+		t.Fatalf("expected meeting type and title in prompt, got: %s", prompt[:100])
+	}
+	if !strings.Contains(prompt, "check formatting") {
+		t.Fatal("expected agenda item in prompt")
+	}
+	if !strings.Contains(prompt, "VOTE:approve") {
+		t.Fatal("expected vote instructions in prompt")
+	}
+}
+
+func TestBuildRoundPrompt_WithPreviousRounds(t *testing.T) {
+	m := &Meeting{
+		Type:  MeetingReview,
+		Title: "Review",
+		Rounds: []MeetingRound{
+			{
+				Number: 1,
+				Speeches: []Speech{
+					{WorkerID: "worker-a", Role: "participant", Content: "I think we should approve", Vote: "approve"},
+				},
+			},
+		},
+	}
+
+	prompt := buildRoundPrompt(m, 2, nil)
+
+	if !strings.Contains(prompt, "Previous Round Discussions") {
+		t.Fatal("expected previous round context in round 2 prompt")
+	}
+	if !strings.Contains(prompt, "worker-a") {
+		t.Fatal("expected previous speaker in round 2 prompt")
+	}
+	if !strings.Contains(prompt, "converge") {
+		t.Fatal("expected convergence instruction in round > 1")
+	}
 }

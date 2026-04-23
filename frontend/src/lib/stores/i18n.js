@@ -579,6 +579,13 @@ const translations = {
   'event.message_delivered': { en: 'Message Delivered', zh: '訊息已送達' },
   'event.message_read': { en: 'Message Read', zh: '訊息已讀' },
 
+  // --- Meeting Events ---
+  'event.meeting_scheduled': { en: 'Meeting Scheduled', zh: '會議已排程' },
+  'event.meeting_started': { en: 'Meeting Started', zh: '會議已開始' },
+  'event.meeting_round_done': { en: 'Meeting Round Complete', zh: '會議輪次完成' },
+  'event.meeting_completed': { en: 'Meeting Completed', zh: '會議已結束' },
+  'event.meeting_cancelled': { en: 'Meeting Cancelled', zh: '會議已取消' },
+
   // --- Setup Wizard: Onboarding Chat (Step 3) ---
   'setup.chatPlaceholder': { en: 'Tell me what you\'d like to do...', zh: '說說你想做什麼...' },
   'setup.assistantName': { en: 'Assistant', zh: '小助理' },

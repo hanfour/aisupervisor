@@ -82,6 +82,8 @@ type Manager struct {
 	conventions         *ConventionStore
 	expertReg           *ExpertRegistry
 	mailbox             *Mailbox
+	meetingEngine       *MeetingEngine
+	meetingStore        *MeetingStore
 }
 
 type workersFile struct {
@@ -193,6 +195,15 @@ func New(
 		mailbox, _ = NewMailbox(os.TempDir())
 	}
 	m.mailbox = mailbox
+
+	// Initialize meeting system
+	meetingStore, msErr := NewMeetingStore(dataDir)
+	if msErr != nil {
+		log.Printf("warning: meeting store init failed: %v", msErr)
+		meetingStore, _ = NewMeetingStore(os.TempDir())
+	}
+	m.meetingStore = meetingStore
+	m.meetingEngine = NewMeetingEngine(chatProvider, m.mailbox, tmuxClient, m.language, meetingStore, m)
 
 	// Wire pending-messages callback so spawner injects mailbox messages at spawn time.
 	if spawner != nil {
@@ -2422,6 +2433,44 @@ func (m *Manager) NeedsOnboarding() bool {
 }
 
 // SetChatProvider replaces the current chat provider (used for runtime backend switching).
+// GetWorkerStatus implements the workerChecker interface for MeetingEngine.
+func (m *Manager) GetWorkerStatus(id string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	w, ok := m.workers[id]
+	if !ok {
+		return "", false
+	}
+	return string(w.Status), true
+}
+
+// ScheduleMeeting delegates to the MeetingEngine to create and schedule a meeting.
+func (m *Manager) ScheduleMeeting(req MeetingRequest) (*Meeting, error) {
+	if m.meetingEngine == nil {
+		return nil, fmt.Errorf("meeting engine not initialized")
+	}
+	return m.meetingEngine.Schedule(req)
+}
+
+// ListMeetings returns meetings, optionally filtered by project ID.
+func (m *Manager) ListMeetings(projectID string) []*Meeting {
+	if m.meetingStore == nil {
+		return nil
+	}
+	if projectID != "" {
+		return m.meetingStore.ListByProject(projectID)
+	}
+	return m.meetingStore.List()
+}
+
+// GetMeeting returns a meeting by ID.
+func (m *Manager) GetMeeting(id string) (*Meeting, error) {
+	if m.meetingStore == nil {
+		return nil, fmt.Errorf("meeting store not initialized")
+	}
+	return m.meetingStore.Get(id)
+}
+
 func (m *Manager) SetChatProvider(cp ai.ChatProvider) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

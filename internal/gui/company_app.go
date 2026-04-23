@@ -1473,3 +1473,54 @@ func (c *CompanyApp) GetTrainingLoopStatus(taskID string) *TrainingLoopStatusDTO
 		LastOutput:    cfg.LastTestOutput,
 	}
 }
+
+// --- Meeting operations ---
+
+// ScheduleMeeting creates a new meeting and notifies participants.
+func (c *CompanyApp) ScheduleMeeting(meetingType, title, projectID, chairID string, participants, agenda []string) (map[string]interface{}, error) {
+	req := company.MeetingRequest{
+		Type:         company.MeetingType(meetingType),
+		Title:        title,
+		ProjectID:    projectID,
+		ChairID:      chairID,
+		Participants: participants,
+		Agenda:       agenda,
+	}
+	m, err := c.company.ScheduleMeeting(req)
+	if err != nil {
+		return nil, err
+	}
+	// Return as map for Wails JSON serialization
+	return map[string]interface{}{
+		"id": m.ID, "type": string(m.Type), "title": m.Title,
+		"status": string(m.Status), "projectId": m.ProjectID,
+	}, nil
+}
+
+// ListMeetings returns all meetings, optionally filtered by project ID.
+func (c *CompanyApp) ListMeetings(projectID string) []map[string]interface{} {
+	meetings := c.company.ListMeetings(projectID)
+	var result []map[string]interface{}
+	for _, m := range meetings {
+		result = append(result, map[string]interface{}{
+			"id": m.ID, "type": string(m.Type), "title": m.Title,
+			"status": string(m.Status), "projectId": m.ProjectID,
+			"verdict": m.Verdict, "summary": m.Summary,
+		})
+	}
+	return result
+}
+
+// GetMeeting returns a single meeting by ID.
+func (c *CompanyApp) GetMeeting(id string) (map[string]interface{}, error) {
+	m, err := c.company.GetMeeting(id)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"id": m.ID, "type": string(m.Type), "title": m.Title,
+		"status": string(m.Status), "projectId": m.ProjectID,
+		"verdict": m.Verdict, "summary": m.Summary,
+		"participants": m.Participants, "rounds": len(m.Rounds),
+	}, nil
+}

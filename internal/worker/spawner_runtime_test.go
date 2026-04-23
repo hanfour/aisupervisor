@@ -90,14 +90,14 @@ func newTestSpawner() *Spawner {
 
 func TestSpawner_SetRuntimeRegistry(t *testing.T) {
 	s := newTestSpawner()
-	if s.RuntimeRegistry() != nil {
+	if s.runtimeRegistry != nil {
 		t.Fatalf("expected nil registry before SetRuntimeRegistry")
 	}
 
 	reg := agent.NewRuntimeRegistry()
 	s.SetRuntimeRegistry(reg)
 
-	if got := s.RuntimeRegistry(); got != reg {
+	if got := s.runtimeRegistry; got != reg {
 		t.Fatalf("SetRuntimeRegistry did not store pointer: got %p, want %p", got, reg)
 	}
 }
@@ -282,6 +282,58 @@ func TestSpawner_BuildSpawnConfig(t *testing.T) {
 			t.Errorf("DisallowedTools should contain autonomous safety set, got empty")
 		}
 	})
+
+	t.Run("applies_worker_overrides", func(t *testing.T) {
+		// Per-worker skill overrides (Phase-2 retro/growth-loop feature) must
+		// flow through buildSpawnConfig when the plugin-runtime path is active.
+		// Regression coverage for C3: before the fix, skillOverrides[w.ID]
+		// was silently dropped because only buildSkillArgs consulted the map.
+		s := newTestSpawner()
+		s.skillProfiles["coder"] = baseProfile
+		s.skillOverrides["w1"] = config.SkillProfileOverride{
+			ExtraPrompt:   "extra-override",
+			ModelOverride: "opus",
+			AddTools:      []string{"Bash"},
+			RemoveTools:   []string{"Edit"},
+		}
+		w := &Worker{ID: "w1", SkillProfile: "coder"}
+
+		cfg := s.buildSpawnConfig(w, nil, "/tmp/w", "b")
+
+		// ExtraPrompt is appended to the profile's SystemPrompt.
+		if !strings.Contains(cfg.SystemPrompt, "base-prompt") {
+			t.Errorf("SystemPrompt missing profile text: %q", cfg.SystemPrompt)
+		}
+		if !strings.Contains(cfg.SystemPrompt, "extra-override") {
+			t.Errorf("SystemPrompt missing override ExtraPrompt: %q", cfg.SystemPrompt)
+		}
+		// ModelOverride replaces the profile's Model.
+		if cfg.Model != "opus" {
+			t.Errorf("Model: got %q, want opus (override)", cfg.Model)
+		}
+		// AddTools is appended, RemoveTools filters from AllowedTools.
+		// Profile has [Read Edit]; override adds Bash and removes Edit → [Read Bash].
+		hasRead, hasEdit, hasBash := false, false, false
+		for _, tool := range cfg.AllowedTools {
+			switch tool {
+			case "Read":
+				hasRead = true
+			case "Edit":
+				hasEdit = true
+			case "Bash":
+				hasBash = true
+			}
+		}
+		if !hasRead {
+			t.Errorf("AllowedTools missing Read: %v", cfg.AllowedTools)
+		}
+		if hasEdit {
+			t.Errorf("AllowedTools should not contain Edit after RemoveTools: %v", cfg.AllowedTools)
+		}
+		if !hasBash {
+			t.Errorf("AllowedTools missing Bash from AddTools: %v", cfg.AllowedTools)
+		}
+	})
 }
 
 // TestSpawner_SpawnViaRuntime_CallOrder verifies the plugin lifecycle contract:
@@ -358,5 +410,34 @@ func TestSpawner_SpawnViaRuntime_CleansUpOnReadyFailure(t *testing.T) {
 	}
 	if fr.calls[2] != "Cleanup" {
 		t.Errorf("last call = %q, want Cleanup (full: %v)", fr.calls[2], fr.calls)
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_CleansUpOnSendPromptFailure ensures we invoke
+// Cleanup when SendPrompt errors out (mirror of the DetectReady failure path).
+func TestSpawner_SpawnViaRuntime_CleansUpOnSendPromptFailure(t *testing.T) {
+	s := newTestSpawner()
+	fr := &fakeRuntime{name: "claude", sendErr: errors.New("send-boom")}
+
+	w := &Worker{ID: "w1", Name: "Carol"}
+	tk := &project.Task{ID: "t", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	err := s.spawnViaRuntime(context.Background(), fr, w, tk, proj, "/tmp/wd")
+	if err == nil {
+		t.Fatal("expected error when SendPrompt fails")
+	}
+	if !strings.Contains(err.Error(), "send prompt") {
+		t.Errorf("error should mention send prompt: %v", err)
+	}
+	// calls: Spawn, DetectReady, SendPrompt, Cleanup
+	wantOrder := []string{"Spawn", "DetectReady", "SendPrompt", "Cleanup"}
+	if len(fr.calls) != len(wantOrder) {
+		t.Fatalf("call count: got %d, want %d (%v)", len(fr.calls), len(wantOrder), fr.calls)
+	}
+	for i, want := range wantOrder {
+		if fr.calls[i] != want {
+			t.Errorf("call[%d] = %q, want %q (full: %v)", i, fr.calls[i], want, fr.calls)
+		}
 	}
 }

@@ -236,12 +236,6 @@ func (s *Spawner) SetRuntimeRegistry(r *agent.RuntimeRegistry) {
 	s.runtimeRegistry = r
 }
 
-// RuntimeRegistry returns the currently wired runtime registry, if any.
-// Primarily used for tests and introspection.
-func (s *Spawner) RuntimeRegistry() *agent.RuntimeRegistry {
-	return s.runtimeRegistry
-}
-
 // LoadSkillOverrides populates per-worker skill profile overrides from config.
 func (s *Spawner) LoadSkillOverrides(overrides map[string]config.SkillProfileOverride) {
 	for k, v := range overrides {
@@ -737,8 +731,15 @@ func (s *Spawner) SendPromptToExisting(w *Worker, prompt string) error {
 }
 
 // Cleanup kills the tmux session for a worker.
+//
+// Plugin runtimes generate random session names (e.g. "claude-<nanos>-<hex>")
+// and store them in w.TmuxSession, so prefer that when set. Fall back to the
+// legacy "aiworker-<id>" scheme for workers spawned via the inline path.
 func (s *Spawner) Cleanup(w *Worker) error {
-	tmuxName := fmt.Sprintf("aiworker-%s", w.ID)
+	tmuxName := w.TmuxSession
+	if tmuxName == "" {
+		tmuxName = fmt.Sprintf("aiworker-%s", w.ID)
+	}
 	has, err := s.tmuxClient.HasSession(tmuxName)
 	if err != nil {
 		return err
@@ -1468,6 +1469,41 @@ func (s *Spawner) buildSpawnConfig(w *Worker, p *project.Project, workDir string
 		}
 	}
 
+	// Apply per-worker skill overrides on top of the profile and growth merge.
+	// This mirrors the legacy buildSkillArgs logic so that Phase-2 retro
+	// overrides (ExtraPrompt, ModelOverride, AddTools, RemoveTools) continue
+	// to flow through when the plugin-runtime path is active.
+	if w != nil {
+		if override, ok := s.skillOverrides[w.ID]; ok {
+			if override.ExtraPrompt != "" {
+				if cfg.SystemPrompt != "" {
+					cfg.SystemPrompt += "\n\n" + override.ExtraPrompt
+				} else {
+					cfg.SystemPrompt = override.ExtraPrompt
+				}
+			}
+			if override.ModelOverride != "" {
+				cfg.Model = override.ModelOverride
+			}
+			if len(override.AddTools) > 0 {
+				cfg.AllowedTools = append(cfg.AllowedTools, override.AddTools...)
+			}
+			if len(override.RemoveTools) > 0 {
+				removeSet := make(map[string]bool, len(override.RemoveTools))
+				for _, t := range override.RemoveTools {
+					removeSet[t] = true
+				}
+				filtered := cfg.AllowedTools[:0]
+				for _, t := range cfg.AllowedTools {
+					if !removeSet[t] {
+						filtered = append(filtered, t)
+					}
+				}
+				cfg.AllowedTools = filtered
+			}
+		}
+	}
+
 	// Enforce autonomous DisallowedTools safety net. Runtimes that don't load
 	// .claude/ skills (e.g. ais-agent) may simply forward these flags without
 	// ill effect.
@@ -1492,6 +1528,17 @@ func (s *Spawner) spawnViaRuntime(
 		t.Type == project.TaskTypeAdmin || t.Type == project.TaskTypeHR
 	if isNonCodeTask && cfg.PermissionMode != "bypassPermissions" {
 		cfg.PermissionMode = "bypassPermissions"
+	}
+
+	// When worktrees are disabled, the legacy inline path runs `git checkout`
+	// inside the tmux pane so the worker lands on its task branch. Plugin
+	// runtimes only `cd $WorkDir`, so we must check out the branch here before
+	// the runtime spawns — otherwise code tasks run on whatever branch happens
+	// to be checked out in RepoPath.
+	if !s.useWorktrees && !isNonCodeTask && t.BranchName != "" && s.gitOps != nil {
+		if err := s.gitOps.Checkout(p.RepoPath, t.BranchName); err != nil {
+			return fmt.Errorf("runtime %s checkout %s: %w", rt.Name(), t.BranchName, err)
+		}
 	}
 
 	runtimeSess, err := rt.Spawn(ctx, cfg)

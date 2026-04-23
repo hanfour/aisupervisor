@@ -439,6 +439,12 @@ const translations = {
   'settings.skillsmpKeyHint': { en: 'Get free key at skillsmp.com/docs/api', zh: '在 skillsmp.com/docs/api 免費取得' },
   'settings.skillsmpKeySaved': { en: 'API Key saved', zh: 'API 金鑰已儲存' },
 
+  // --- Agent Backend Runtime ---
+  'settings.runtime': { en: 'Agent Runtime', zh: '代理執行引擎' },
+  'settings.runtime.claude': { en: 'Claude Code', zh: 'Claude Code' },
+  'settings.runtime.aisagent': { en: 'AIS Agent', zh: 'AIS Agent' },
+  'settings.runtime.aider': { en: 'Aider', zh: 'Aider' },
+
   // --- Board ---
   'board.escalation': { en: 'Escalation', zh: '升級' },
 

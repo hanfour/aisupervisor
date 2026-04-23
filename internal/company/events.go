@@ -73,6 +73,11 @@ const (
 	EventMessageSent           EventType = "message_sent"
 	EventMessageDelivered      EventType = "message_delivered"
 	EventMessageRead           EventType = "message_read"
+	EventMeetingScheduled      EventType = "meeting_scheduled"
+	EventMeetingStarted        EventType = "meeting_started"
+	EventMeetingRoundDone      EventType = "meeting_round_done"
+	EventMeetingCompleted      EventType = "meeting_completed"
+	EventMeetingCancelled      EventType = "meeting_cancelled"
 )
 
 type Event struct {

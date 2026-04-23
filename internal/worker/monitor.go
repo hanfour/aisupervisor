@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -63,6 +64,52 @@ func parseTokenNum(s string) int64 {
 	return val
 }
 
+// detectAskPattern scans content for "ASK:{workerID}:{question}" pattern.
+// Returns the last occurrence found (most recent in pane output).
+func detectAskPattern(content string) (targetID, question string, found bool) {
+	lines := strings.Split(content, "\n")
+	// Scan from end to start to find the most recent ASK
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(trimmed, "ASK:") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		tid := strings.TrimSpace(parts[1])
+		q := strings.TrimSpace(parts[2])
+		if tid != "" && q != "" {
+			return tid, q, true
+		}
+	}
+	return "", "", false
+}
+
+// detectReplyPattern scans content for "REPLY:{messageID}:{content}" pattern.
+// Returns the last occurrence found (most recent in pane output).
+func detectReplyPattern(content string) (messageID, reply string, found bool) {
+	lines := strings.Split(content, "\n")
+	// Scan from end to start to find the most recent REPLY
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(trimmed, "REPLY:") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		mid := strings.TrimSpace(parts[1])
+		r := strings.TrimSpace(parts[2])
+		if mid != "" && r != "" {
+			return mid, r, true
+		}
+	}
+	return "", "", false
+}
+
 type CompletionResult struct {
 	Success     bool
 	Reason      string // "idle_prompt", "no_change", "shell_exit"
@@ -95,6 +142,8 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 	const minChanges = 3          // require at least 3 content changes before no_change can trigger
 	captureErrors := 0            // consecutive CapturePane failures
 	const maxCaptureErrors = 30   // after 30 consecutive errors, check if session is dead
+	var lastAskSeen string        // tracks last ASK pattern to avoid re-triggering
+	var lastReplySeen string      // tracks last REPLY pattern to avoid re-triggering
 
 	// Grace period: ignore idle prompts for the first N seconds after monitoring starts.
 	// This prevents false completion when the CLI briefly shows an idle prompt between
@@ -137,6 +186,32 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 					if helpContent != "" {
 						return CompletionResult{Success: false, Reason: "help_needed", HelpRequest: helpContent}, nil
 					}
+				}
+			}
+
+			// Detect ASK request (only trigger on new/different ASK patterns)
+			if targetID, question, found := detectAskPattern(content); found {
+				askKey := fmt.Sprintf("ASK:%s:%s", targetID, question)
+				if askKey != lastAskSeen {
+					lastAskSeen = askKey
+					return CompletionResult{
+						Success:     false,
+						Reason:      "ask_request",
+						HelpRequest: askKey,
+					}, nil
+				}
+			}
+
+			// Detect REPLY (only trigger on new/different REPLY patterns)
+			if msgID, reply, found := detectReplyPattern(content); found {
+				replyKey := fmt.Sprintf("REPLY:%s:%s", msgID, reply)
+				if replyKey != lastReplySeen {
+					lastReplySeen = replyKey
+					return CompletionResult{
+						Success:     false,
+						Reason:      "reply_sent",
+						HelpRequest: replyKey,
+					}, nil
 				}
 			}
 

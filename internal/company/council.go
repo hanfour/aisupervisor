@@ -443,16 +443,28 @@ func extractDiffFilePath(section string) string {
 // ---------------------------------------------------------------------------
 
 // spawnExpertAgent launches an expert as an independent Claude Code CLI session
-// in a dedicated tmux session with read-only tool access. It waits for the CLI
-// to become ready, sends the review prompt, waits for completion, captures the
-// output, and parses findings.
+// with read-only tool access, waits for it to become ready, sends the review
+// prompt, waits for completion, captures the output, and parses findings.
+//
+// When a runtime registry is wired (Manager wires one by default), the full
+// lifecycle is delegated to the matching AgentRuntime plugin — no direct tmux
+// calls are made here. When no registry is wired (e.g. in targeted tests),
+// the legacy tmux-direct path below executes unchanged.
 func (c *CouncilEngine) spawnExpertAgent(ctx context.Context, expert SelectedExpert, brief *ContextBrief, diff string) ([]ExpertFinding, error) {
-	sessionName := fmt.Sprintf("ais-expert-%s-%d", expert.Domain, time.Now().UnixMilli()%100000)
-
 	timeout := time.Duration(c.reviewCfg.CLIExpertTimeoutS) * time.Second
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
+
+	// Prefer the runtime plugin when available.
+	if c.runtimeRegistry != nil {
+		if rt, ok := c.runtimeRegistry.Get("claude"); ok && rt != nil {
+			return c.spawnExpertViaRuntime(ctx, rt, expert, brief, diff, timeout)
+		}
+	}
+
+	// --- Legacy tmux-direct path (unchanged) ---------------------------------
+	sessionName := fmt.Sprintf("ais-expert-%s-%d", expert.Domain, time.Now().UnixMilli()%100000)
 
 	// Create tmux session.
 	if err := c.tmuxClient.CreateSession(sessionName); err != nil {
@@ -495,6 +507,105 @@ func (c *CouncilEngine) spawnExpertAgent(ctx context.Context, expert SelectedExp
 	}
 
 	return parseExpertFindings(output, expert.Domain)
+}
+
+// spawnExpertViaRuntime drives the expert session through an AgentRuntime
+// plugin, delegating tmux/CLI lifecycle to the runtime rather than wiring
+// tmux directly. Mirrors the legacy flow: spawn → ready → prompt → wait →
+// capture → cleanup.
+func (c *CouncilEngine) spawnExpertViaRuntime(
+	ctx context.Context,
+	rt agent.AgentRuntime,
+	expert SelectedExpert,
+	brief *ContextBrief,
+	diff string,
+	timeout time.Duration,
+) ([]ExpertFinding, error) {
+	cfg := agent.SpawnConfig{
+		Model:           expertModelName(expert),
+		PermissionMode:  "bypassPermissions",
+		DisallowedTools: []string{"Edit", "Write", "NotebookEdit", "Bash"},
+	}
+
+	session, err := rt.Spawn(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("expert runtime spawn: %w", err)
+	}
+	defer func() {
+		if cerr := rt.Cleanup(session); cerr != nil {
+			log.Printf("council: expert %s cleanup: %v", expert.Domain, cerr)
+		}
+	}()
+
+	readyCtx, readyCancel := context.WithTimeout(ctx, 90*time.Second)
+	defer readyCancel()
+	if err := rt.DetectReady(readyCtx, session, 90*time.Second); err != nil {
+		return nil, fmt.Errorf("expert runtime ready: %w", err)
+	}
+
+	filteredDiff := filterDiffForFiles(diff, expert.AssignedFiles)
+	prompt := buildExpertCLIPrompt(expert, brief, filteredDiff)
+
+	if err := rt.SendPrompt(session, prompt); err != nil {
+		return nil, fmt.Errorf("expert runtime send prompt: %w", err)
+	}
+
+	completionCtx, completionCancel := context.WithTimeout(ctx, timeout)
+	defer completionCancel()
+	if err := c.waitForRuntimeCompletion(completionCtx, rt, session); err != nil {
+		return nil, fmt.Errorf("expert %s timed out: %w", expert.Domain, err)
+	}
+
+	output, err := rt.CaptureOutput(session, 500)
+	if err != nil {
+		return nil, fmt.Errorf("expert runtime capture: %w", err)
+	}
+
+	return parseExpertFindings(output, expert.Domain)
+}
+
+// waitForRuntimeCompletion polls the runtime for idle-prompt completion, with
+// a stale-content fallback matching the legacy waitForExpertCompletion:
+//   - Success if DetectCompletion reports idle for 2 consecutive polls.
+//   - Success if pane content is unchanged for 5 consecutive polls (~15 s).
+func (c *CouncilEngine) waitForRuntimeCompletion(
+	ctx context.Context,
+	rt agent.AgentRuntime,
+	session *agent.AgentSession,
+) error {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	lastContent := ""
+	unchangedCount := 0
+	stableIdleCount := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			content, err := rt.CaptureOutput(session, 100)
+			if err != nil {
+				continue
+			}
+			if done, derr := rt.DetectCompletion(ctx, session, content); derr == nil && done {
+				stableIdleCount++
+				if stableIdleCount >= 2 {
+					return nil
+				}
+			} else {
+				stableIdleCount = 0
+			}
+			if content == lastContent {
+				unchangedCount++
+				if unchangedCount >= 5 {
+					return nil
+				}
+			} else {
+				unchangedCount = 0
+				lastContent = content
+			}
+		}
+	}
 }
 
 // expertModelName returns the model to use for a CLI expert, defaulting to "sonnet".

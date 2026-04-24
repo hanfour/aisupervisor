@@ -23,6 +23,7 @@ type GitOps interface {
 	CurrentBranch(repoPath string) (string, error)
 	BranchExists(repoPath, branch string) (bool, error)
 	CreateBranch(repoPath, branch, baseBranch string) error
+	Checkout(repoPath, branch string) error
 	LatestCommit(repoPath, branch string) (CommitInfo, error)
 	HasUncommitted(repoPath string) (bool, error)
 	DiffBranch(repoPath, branch string) (string, error)
@@ -60,6 +61,14 @@ func (g *gitOps) BranchExists(repoPath, branch string) (bool, error) {
 
 func (g *gitOps) CreateBranch(repoPath, branch, baseBranch string) error {
 	_, err := g.run(repoPath, "branch", branch, baseBranch)
+	return err
+}
+
+// Checkout switches the working tree in repoPath to the given branch.
+// Used by the spawner's plugin-runtime path when worktrees are disabled, so
+// that plugin-owned tmux sessions land on the correct branch before running.
+func (g *gitOps) Checkout(repoPath, branch string) error {
+	_, err := g.run(repoPath, "checkout", branch)
 	return err
 }
 

@@ -14,6 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/agent"
+	"github.com/hanfourmini/aisupervisor/internal/agent/aider"
+	"github.com/hanfourmini/aisupervisor/internal/agent/aisagent"
+	"github.com/hanfourmini/aisupervisor/internal/agent/claudecode"
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/ai/claudecli"
 	"github.com/hanfourmini/aisupervisor/internal/config"
@@ -34,9 +38,10 @@ type Manager struct {
 	projectStore *project.Store
 	spawner      *worker.Spawner
 	gitOps       gitops.GitOps
-	monitor      *worker.CompletionMonitor
-	tmuxClient   tmux.TmuxClient
-	subscribers  []chan Event
+	monitor         *worker.CompletionMonitor
+	tmuxClient      tmux.TmuxClient
+	runtimeRegistry *agent.RuntimeRegistry
+	subscribers     []chan Event
 	subMu        sync.Mutex
 	autoSchedule bool
 	workers      map[string]*worker.Worker
@@ -204,6 +209,28 @@ func New(
 	}
 	m.meetingStore = meetingStore
 	m.meetingEngine = NewMeetingEngine(chatProvider, m.mailbox, tmuxClient, m.language, meetingStore, m)
+
+	// Build the agent runtime registry and wire it into spawner, monitor,
+	// council, and meeting. The registry is shared: first registered is
+	// Default(). Order matters — "claude" must be first for backward-compatible
+	// default selection.
+	runtimeReg := agent.NewRuntimeRegistry()
+	if tmuxClient != nil {
+		runtimeReg.Register(claudecode.New(tmuxClient))
+		runtimeReg.Register(aisagent.New(tmuxClient))
+		runtimeReg.Register(aider.New(tmuxClient))
+	}
+	m.runtimeRegistry = runtimeReg
+	if spawner != nil {
+		spawner.SetRuntimeRegistry(runtimeReg)
+	}
+	if monitor != nil {
+		monitor.SetRuntimeRegistry(runtimeReg)
+	}
+	m.council.SetRuntimeRegistry(runtimeReg)
+	if m.meetingEngine != nil {
+		m.meetingEngine.SetRuntimeRegistry(runtimeReg)
+	}
 
 	// Wire pending-messages callback so spawner injects mailbox messages at spawn time.
 	if spawner != nil {

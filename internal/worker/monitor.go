@@ -3,11 +3,13 @@ package worker
 import (
 	"context"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hanfourmini/aisupervisor/internal/agent"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
 
@@ -20,6 +22,11 @@ var (
 	// Matches Claude Code's cost summary: "Total cost: $0.1234"
 	costRe = regexp.MustCompile(`(?i)total\s+cost[:\s]+\$([0-9]+\.?[0-9]*)`)
 )
+
+// gracePeriod is the initial window after monitoring starts during which
+// idle-prompt detections are suppressed. It is a variable (not a constant) so
+// that tests can temporarily shorten it; restore the original value after use.
+var gracePeriod = 30 * time.Second
 
 // ParseTokenUsage extracts approximate token usage from Claude Code pane output.
 // Prefers "Total tokens" (single value), falls back to summing input+output,
@@ -112,16 +119,48 @@ func detectReplyPattern(content string) (messageID, reply string, found bool) {
 
 type CompletionResult struct {
 	Success     bool
-	Reason      string // "idle_prompt", "no_change", "shell_exit"
+	Reason      string // "idle_prompt", "no_change", "shell_exit", "session_dead", "runtime_idle"
 	HelpRequest string // non-empty if HELP_NEEDED: was detected
 }
 
 type CompletionMonitor struct {
-	tmuxClient tmux.TmuxClient
+	tmuxClient      tmux.TmuxClient
+	runtimeRegistry *agent.RuntimeRegistry
 }
 
 func NewCompletionMonitor(tmuxClient tmux.TmuxClient) *CompletionMonitor {
 	return &CompletionMonitor{tmuxClient: tmuxClient}
+}
+
+// SetRuntimeRegistry wires a runtime registry so the monitor can delegate
+// completion detection to the per-runtime plugin.
+func (m *CompletionMonitor) SetRuntimeRegistry(r *agent.RuntimeRegistry) {
+	m.runtimeRegistry = r
+}
+
+// runtimeIdle consults the matching AgentRuntime (if any) for the worker's
+// CLITool and reports whether the runtime considers the session idle, based
+// on the pane content the caller has already captured.
+//
+// Returns (done, err). When no registry is attached or no runtime matches the
+// worker's CLITool, it returns (false, nil) so the caller falls back to the
+// legacy in-tree detection.
+//
+// Note: content is passed from the caller's poll-loop capture so the runtime
+// does NOT issue a second CapturePane round-trip on each tick.
+func (m *CompletionMonitor) runtimeIdle(ctx context.Context, w *Worker, content string) (bool, error) {
+	if m.runtimeRegistry == nil {
+		return false, nil
+	}
+	rt, ok := m.runtimeRegistry.Get(w.CLITool)
+	if !ok || rt == nil {
+		return false, nil
+	}
+	return rt.DetectCompletion(ctx, &agent.AgentSession{
+		TmuxSession: w.TmuxSession,
+		Window:      w.Window,
+		Pane:        w.Pane,
+	}, content)
 }
 
 // WatchForCompletion polls the pane content to detect when the CLI tool
@@ -144,12 +183,13 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 	const maxCaptureErrors = 30   // after 30 consecutive errors, check if session is dead
 	var lastAskSeen string        // tracks last ASK pattern to avoid re-triggering
 	var lastReplySeen string      // tracks last REPLY pattern to avoid re-triggering
+	var runtimeErrLogged bool     // one-shot log gate for runtimeIdle errors
 
 	// Grace period: ignore idle prompts for the first N seconds after monitoring starts.
 	// This prevents false completion when the CLI briefly shows an idle prompt between
 	// receiving the prompt text and starting to process it.
 	startTime := time.Now()
-	const gracePeriod = 30 * time.Second
+	grace := gracePeriod
 
 	for {
 		select {
@@ -231,7 +271,23 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 			// idle prompt before the worker has done any meaningful work.
 			// Also skip during grace period to avoid false completion when CLI
 			// briefly shows idle prompt between receiving and processing the prompt.
-			pastGrace := time.Since(startTime) > gracePeriod
+			pastGrace := time.Since(startTime) > grace
+
+			// Prefer runtime-specific completion detection if a registry is wired
+			// and a matching runtime is registered for this worker's CLITool. Any
+			// error or "not done" result falls through to the legacy branches
+			// below so existing behavior is preserved.
+			done, derr := m.runtimeIdle(ctx, w, content)
+			if derr != nil && !runtimeErrLogged {
+				// Log once per WatchForCompletion call to aid debugging without
+				// flooding logs; subsequent errors in the same watch silently fall through.
+				log.Printf("runtimeIdle[%s cli=%s] error (falling back to legacy detection): %v", w.TmuxSession, w.CLITool, derr)
+				runtimeErrLogged = true
+			}
+			if derr == nil && done && hadActivity && changeCount >= minChanges && pastGrace {
+				return CompletionResult{Success: true, Reason: "runtime_idle"}, nil
+			}
+
 			if useAider {
 				if isAiderIdle(content) && hadActivity && changeCount >= minChanges && pastGrace {
 					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil

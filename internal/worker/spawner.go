@@ -1559,6 +1559,25 @@ func (s *Spawner) spawnViaRuntime(
 
 	if err := rt.DetectReady(ctx, runtimeSess, 120*time.Second); err != nil {
 		_ = rt.Cleanup(runtimeSess)
+
+		// Fallback: if a non-"claude" runtime fails to become ready (typically
+		// because the CLI crashed at startup — e.g. ais-agent rejects a
+		// misconfigured provider and exits before printing any banner our
+		// detector would match), retry once with the "claude" runtime so the
+		// worker isn't stuck in a retry loop forever.
+		//
+		// The "claude" runtime is the ecosystem's stable default (always
+		// registered first by Manager.New and therefore the Default()). We
+		// skip fallback when rt is already "claude" to avoid infinite
+		// recursion. s.runtimeRegistry nil-check is defensive — spawnViaRuntime
+		// is normally only reached when the registry is wired.
+		if rt.Name() != "claude" && s.runtimeRegistry != nil {
+			if fallback, ok := s.runtimeRegistry.Get("claude"); ok && fallback != nil {
+				log.Printf("WARNING: runtime %s failed DetectReady (%v) — falling back to claude for worker %s", rt.Name(), err, w.ID)
+				return s.spawnViaRuntime(ctx, fallback, w, t, p, workDir)
+			}
+		}
+
 		return fmt.Errorf("runtime %s ready: %w", rt.Name(), err)
 	}
 

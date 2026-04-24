@@ -328,20 +328,31 @@ func buildCLICommand(cfg agent.SpawnConfig) string {
 }
 
 // isClaudeReady reports whether the captured pane content indicates the
-// Claude Code CLI is ready for input. Returns true if any line (trimmed of
-// surrounding whitespace) is ">", "> ", "❯", or "❯ " (or a line starting with
-// "> " / "❯ "), or if the content contains the "What can I help" or
-// "Welcome back" banners.
+// Claude Code CLI is ready for input. A match fires on either:
+//
+//  1. The content contains the startup banner ("What can I help" or
+//     "Welcome back") — anywhere in the buffer. Banners only appear on
+//     CLI launch so this cannot false-fire after the first prompt.
+//  2. The LAST non-empty line is a bare prompt (">", "> ", "❯", "❯ ") or
+//     starts with "> " / "❯ " (user has begun typing at the prompt).
+//
+// The last-non-empty-line rule (matching isClaudeIdle) prevents false
+// positives when "> quoted text" or similar prompt-looking content appears
+// earlier in the scrollback from previous turns.
 func isClaudeReady(content string) bool {
 	if strings.Contains(content, "What can I help") || strings.Contains(content, "Welcome back") {
 		return true
 	}
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == ">" || strings.HasPrefix(trimmed, "> ") ||
-			trimmed == "❯" || strings.HasPrefix(trimmed, "❯ ") {
-			return true
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
 		}
+		return trimmed == ">" || trimmed == "> " ||
+			trimmed == "❯" || trimmed == "❯ " ||
+			strings.HasPrefix(trimmed, "> ") ||
+			strings.HasPrefix(trimmed, "❯ ")
 	}
 	return false
 }

@@ -327,32 +327,47 @@ func buildCLICommand(cfg agent.SpawnConfig) string {
 	return strings.Join(parts, " ")
 }
 
+// readyScanLines is how many trailing pane lines isClaudeReady scans for a
+// prompt signature. Claude Code v2+ draws the idle prompt on its own line
+// with a status bar (bypass permissions / effort indicator) one-to-two
+// lines BELOW it, so the LAST non-empty line is not necessarily the
+// prompt. 5 covers the longest observed ready layout (blank, separator,
+// ❯, separator, status bar) with one line of slack.
+const readyScanLines = 5
+
 // isClaudeReady reports whether the captured pane content indicates the
 // Claude Code CLI is ready for input. A match fires on either:
 //
 //  1. The content contains the startup banner ("What can I help" or
 //     "Welcome back") — anywhere in the buffer. Banners only appear on
 //     CLI launch so this cannot false-fire after the first prompt.
-//  2. The LAST non-empty line is a bare prompt (">", "> ", "❯", "❯ ") or
-//     starts with "> " / "❯ " (user has begun typing at the prompt).
+//  2. Any of the LAST readyScanLines lines is a bare prompt (">", "> ",
+//     "❯", "❯ ") or starts with "> " / "❯ " (user has begun typing).
 //
-// The last-non-empty-line rule (matching isClaudeIdle) prevents false
-// positives when "> quoted text" or similar prompt-looking content appears
-// earlier in the scrollback from previous turns.
+// Limiting the prompt scan to a small trailing window (rather than the
+// whole buffer) is the key trade-off: it accepts Claude v2+'s
+// "prompt above a status bar" layout while still ignoring older
+// quoted-reply lines that sit deeper in the scrollback. Strict
+// last-non-empty-line matching lives in isClaudeIdle where the stricter
+// semantics matter more (completion detection has to distinguish between
+// "idle prompt restored" and "still processing with output").
 func isClaudeReady(content string) bool {
 	if strings.Contains(content, "What can I help") || strings.Contains(content, "Welcome back") {
 		return true
 	}
 	lines := strings.Split(content, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
+	start := len(lines) - readyScanLines
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" {
-			continue
-		}
-		return trimmed == ">" || trimmed == "> " ||
+		if trimmed == ">" || trimmed == "> " ||
 			trimmed == "❯" || trimmed == "❯ " ||
 			strings.HasPrefix(trimmed, "> ") ||
-			strings.HasPrefix(trimmed, "❯ ")
+			strings.HasPrefix(trimmed, "❯ ") {
+			return true
+		}
 	}
 	return false
 }

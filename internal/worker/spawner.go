@@ -1521,6 +1521,13 @@ func (s *Spawner) buildSpawnConfig(w *Worker, p *project.Project, workDir string
 // spawnViaRuntime uses an AgentRuntime plugin for the CLI lifecycle. Git setup
 // and workdir selection happen in the caller (spawnForTaskInner); this function
 // owns Spawn → DetectReady → SendPrompt → MonitoredSession creation.
+//
+// Runtime fallback: if rt.DetectReady fails and rt is NOT already "claude"
+// AND ctx is still alive, this function cleans up the failed session and
+// recurses once into the "claude" runtime. If the claude fallback also
+// fails, the returned error wraps ErrRuntimeFallbackExhausted so the outer
+// SpawnForTask retry loop abandons the task instead of re-triggering the
+// same failure chain (ClassifyError routes the sentinel to ActionAbandon).
 func (s *Spawner) spawnViaRuntime(
 	ctx context.Context, rt agent.AgentRuntime,
 	w *Worker, t *project.Task, p *project.Project, workDir string,
@@ -1559,6 +1566,36 @@ func (s *Spawner) spawnViaRuntime(
 
 	if err := rt.DetectReady(ctx, runtimeSess, 120*time.Second); err != nil {
 		_ = rt.Cleanup(runtimeSess)
+
+		// Fallback: if a non-"claude" runtime fails to become ready (typically
+		// because the CLI crashed at startup — e.g. ais-agent rejects a
+		// misconfigured provider and exits before printing any banner our
+		// detector would match), retry once with the "claude" runtime so the
+		// worker isn't stuck in a retry loop forever.
+		//
+		// Preconditions for fallback (all must hold):
+		//   - rt is NOT "claude" (avoid infinite recursion).
+		//   - ctx has not been cancelled / expired — a context error means
+		//     the caller wants to stop, not switch runtimes.
+		//   - runtimeRegistry is wired and has a "claude" runtime registered.
+		//
+		// If the claude fallback ALSO fails, we wrap the returned error with
+		// ErrRuntimeFallbackExhausted so ClassifyError returns ActionAbandon
+		// and SpawnForTask's 3x retry loop stops immediately — retrying the
+		// same (ais-agent → claude) chain 3 times just burns up to
+		// 6×120 s ≈ 12 min on a permanently broken setup.
+		if rt.Name() != "claude" && s.runtimeRegistry != nil && ctx.Err() == nil {
+			if fallback, ok := s.runtimeRegistry.Get("claude"); ok && fallback != nil {
+				log.Printf("spawnViaRuntime: fallback for worker %s task %s — runtime %s failed DetectReady (%v), retrying with claude",
+					w.ID, t.ID, rt.Name(), err)
+				if ferr := s.spawnViaRuntime(ctx, fallback, w, t, p, workDir); ferr != nil {
+					return fmt.Errorf("%w: runtime %s ready (%v); claude fallback also failed (%v)",
+						ErrRuntimeFallbackExhausted, rt.Name(), err, ferr)
+				}
+				return nil
+			}
+		}
+
 		return fmt.Errorf("runtime %s ready: %w", rt.Name(), err)
 	}
 

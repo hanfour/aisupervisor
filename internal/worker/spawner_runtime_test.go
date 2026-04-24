@@ -532,3 +532,217 @@ func TestSpawner_SpawnForTaskInner_NoMatchingRuntimeKeepsLegacy(t *testing.T) {
 		t.Errorf("registered-but-unmatched runtime got invoked: %v", fr.calls)
 	}
 }
+
+// TestSpawner_SpawnViaRuntime_FallsBackToClaudeOnReadyFailure verifies that
+// when a non-"claude" runtime (e.g. ais-agent) fails DetectReady — typically
+// because the CLI crashed at startup with no banner — the spawner
+// automatically retries with the "claude" runtime, avoiding leaving the
+// user stuck in a retry loop.
+//
+// This guards against the real-world case where ais-agent's bundled binary
+// rejects the configured provider (e.g. "ollama") and exits immediately.
+func TestSpawner_SpawnViaRuntime_FallsBackToClaudeOnReadyFailure(t *testing.T) {
+	s := newTestSpawner()
+
+	failing := &fakeRuntime{name: "ais-agent", readyErr: errors.New("timeout")}
+	good := &fakeRuntime{name: "claude"}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	reg.Register(good)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-fb", Name: "FB", Tier: TierEngineer, CLITool: "ais-agent"}
+	tk := &project.Task{ID: "t-fb", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	if err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd"); err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+
+	// failing runtime: Spawn, DetectReady(fail), Cleanup
+	wantFailing := []string{"Spawn", "DetectReady", "Cleanup"}
+	if len(failing.calls) != len(wantFailing) {
+		t.Fatalf("failing runtime calls = %v, want %v", failing.calls, wantFailing)
+	}
+	for i, want := range wantFailing {
+		if failing.calls[i] != want {
+			t.Errorf("failing[%d] = %q, want %q", i, failing.calls[i], want)
+		}
+	}
+	// claude runtime: Spawn, DetectReady, SendPrompt (full happy path)
+	wantGood := []string{"Spawn", "DetectReady", "SendPrompt"}
+	if len(good.calls) != len(wantGood) {
+		t.Fatalf("claude fallback runtime calls = %v, want %v (strict match)", good.calls, wantGood)
+	}
+	for i, want := range wantGood {
+		if good.calls[i] != want {
+			t.Errorf("claude[%d] = %q, want %q", i, good.calls[i], want)
+		}
+	}
+	if w.TmuxSession != "fake-tmux" {
+		t.Errorf("worker TmuxSession = %q, want fake-tmux from fallback", w.TmuxSession)
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_NoFallbackWhenAlreadyClaude guards against
+// infinite recursion: when "claude" itself fails DetectReady, we must NOT
+// recurse back into "claude" again — the error propagates up as before.
+func TestSpawner_SpawnViaRuntime_NoFallbackWhenAlreadyClaude(t *testing.T) {
+	s := newTestSpawner()
+
+	failing := &fakeRuntime{name: "claude", readyErr: errors.New("timeout")}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-nc", Name: "NC"}
+	tk := &project.Task{ID: "t-nc", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd")
+	if err == nil {
+		t.Fatal("expected error when claude itself times out (no fallback target)")
+	}
+	// calls: exactly Spawn, DetectReady, Cleanup — no second Spawn attempt.
+	if len(failing.calls) != 3 {
+		t.Fatalf("expected exactly 3 calls (no recursion), got %v", failing.calls)
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_NoFallbackWhenClaudeMissing covers the case
+// where the requested runtime fails but the registry has no "claude" to
+// fall back to. The original error must propagate unchanged.
+func TestSpawner_SpawnViaRuntime_NoFallbackWhenClaudeMissing(t *testing.T) {
+	s := newTestSpawner()
+
+	failing := &fakeRuntime{name: "ais-agent", readyErr: errors.New("timeout")}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-nocl", Name: "NoClaude"}
+	tk := &project.Task{ID: "t-nocl", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd")
+	if err == nil {
+		t.Fatal("expected error when ais-agent fails and claude is not registered")
+	}
+	if errors.Is(err, ErrRuntimeFallbackExhausted) {
+		t.Errorf("should NOT wrap with ErrRuntimeFallbackExhausted — no fallback was attempted")
+	}
+	// Exactly Spawn, DetectReady, Cleanup — no recursion.
+	if len(failing.calls) != 3 {
+		t.Fatalf("expected 3 calls on ais-agent (no claude to fall back to), got %v", failing.calls)
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_NoFallbackWhenContextCancelled verifies we
+// respect caller cancellation: if ctx is already cancelled when DetectReady
+// returns, we propagate the original ready error without attempting a
+// fallback the user didn't ask for.
+func TestSpawner_SpawnViaRuntime_NoFallbackWhenContextCancelled(t *testing.T) {
+	s := newTestSpawner()
+
+	failing := &fakeRuntime{name: "ais-agent", readyErr: context.Canceled}
+	good := &fakeRuntime{name: "claude"}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	reg.Register(good)
+	s.SetRuntimeRegistry(reg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel so ctx.Err() != nil when spawnViaRuntime checks
+
+	w := &Worker{ID: "w-cc", Name: "Cancelled"}
+	tk := &project.Task{ID: "t-cc", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	err := s.spawnViaRuntime(ctx, failing, w, tk, proj, "/tmp/wd")
+	if err == nil {
+		t.Fatal("expected ready-error to propagate even when ctx is cancelled")
+	}
+	if errors.Is(err, ErrRuntimeFallbackExhausted) {
+		t.Errorf("ctx-cancel path must NOT invoke the fallback machinery, got %v", err)
+	}
+	// good (claude) must never have been touched.
+	if len(good.calls) != 0 {
+		t.Errorf("claude runtime was invoked despite ctx cancellation: %v", good.calls)
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_FallbackExhaustedWhenClaudeAlsoFails verifies
+// that when the primary runtime AND the claude fallback both fail, the
+// returned error wraps ErrRuntimeFallbackExhausted so ClassifyError routes
+// it to ActionAbandon.
+func TestSpawner_SpawnViaRuntime_FallbackExhaustedWhenClaudeAlsoFails(t *testing.T) {
+	s := newTestSpawner()
+
+	failing := &fakeRuntime{name: "ais-agent", readyErr: errors.New("ais timeout")}
+	claudeFailing := &fakeRuntime{name: "claude", readyErr: errors.New("claude timeout")}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	reg.Register(claudeFailing)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-ex", Name: "Exhausted"}
+	tk := &project.Task{ID: "t-ex", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd")
+	if err == nil {
+		t.Fatal("expected error when both runtimes fail")
+	}
+	if !errors.Is(err, ErrRuntimeFallbackExhausted) {
+		t.Errorf("error must wrap ErrRuntimeFallbackExhausted, got %v", err)
+	}
+	if ClassifyError(err) != ActionAbandon {
+		t.Errorf("ClassifyError should return ActionAbandon on exhausted fallback, got %v", ClassifyError(err))
+	}
+
+	// ais-agent: Spawn, DetectReady, Cleanup (3 calls)
+	if len(failing.calls) != 3 {
+		t.Errorf("ais-agent calls = %v, want 3", failing.calls)
+	}
+	// claude: Spawn, DetectReady, Cleanup (3 calls — same failure path)
+	if len(claudeFailing.calls) != 3 {
+		t.Errorf("claude fallback calls = %v, want 3", claudeFailing.calls)
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_FallbackSendPromptFailure ensures a fallback
+// that gets past ready but fails on SendPrompt also surfaces as an
+// ErrRuntimeFallbackExhausted-wrapped error (so SpawnForTask abandons
+// rather than retrying the same failure).
+func TestSpawner_SpawnViaRuntime_FallbackSendPromptFailure(t *testing.T) {
+	s := newTestSpawner()
+
+	failing := &fakeRuntime{name: "ais-agent", readyErr: errors.New("ais timeout")}
+	claudeSendFail := &fakeRuntime{name: "claude", sendErr: errors.New("send boom")}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	reg.Register(claudeSendFail)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-sf", Name: "SendFail"}
+	tk := &project.Task{ID: "t-sf", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd")
+	if err == nil {
+		t.Fatal("expected error when fallback SendPrompt fails")
+	}
+	if !errors.Is(err, ErrRuntimeFallbackExhausted) {
+		t.Errorf("error must wrap ErrRuntimeFallbackExhausted, got %v", err)
+	}
+	// claude got past DetectReady, attempted SendPrompt, then Cleanup.
+	wantClaude := []string{"Spawn", "DetectReady", "SendPrompt", "Cleanup"}
+	if len(claudeSendFail.calls) != len(wantClaude) {
+		t.Fatalf("claude fallback call sequence = %v, want %v", claudeSendFail.calls, wantClaude)
+	}
+	for i, want := range wantClaude {
+		if claudeSendFail.calls[i] != want {
+			t.Errorf("claude[%d] = %q, want %q", i, claudeSendFail.calls[i], want)
+		}
+	}
+}

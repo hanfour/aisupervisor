@@ -1,6 +1,9 @@
 package worker
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // ErrorAction represents the recommended action for a classified error.
 type ErrorAction string
@@ -11,6 +14,13 @@ const (
 	ActionAbandon  ErrorAction = "abandon"
 	ActionCompress ErrorAction = "compress"
 )
+
+// ErrRuntimeFallbackExhausted marks a spawn failure that already exhausted
+// the runtime-fallback mechanism (DetectReady timed out on the requested
+// runtime AND on the claude fallback). ClassifyError routes this sentinel
+// to ActionAbandon so SpawnForTask's outer 3x retry loop stops immediately
+// instead of re-triggering the same end-to-end timeout chain.
+var ErrRuntimeFallbackExhausted = errors.New("runtime fallback exhausted")
 
 // errorPatterns maps keywords to actions, checked in priority order.
 var errorPatterns = []struct {
@@ -28,6 +38,9 @@ var errorPatterns = []struct {
 func ClassifyError(err error) ErrorAction {
 	if err == nil {
 		return ActionRetry
+	}
+	if errors.Is(err, ErrRuntimeFallbackExhausted) {
+		return ActionAbandon
 	}
 	lower := strings.ToLower(err.Error())
 	for _, p := range errorPatterns {

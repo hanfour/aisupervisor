@@ -18,17 +18,24 @@ cmd/
   aisupervisor-gui/   # Wails v2 GUI entry point (main app)
   aisupervisor/       # TUI entry point (terminal mode)
 internal/
-  ai/                 # AI backend abstraction (anthropic, openai, ollama, gemini)
-  company/            # Core business logic — task management, review pipeline, chat
+  agent/              # AgentRuntime plugin system (Phase 3 backends)
+    runtimeutil/      # Shared plugin helpers (ShellEscape, token regex, session names)
+    claudecode/       # Claude Code CLI runtime
+    aisagent/         # ais-agent runtime
+    aider/            # Aider runtime
+  ai/                 # Chat provider abstraction (anthropic, openai, ollama, gemini, claudecli)
+  company/            # Core business logic — task management, review pipeline, council, meetings, mailbox, chat
   config/             # App config + skill profiles (defaults.go)
+  gitops/             # Git branch + worktree operations for task isolation
   gui/                # Wails bindings (CompanyApp — Go↔Svelte bridge)
+  knowledge/          # Code graph, convention store, knowledge injection
+  messaging/          # Inter-worker messaging primitives
   personality/        # Worker personality traits, skill scores, narratives
   project/            # Project & Task data models
   role/               # AI role system (gatekeeper, resolver)
   supervisor/         # Pane monitoring, activity observation
   tmux/               # tmux client (exec-based, not gotmux)
   worker/             # Worker spawner, monitor, session management
-  gitops/             # Git branch operations for task isolation
 frontend/
   src/lib/
     components/       # Svelte UI components
@@ -39,10 +46,14 @@ frontend/
 
 ## Key Data Flow
 
-1. **Task Assignment**: GUI → `CompanyApp.AssignTask()` → `company.Manager.AssignTask()` → creates git branch → `spawner.SpawnForTask()` → tmux session + CLI
-2. **Completion Detection**: `monitor.WatchForCompletion()` polls tmux pane for idle `❯` prompt with `changeCount >= 3`
-3. **Review Pipeline**: task done → status `code_review` → auto-create review sub-task → reviewer completes → `HandleReviewResult()` → `parseReviewVerdict()` (searches for APPROVED/REJECTED in captured pane output)
-4. **Skill Profiles**: `config/defaults.go` defines profiles → `spawner.buildSkillArgs()` converts to CLI flags (`--append-system-prompt`, `--allowedTools`, `--model`, etc.)
+1. **Task Assignment**: GUI → `CompanyApp.AssignTask()` → `company.Manager.AssignTask()` → creates git branch → `spawner.SpawnForTask()` → delegates to `agent.AgentRuntime` plugin (claudecode / aisagent / aider) for tmux session + CLI launch. Legacy inline path preserved as fallback when registry is nil.
+2. **Runtime Selection**: `spawner.resolveRuntimeName(w)` picks the runtime by precedence: default `"claude"` → `w.CLITool` → growth config → tier config (last wins). `spawner.buildSpawnConfig` assembles the structured `agent.SpawnConfig` from skill profile + growth + skillOverrides.
+3. **Completion Detection**: `monitor.WatchForCompletion()` polls tmux pane; when a registry is wired, prefers `rt.DetectCompletion(ctx, session, content)` (`Reason: "runtime_idle"`) over the legacy `isClaudeIdle` / `isAiderIdle` branches.
+4. **Review Pipeline**: task done → status `code_review` → auto-create review sub-task → reviewer completes → `HandleReviewResult()` → `parseReviewVerdict()` (searches for APPROVED/REJECTED in captured pane output).
+5. **Council Review**: reviewer can escalate to `CouncilEngine.RunCouncil()` — parallel domain experts (security, performance, testing, …) run via `spawnExpertAgent`, which delegates to the same `AgentRuntime` plugin. Findings pass through a Carmack filter and are summarised into a unified verdict.
+6. **Inter-Worker Comms**: `messaging` / `company/mailbox.go` back a YAML-persistent message store; workers emit `ASK:<workerID>:<question>` and `REPLY:<messageID>:<content>` patterns in their pane, detected by the monitor. Pending messages are injected at spawn-time via `spawner.pendingMessagesFn`.
+7. **Structured Meetings**: `MeetingEngine` (`company/meeting.go`) runs Review / Planning / Debug meeting scenarios, orchestrating multi-participant chat via `ai.ChatProvider` and persisting minutes in `MeetingStore`.
+8. **Skill Profiles**: `config/defaults.go` defines profiles → `spawner.buildSpawnConfig` (runtime path) or `spawner.buildSkillArgs` (legacy path) applies them. Per-worker `skillOverrides` (ExtraPrompt, ModelOverride, AddTools, RemoveTools) are merged on top.
 
 ## Development Commands
 
@@ -66,11 +77,19 @@ go test ./internal/...
 | File | Purpose |
 |------|---------|
 | `internal/config/defaults.go` | Skill profile definitions (system prompts, tool restrictions) |
-| `internal/worker/spawner.go` | Worker spawning, CLI arg building, prompt sending |
-| `internal/worker/monitor.go` | Completion detection via tmux polling |
+| `internal/agent/runtime.go` | `AgentRuntime` plugin interface + `SpawnConfig` / `AgentSession` / `TokenUsage` types |
+| `internal/agent/registry.go` | `RuntimeRegistry` — thread-safe plugin registry, insertion-order-preserving |
+| `internal/agent/runtimeutil/runtimeutil.go` | Shared helpers (ShellEscape, PromptRenderDelay, NewSessionName, token regex) |
+| `internal/agent/{claudecode,aisagent,aider}/runtime.go` | Plugin implementations |
+| `internal/worker/spawner.go` | Worker spawning; delegates to AgentRuntime plugin, with legacy inline fallback |
+| `internal/worker/monitor.go` | Completion detection via tmux polling; runtime-first, legacy fallback |
+| `internal/company/company.go` | Core Manager — constructs `RuntimeRegistry`, wires plugins into spawner/monitor/council/meeting |
 | `internal/company/review.go` | Review pipeline — verdict parsing, task routing |
-| `internal/company/company.go` | Core Manager — task assignment, worker management |
+| `internal/company/council.go` | Carmack-Council multi-expert review pipeline |
+| `internal/company/meeting.go` | MeetingEngine — Review / Planning / Debug scenarios |
+| `internal/company/mailbox.go` | Inter-worker mailbox (YAML-backed) |
 | `internal/tmux/client.go` | tmux operations (capture-pane with `-S` for scrollback) |
+| `internal/gitops/gitops.go` | Git branch, worktree, checkout operations |
 | `internal/gui/company_app.go` | Wails bindings for frontend |
 | `frontend/src/lib/stores/i18n.js` | UI translations (zh-TW) |
 
@@ -83,6 +102,10 @@ go test ./internal/...
 - **Permission mode**: Workers with `bypassPermissions` skip all Claude Code permission prompts; `acceptEdits` auto-accepts file edits but still prompts for Bash
 - **Review verdict**: `parseReviewVerdict()` searches last 5000 bytes for "approved"/"rejected" keywords in captured pane output (500 lines scrollback)
 - **Autonomous worker skill isolation**: Workers inherit the host's `.claude/` skills (superpowers, brainstorming, etc.) via SessionStart hooks. These interactive skills can override worker prompts and cause infinite loops (brainstorming → planning → task creation). All skill profiles MUST include `Skill`, `EnterPlanMode`, `ExitPlanMode` in `DisallowedTools`. The spawner also enforces `config.AutonomousDisallowedTools()` globally as a safety net.
+- **Runtime plugin fallback**: When `Manager.New()` is called with `tmuxClient == nil` (some unit-test paths), the `RuntimeRegistry` is still created but plugin registration is skipped. Both `spawner.spawnForTaskInner` and `monitor.WatchForCompletion` short-circuit to runtime path only when a matching runtime is found; otherwise the legacy inline tmux path runs unchanged.
+- **ExtraCLIArgs trust boundary**: `SpawnConfig.ExtraCLIArgs` is appended verbatim to the CLI command without shell escaping. It is treated as trusted config (from SkillProfile / tier YAML) and must never be populated from user input. Runtime plugins document this in their package docstrings.
+- **`AIS_PROVIDER` / `AIS_MAX_TOKENS` EnvVars**: ais-agent runtime reads provider + token budget from `cfg.EnvVars` (not from dedicated SpawnConfig fields). The spawner's `buildSpawnConfig` surfaces growth-config values there.
+- **Completion detection order**: `monitor.WatchForCompletion` prefers `rt.DetectCompletion(ctx, session, content)` (returns `Reason: "runtime_idle"`) when a registry is wired; falls back to `isClaudeIdle` / `isAiderIdle` when runtime is nil, returns false, or errors (error is logged once per watch call).
 
 ## Coding Conventions
 

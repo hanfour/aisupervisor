@@ -129,6 +129,22 @@ func TestClaudeCodeRuntime_ParseReadyIndicators(t *testing.T) {
 		{"caret prompt with trailing text", "❯ type here\n"},
 		{"what can i help banner", "Claude Code v2.0\nWhat can I help you with today?\n"},
 		{"welcome back banner", "Welcome back, user!\n"},
+		// Real Claude Code v2.1.119 layout: the idle prompt sits on its own
+		// line ABOVE a status bar (bypass permissions / effort indicator),
+		// so the LAST non-empty line is the status bar, not ❯. DetectReady
+		// must still fire.
+		{"v2+ prompt above status bar", strings.Join([]string{
+			"╭─── Claude Code v2.1.119 ────╮",
+			"│  Welcome back Hanfour!       │",  // banner would also match, but test a case without it too
+			"╰──────────────────────────────╯",
+			"",
+			"────────────────────────────────",
+			"❯ ",
+			"────────────────────────────────",
+			"  ⏵⏵ bypass permissions on (shift+tab to cycle)   ● high · /effort",
+		}, "\n")},
+		{"v2+ prompt with status bar no banner",
+			"────────────\n❯ \n────────────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"},
 	}
 	for _, tc := range readyCases {
 		t.Run("ready/"+tc.name, func(t *testing.T) {
@@ -147,14 +163,16 @@ func TestClaudeCodeRuntime_ParseReadyIndicators(t *testing.T) {
 		{"progress spinner", "⠋ Thinking...\n⠙ Thinking..."},
 		{"shell only", "user@host:~$"},
 		{"help without keyword", "i am here to assist"},
-		// M3 regression: a "> " prefix earlier in the buffer (e.g. a quoted
-		// response from a previous turn in scrollback) must NOT fire ready
-		// when the actual last non-empty line is something else — the CLI is
-		// still busy. Matches the stricter isClaudeIdle semantics.
-		{"gt prompt earlier, busy text last", ">\nstill thinking..."},
-		{"gt+text earlier, busy text last", "> quoted reply from last turn\nprocessing..."},
-		{"caret earlier, busy text last", "❯\nwriting response..."},
-		{"caret+text earlier, busy text last", "❯ partial\nmore work to do"},
+		// M3 regression: a "> " prefix sitting DEEP in scrollback (e.g. a
+		// quoted response from a previous turn) must NOT fire ready when
+		// the actual trailing pane lines are busy output. The fix scans
+		// only the last readyScanLines (5) so scrollback beyond that is
+		// immune. Each case below pushes the prompt-looking line past the
+		// 5-line window so the scan cannot see it.
+		{"gt prompt deep in scrollback, busy trail", ">\nfetching context\nrunning grep\nfiltering results\napplying patch\ncompiling..."},
+		{"gt+text deep scrollback, busy trail", "> quoted reply from last turn\nfetching context\nrunning grep\nfiltering results\napplying patch\ncompiling..."},
+		{"caret deep scrollback, busy trail", "❯\nfetching context\nrunning grep\nfiltering results\napplying patch\nwriting output..."},
+		{"caret+text deep scrollback, busy trail", "❯ partial\nfetching context\nrunning grep\nfiltering results\napplying patch\nmore work..."},
 	}
 	for _, tc := range notReadyCases {
 		t.Run("notready/"+tc.name, func(t *testing.T) {

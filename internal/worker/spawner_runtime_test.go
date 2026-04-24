@@ -63,7 +63,7 @@ func (f *fakeRuntime) DetectReady(_ context.Context, _ *agent.AgentSession, _ ti
 	return f.readyErr
 }
 
-func (f *fakeRuntime) DetectCompletion(_ context.Context, _ *agent.AgentSession) (bool, error) {
+func (f *fakeRuntime) DetectCompletion(_ context.Context, _ *agent.AgentSession, _ string) (bool, error) {
 	f.calls = append(f.calls, "DetectCompletion")
 	return false, nil
 }
@@ -77,6 +77,8 @@ func (f *fakeRuntime) Cleanup(_ *agent.AgentSession) error {
 	f.calls = append(f.calls, "Cleanup")
 	return nil
 }
+
+func (f *fakeRuntime) MonitoredSessionType() string { return "fake" }
 
 // newTestSpawner builds a Spawner with the minimum non-nil maps required for
 // the helpers to run without nil-map panics.
@@ -439,5 +441,94 @@ func TestSpawner_SpawnViaRuntime_CleansUpOnSendPromptFailure(t *testing.T) {
 		if fr.calls[i] != want {
 			t.Errorf("call[%d] = %q, want %q (full: %v)", i, fr.calls[i], want, fr.calls)
 		}
+	}
+}
+
+// TestSpawner_SpawnForTaskInner_ShortCircuitsToRuntime exercises the
+// spawnForTaskInner short-circuit block: with a runtime registered matching
+// the worker's CLITool, spawnForTaskInner must dispatch to spawnViaRuntime
+// WITHOUT touching the legacy tmux bootstrap below it.
+//
+// Non-code task + empty BranchName is used so steps 1-2 (git branch setup)
+// are skipped, letting the short-circuit run without needing a mock gitOps
+// or tmux client.
+//
+// Guards I6 from the PR #15 review: the conditional at spawner.go:505-509
+// was previously tested only by directly calling spawnViaRuntime, never
+// through spawnForTaskInner.
+func TestSpawner_SpawnForTaskInner_ShortCircuitsToRuntime(t *testing.T) {
+	s := newTestSpawner()
+
+	fr := &fakeRuntime{name: "fake-cli"}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(fr)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{
+		ID:      "w-short",
+		Name:    "ShortCircuit",
+		Tier:    TierEngineer,
+		CLITool: "fake-cli",
+	}
+	// Non-code task with no branch → skips git branch work AND worktree setup.
+	tk := &project.Task{
+		ID:     "task-ndc",
+		Title:  "research thing",
+		Prompt: "do the research",
+		Type:   project.TaskTypePRD,
+	}
+	proj := &project.Project{Name: "Demo", RepoPath: "/tmp/nope"}
+
+	if err := s.spawnForTaskInner(context.Background(), w, tk, proj); err != nil {
+		t.Fatalf("spawnForTaskInner returned unexpected error: %v", err)
+	}
+
+	// fakeRuntime should have received the full spawnViaRuntime sequence.
+	wantOrder := []string{"Spawn", "DetectReady", "SendPrompt"}
+	if len(fr.calls) < len(wantOrder) {
+		t.Fatalf("expected runtime to be driven via short-circuit; got calls=%v", fr.calls)
+	}
+	for i, want := range wantOrder {
+		if fr.calls[i] != want {
+			t.Errorf("short-circuit call[%d] = %q, want %q (full: %v)", i, fr.calls[i], want, fr.calls)
+		}
+	}
+
+	// Worker state should reflect the fake session, not the legacy-path
+	// "aiworker-<id>" session name.
+	if w.TmuxSession != "fake-tmux" {
+		t.Errorf("worker TmuxSession = %q, want fake-tmux (short-circuit did not fire)", w.TmuxSession)
+	}
+}
+
+// TestSpawner_SpawnForTaskInner_NoMatchingRuntimeKeepsLegacy ensures that
+// when a registry is wired but NO runtime matches the worker's CLITool, the
+// short-circuit is NOT taken and the legacy path runs. We assert this by
+// registering a fakeRuntime under a different name and confirming the
+// fakeRuntime was never invoked.
+//
+// Pins the default-on-no-match semantics: unknown CLITool falls through to
+// the existing legacy bootstrap rather than silently crashing or erroring.
+func TestSpawner_SpawnForTaskInner_NoMatchingRuntimeKeepsLegacy(t *testing.T) {
+	s := newTestSpawner()
+
+	fr := &fakeRuntime{name: "does-not-match"}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(fr)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-legacy", Name: "Legacy", Tier: TierEngineer, CLITool: "fake-cli"}
+	tk := &project.Task{ID: "task-lg", Title: "t", Prompt: "p", Type: project.TaskTypePRD}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	// Legacy path will panic on nil tmuxClient — we catch it and assert we
+	// got past the short-circuit.
+	defer func() {
+		_ = recover() // expected — legacy path touches nil tmuxClient
+	}()
+	_ = s.spawnForTaskInner(context.Background(), w, tk, proj)
+
+	if len(fr.calls) != 0 {
+		t.Errorf("registered-but-unmatched runtime got invoked: %v", fr.calls)
 	}
 }

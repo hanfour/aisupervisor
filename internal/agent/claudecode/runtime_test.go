@@ -3,7 +3,6 @@ package claudecode
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/agent"
 )
@@ -250,40 +249,5 @@ func TestClaudeCodeRuntime_ParseTokenUsage(t *testing.T) {
 	})
 }
 
-// TestClaudeCodeRuntime_PromptRenderDelay verifies the delay-scaling formula.
-func TestClaudeCodeRuntime_PromptRenderDelay(t *testing.T) {
-	tests := []struct {
-		promptLen int
-		want      time.Duration
-	}{
-		{0, 1 * time.Second},
-		{1999, 1 * time.Second},
-		{2000, 1500 * time.Millisecond},
-		{4000, 2 * time.Second},
-		{100000, 5 * time.Second}, // capped
-	}
-	for _, tc := range tests {
-		if got := promptRenderDelay(tc.promptLen); got != tc.want {
-			t.Errorf("promptRenderDelay(%d) = %v, want %v", tc.promptLen, got, tc.want)
-		}
-	}
-}
-
-// TestClaudeCodeRuntime_ShellEscape verifies the shellEscape helper matches
-// the existing spawner.go convention (single-quote wrap, escape embedded quotes).
-func TestClaudeCodeRuntime_ShellEscape(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{"simple", "'simple'"},
-		{"with spaces", "'with spaces'"},
-		{"don't", `'don'\''t'`},
-		{"", "''"},
-	}
-	for _, tc := range tests {
-		if got := shellEscape(tc.in); got != tc.want {
-			t.Errorf("shellEscape(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
+// PromptRenderDelay and ShellEscape are now shared helpers in
+// internal/agent/runtimeutil/ and tested there.

@@ -79,7 +79,7 @@ func (f *stubRuntime) CaptureOutput(session *agent.AgentSession, lines int) (str
 func (f *stubRuntime) DetectReady(ctx context.Context, session *agent.AgentSession, timeout time.Duration) error {
 	return nil
 }
-func (f *stubRuntime) DetectCompletion(ctx context.Context, session *agent.AgentSession) (bool, error) {
+func (f *stubRuntime) DetectCompletion(ctx context.Context, session *agent.AgentSession, content string) (bool, error) {
 	f.detectCall++
 	if f.detectErr != nil {
 		return false, f.detectErr
@@ -90,6 +90,7 @@ func (f *stubRuntime) ParseTokenUsage(output string) (agent.TokenUsage, error) {
 	return agent.TokenUsage{}, nil
 }
 func (f *stubRuntime) Cleanup(session *agent.AgentSession) error { return nil }
+func (f *stubRuntime) MonitoredSessionType() string             { return "stub" }
 
 // withShortGrace temporarily sets the package gracePeriod to d so tests do
 // not have to wait 30s for idle checks to become eligible. The returned
@@ -119,7 +120,7 @@ func TestCompletionMonitor_SetRuntimeRegistry(t *testing.T) {
 
 func TestCompletionMonitor_RuntimeIdle_NoRegistry(t *testing.T) {
 	m := NewCompletionMonitor(&fakeTmuxClient{})
-	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "claudecode"})
+	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "claudecode"}, "pane content")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestCompletionMonitor_RuntimeIdle_NoMatchingRuntime(t *testing.T) {
 	m.SetRuntimeRegistry(reg)
 
 	// Worker uses a CLITool no runtime matches.
-	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "unknown"})
+	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "unknown"}, "pane content")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +152,7 @@ func TestCompletionMonitor_RuntimeIdle_DelegatesToRuntime(t *testing.T) {
 	reg.Register(rt)
 	m.SetRuntimeRegistry(reg)
 
-	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "claudecode"})
+	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "claudecode"}, "pane content")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestCompletionMonitor_RuntimeIdle_PropagatesError(t *testing.T) {
 	reg.Register(&stubRuntime{name: "claudecode", detectErr: wantErr})
 	m.SetRuntimeRegistry(reg)
 
-	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "claudecode"})
+	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "claudecode"}, "pane content")
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected error %v, got %v", wantErr, err)
 	}
@@ -314,7 +315,7 @@ func TestCompletionMonitor_RuntimeIdle_NilRuntimeSafe(t *testing.T) {
 	// exercises rt == nil defensively. This overlaps with NoMatchingRuntime
 	// but documents intent.
 	m.SetRuntimeRegistry(reg)
-	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "anything"})
+	done, err := m.runtimeIdle(context.Background(), &Worker{CLITool: "anything"}, "pane content")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

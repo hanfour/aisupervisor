@@ -13,15 +13,13 @@ package claudecode
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/agent"
+	"github.com/hanfourmini/aisupervisor/internal/agent/runtimeutil"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
 
@@ -43,6 +41,9 @@ func New(tc tmux.TmuxClient) *Runtime {
 // Name returns the stable identifier for this runtime.
 func (r *Runtime) Name() string { return "claude" }
 
+// MonitoredSessionType returns the tool-type tag used by supervisor.MonitoredSession.
+func (r *Runtime) MonitoredSessionType() string { return "claude_code" }
+
 // Spawn creates a new tmux session, primes the shell, and launches the Claude
 // Code CLI using flags derived from cfg. The returned session handle does NOT
 // imply the CLI is ready to accept prompts — callers must follow up with
@@ -52,7 +53,7 @@ func (r *Runtime) Spawn(ctx context.Context, cfg agent.SpawnConfig) (*agent.Agen
 		return nil, fmt.Errorf("claudecode: tmux client is nil")
 	}
 
-	name, err := newSessionName()
+	name, err := runtimeutil.NewSessionName("claude")
 	if err != nil {
 		return nil, fmt.Errorf("generating session name: %w", err)
 	}
@@ -71,7 +72,7 @@ func (r *Runtime) Spawn(ctx context.Context, cfg agent.SpawnConfig) (*agent.Agen
 
 	// 1. cd into the working directory (if provided) so the CLI inherits it.
 	if cfg.WorkDir != "" {
-		if err := r.tmuxClient.SendKeys(name, 0, 0, fmt.Sprintf("cd %s", shellEscape(cfg.WorkDir))+" Enter"); err != nil {
+		if err := r.tmuxClient.SendKeys(name, 0, 0, fmt.Sprintf("cd %s", runtimeutil.ShellEscape(cfg.WorkDir))+" Enter"); err != nil {
 			return cleanup(fmt.Errorf("sending cd: %w", err))
 		}
 		time.Sleep(300 * time.Millisecond)
@@ -113,7 +114,7 @@ func (r *Runtime) SendPrompt(session *agent.AgentSession, prompt string) error {
 	if err := r.tmuxClient.SendLiteralKeys(session.TmuxSession, session.Window, session.Pane, prompt); err != nil {
 		return fmt.Errorf("sending literal keys: %w", err)
 	}
-	time.Sleep(promptRenderDelay(len(prompt)))
+	time.Sleep(runtimeutil.PromptRenderDelay(len(prompt)))
 	if err := r.tmuxClient.SendKeys(session.TmuxSession, session.Window, session.Pane, "Enter"); err != nil {
 		return fmt.Errorf("sending Enter: %w", err)
 	}
@@ -198,24 +199,15 @@ func (r *Runtime) DetectReady(ctx context.Context, session *agent.AgentSession, 
 	}
 }
 
-// DetectCompletion performs a single pane capture and reports whether the CLI
-// is back at an idle prompt. Callers are expected to poll this method on
-// whatever cadence suits them.
-func (r *Runtime) DetectCompletion(ctx context.Context, session *agent.AgentSession) (bool, error) {
+// DetectCompletion is a pure check over already-captured pane content:
+// returns true iff the last non-empty line is a bare Claude Code idle prompt
+// ("❯", ">"). Callers own the pane-capture cadence; passing stale or empty
+// content is valid and returns false.
+func (r *Runtime) DetectCompletion(ctx context.Context, session *agent.AgentSession, content string) (bool, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-	}
-	if r.tmuxClient == nil {
-		return false, fmt.Errorf("claudecode: tmux client is nil")
-	}
-	if session == nil {
-		return false, fmt.Errorf("claudecode: nil session")
-	}
-	content, err := r.tmuxClient.CapturePane(session.TmuxSession, session.Window, session.Pane, 20)
-	if err != nil {
-		return false, fmt.Errorf("capturing pane: %w", err)
 	}
 	return isClaudeIdle(content), nil
 }
@@ -232,18 +224,18 @@ func (r *Runtime) ParseTokenUsage(output string) (agent.TokenUsage, error) {
 	var usage agent.TokenUsage
 
 	// Strategy 1: explicit aggregate "Total tokens" value.
-	if matches := totalTokensRe.FindAllStringSubmatch(output, -1); len(matches) > 0 {
+	if matches := runtimeutil.TotalTokensRe.FindAllStringSubmatch(output, -1); len(matches) > 0 {
 		last := matches[len(matches)-1]
-		if val := parseTokenNum(last[1]); val > 0 {
+		if val := runtimeutil.ParseTokenNum(last[1]); val > 0 {
 			usage.InputTokens = val
 		}
 	}
 
 	// Strategy 2: sum individual input/output token lines when no aggregate.
 	if usage.InputTokens == 0 && usage.OutputTokens == 0 {
-		if ioMatches := ioTokensRe.FindAllStringSubmatch(output, -1); len(ioMatches) > 0 {
+		if ioMatches := runtimeutil.IOTokensRe.FindAllStringSubmatch(output, -1); len(ioMatches) > 0 {
 			for _, m := range ioMatches {
-				val := parseTokenNum(m[2])
+				val := runtimeutil.ParseTokenNum(m[2])
 				if val == 0 {
 					continue
 				}
@@ -258,7 +250,7 @@ func (r *Runtime) ParseTokenUsage(output string) (agent.TokenUsage, error) {
 	}
 
 	// Strategy 3: cost, additive regardless of whether tokens were found.
-	if matches := costRe.FindAllStringSubmatch(output, -1); len(matches) > 0 {
+	if matches := runtimeutil.CostRe.FindAllStringSubmatch(output, -1); len(matches) > 0 {
 		last := matches[len(matches)-1]
 		if cost, err := strconv.ParseFloat(last[1], 64); err == nil && cost > 0 {
 			usage.TotalCost = cost
@@ -282,23 +274,6 @@ func (r *Runtime) Cleanup(session *agent.AgentSession) error {
 // -------------------------------------------------------------------------
 // Unexported helpers
 // -------------------------------------------------------------------------
-
-// Token parsing regexes mirror internal/worker/monitor.go. They are copied
-// verbatim rather than imported to keep the claudecode package free of
-// dependencies on the (to-be-refactored) worker package.
-var (
-	totalTokensRe = regexp.MustCompile(`(?i)total\s+tokens?(?:\s+used)?[:\s]+([0-9][0-9,_]+)`)
-	ioTokensRe    = regexp.MustCompile(`(?i)(input|output)\s+tokens?[:\s]+([0-9][0-9,_]+)`)
-	costRe        = regexp.MustCompile(`(?i)total\s+cost[:\s]+\$([0-9]+\.?[0-9]*)`)
-)
-
-// parseTokenNum strips grouping separators and parses a base-10 integer.
-func parseTokenNum(s string) int {
-	s = strings.ReplaceAll(s, ",", "")
-	s = strings.ReplaceAll(s, "_", "")
-	val, _ := strconv.Atoi(s)
-	return val
-}
 
 // buildCLICommand produces the full "claude <flags>" invocation.
 //
@@ -327,39 +302,29 @@ func buildCLICommand(cfg agent.SpawnConfig) string {
 	if len(cfg.AllowedTools) > 0 {
 		parts = append(parts, "--allowedTools")
 		for _, tool := range cfg.AllowedTools {
-			parts = append(parts, shellEscape(tool))
+			parts = append(parts, runtimeutil.ShellEscape(tool))
 		}
 	}
 
 	if len(cfg.DisallowedTools) > 0 {
 		parts = append(parts, "--disallowedTools")
 		for _, tool := range cfg.DisallowedTools {
-			parts = append(parts, shellEscape(tool))
+			parts = append(parts, runtimeutil.ShellEscape(tool))
 		}
 	}
 
 	if cfg.SystemPrompt != "" {
-		parts = append(parts, "--append-system-prompt", shellEscape(cfg.SystemPrompt))
+		parts = append(parts, "--append-system-prompt", runtimeutil.ShellEscape(cfg.SystemPrompt))
 	}
 
+	// cfg.ExtraCLIArgs is a trusted config value (sourced from SkillProfile /
+	// tier YAML, never from user input). It is appended verbatim without
+	// shell escaping so callers can pass pre-formed flag strings.
 	if cfg.ExtraCLIArgs != "" {
 		parts = append(parts, cfg.ExtraCLIArgs)
 	}
 
 	return strings.Join(parts, " ")
-}
-
-// promptRenderDelay returns how long to wait after SendLiteralKeys before
-// pressing Enter. Scales with prompt length: 1s base + 500ms per 2000 chars,
-// capped at 5s. Matches internal/worker/spawner.go.
-func promptRenderDelay(promptLen int) time.Duration {
-	base := 1 * time.Second
-	extra := time.Duration(promptLen/2000) * 500 * time.Millisecond
-	total := base + extra
-	if total > 5*time.Second {
-		total = 5 * time.Second
-	}
-	return total
 }
 
 // isClaudeReady reports whether the captured pane content indicates the
@@ -396,20 +361,3 @@ func isClaudeIdle(content string) bool {
 	return false
 }
 
-// shellEscape wraps s in single quotes and escapes any embedded single quote
-// by closing the quoted section, emitting a backslash-escaped quote, and
-// reopening. Matches the helper used by internal/worker/spawner.go.
-func shellEscape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-// newSessionName builds a unique tmux session identifier of the form
-// "claude-<unix-nanos>-<hex4>". The random suffix guards against collisions
-// when two spawns happen in the same nanosecond.
-func newSessionName() (string, error) {
-	var buf [4]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("claude-%d-%s", time.Now().UnixNano(), hex.EncodeToString(buf[:])), nil
-}

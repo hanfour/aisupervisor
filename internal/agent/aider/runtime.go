@@ -28,8 +28,6 @@ package aider
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -39,6 +37,7 @@ import (
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/agent"
+	"github.com/hanfourmini/aisupervisor/internal/agent/runtimeutil"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 )
 
@@ -60,6 +59,9 @@ func New(tc tmux.TmuxClient) *Runtime {
 // Name returns the stable identifier for this runtime.
 func (r *Runtime) Name() string { return "aider" }
 
+// MonitoredSessionType returns the tool-type tag used by supervisor.MonitoredSession.
+func (r *Runtime) MonitoredSessionType() string { return "aider" }
+
 // Spawn creates a new tmux session, primes the shell, and launches aider using
 // flags derived from cfg. When cfg.SystemPrompt is non-empty the prompt is
 // written to a temp file and forwarded via --message-file; the path is stored
@@ -73,7 +75,7 @@ func (r *Runtime) Spawn(ctx context.Context, cfg agent.SpawnConfig) (*agent.Agen
 		return nil, fmt.Errorf("aider: tmux client is nil")
 	}
 
-	name, err := newSessionName()
+	name, err := runtimeutil.NewSessionName("aider")
 	if err != nil {
 		return nil, fmt.Errorf("generating session name: %w", err)
 	}
@@ -95,7 +97,7 @@ func (r *Runtime) Spawn(ctx context.Context, cfg agent.SpawnConfig) (*agent.Agen
 
 	// 1. cd into the working directory so the CLI inherits it.
 	if cfg.WorkDir != "" {
-		if err := r.tmuxClient.SendKeys(name, 0, 0, fmt.Sprintf("cd %s", shellEscape(cfg.WorkDir))+" Enter"); err != nil {
+		if err := r.tmuxClient.SendKeys(name, 0, 0, fmt.Sprintf("cd %s", runtimeutil.ShellEscape(cfg.WorkDir))+" Enter"); err != nil {
 			return cleanup(fmt.Errorf("sending cd: %w", err), "")
 		}
 		time.Sleep(300 * time.Millisecond)
@@ -153,7 +155,7 @@ func (r *Runtime) SendPrompt(session *agent.AgentSession, prompt string) error {
 	if err := r.tmuxClient.SendLiteralKeys(session.TmuxSession, session.Window, session.Pane, prompt); err != nil {
 		return fmt.Errorf("sending literal keys: %w", err)
 	}
-	time.Sleep(promptRenderDelay(len(prompt)))
+	time.Sleep(runtimeutil.PromptRenderDelay(len(prompt)))
 	if err := r.tmuxClient.SendKeys(session.TmuxSession, session.Window, session.Pane, "Enter"); err != nil {
 		return fmt.Errorf("sending Enter: %w", err)
 	}
@@ -208,25 +210,16 @@ func (r *Runtime) DetectReady(ctx context.Context, session *agent.AgentSession, 
 	}
 }
 
-// DetectCompletion performs a single pane capture and reports whether aider
-// is back at an idle prompt. Callers (the monitor) are expected to require a
-// minimum changeCount before trusting this result — a single bare ">" in the
-// buffer is weak signal on its own.
-func (r *Runtime) DetectCompletion(ctx context.Context, session *agent.AgentSession) (bool, error) {
+// DetectCompletion is a pure check over already-captured pane content:
+// returns true iff the last non-empty line is a bare aider idle prompt
+// ("aider>" case-insensitive, or ">"). Callers (the monitor) are expected
+// to require a minimum changeCount before trusting this — a single bare
+// ">" in the buffer is weak signal on its own.
+func (r *Runtime) DetectCompletion(ctx context.Context, session *agent.AgentSession, content string) (bool, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-	}
-	if r.tmuxClient == nil {
-		return false, fmt.Errorf("aider: tmux client is nil")
-	}
-	if session == nil {
-		return false, fmt.Errorf("aider: nil session")
-	}
-	content, err := r.tmuxClient.CapturePane(session.TmuxSession, session.Window, session.Pane, 20)
-	if err != nil {
-		return false, fmt.Errorf("capturing pane: %w", err)
 	}
 	return isAiderIdle(content), nil
 }
@@ -249,8 +242,8 @@ func (r *Runtime) ParseTokenUsage(output string) (agent.TokenUsage, error) {
 	// Take the last match so late-run summaries win over earlier ones.
 	last := matches[len(matches)-1]
 
-	usage.InputTokens = parseTokenNum(last[1])
-	usage.OutputTokens = parseTokenNum(last[2])
+	usage.InputTokens = runtimeutil.ParseTokenNum(last[1])
+	usage.OutputTokens = runtimeutil.ParseTokenNum(last[2])
 
 	// Group 3 (cost) is optional.
 	if len(last) >= 4 && last[3] != "" {
@@ -325,14 +318,6 @@ var aiderTokensRe = regexp.MustCompile(
 	`(?i)tokens:\s*([\d,]+)\s*sent,\s*([\d,]+)\s*received(?:,\s*\$([0-9]+\.?[0-9]*)\s*cost)?`,
 )
 
-// parseTokenNum strips grouping separators and parses a base-10 integer.
-func parseTokenNum(s string) int {
-	s = strings.ReplaceAll(s, ",", "")
-	s = strings.ReplaceAll(s, "_", "")
-	val, _ := strconv.Atoi(s)
-	return val
-}
-
 // buildCLICommand produces the full "aider <flags>" invocation.
 //
 // Always-on flags:
@@ -360,27 +345,17 @@ func buildCLICommand(cfg agent.SpawnConfig, systemPromptFile string) string {
 	parts = append(parts, "--no-auto-commits", "--yes")
 
 	if systemPromptFile != "" {
-		parts = append(parts, "--message-file", systemPromptFile)
+		parts = append(parts, "--message-file", runtimeutil.ShellEscape(systemPromptFile))
 	}
 
+	// cfg.ExtraCLIArgs is a trusted config value (sourced from SkillProfile /
+	// tier YAML, never from user input). It is appended verbatim without
+	// shell escaping so callers can pass pre-formed flag strings.
 	if cfg.ExtraCLIArgs != "" {
 		parts = append(parts, cfg.ExtraCLIArgs)
 	}
 
 	return strings.Join(parts, " ")
-}
-
-// promptRenderDelay returns how long to wait after SendLiteralKeys before
-// pressing Enter. Scales with prompt length: 1s base + 500ms per 2000 chars,
-// capped at 5s. Matches internal/worker/spawner.go and sibling runtimes.
-func promptRenderDelay(promptLen int) time.Duration {
-	base := 1 * time.Second
-	extra := time.Duration(promptLen/2000) * 500 * time.Millisecond
-	total := base + extra
-	if total > 5*time.Second {
-		total = 5 * time.Second
-	}
-	return total
 }
 
 // isAiderReady reports whether the captured pane content indicates the aider
@@ -423,21 +398,3 @@ func isAiderIdle(content string) bool {
 	return false
 }
 
-// shellEscape wraps s in single quotes and escapes any embedded single quote
-// by closing the quoted section, emitting a backslash-escaped quote, and
-// reopening. Matches the helper used by internal/worker/spawner.go and
-// sibling runtimes.
-func shellEscape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-// newSessionName builds a unique tmux session identifier of the form
-// "aider-<unix-nanos>-<hex4>". The random suffix guards against collisions
-// when two spawns happen in the same nanosecond.
-func newSessionName() (string, error) {
-	var buf [4]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("aider-%d-%s", time.Now().UnixNano(), hex.EncodeToString(buf[:])), nil
-}

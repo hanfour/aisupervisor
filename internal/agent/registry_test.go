@@ -31,7 +31,7 @@ func (f *fakeRuntime) DetectReady(ctx context.Context, session *AgentSession, ti
 	return nil
 }
 
-func (f *fakeRuntime) DetectCompletion(ctx context.Context, session *AgentSession) (bool, error) {
+func (f *fakeRuntime) DetectCompletion(ctx context.Context, session *AgentSession, content string) (bool, error) {
 	return false, nil
 }
 
@@ -40,6 +40,8 @@ func (f *fakeRuntime) ParseTokenUsage(output string) (TokenUsage, error) {
 }
 
 func (f *fakeRuntime) Cleanup(session *AgentSession) error { return nil }
+
+func (f *fakeRuntime) MonitoredSessionType() string { return "fake" }
 
 func TestRuntimeRegistry_RegisterAndGet(t *testing.T) {
 	reg := NewRuntimeRegistry()

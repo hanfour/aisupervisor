@@ -29,13 +29,26 @@ type AgentRuntime interface {
 
 	// DetectCompletion reports whether the agent has finished its current
 	// turn (idle prompt restored) and is awaiting new input.
-	DetectCompletion(ctx context.Context, session *AgentSession) (bool, error)
+	//
+	// content is the most-recently-captured pane output; runtimes should
+	// inspect it as a pure function rather than issuing their own capture,
+	// so callers that already capture in their poll loop avoid a duplicate
+	// tmux round-trip. Runtimes that genuinely need fresh output may still
+	// ignore content and call CaptureOutput internally, but the common case
+	// is to treat DetectCompletion as pure.
+	DetectCompletion(ctx context.Context, session *AgentSession, content string) (bool, error)
 
 	// ParseTokenUsage extracts token/cost telemetry from raw pane output.
 	ParseTokenUsage(output string) (TokenUsage, error)
 
 	// Cleanup tears down any runtime-owned resources attached to the session.
 	Cleanup(session *AgentSession) error
+
+	// MonitoredSessionType returns the tool-type identifier used by the
+	// supervisor's MonitoredSession (e.g. "claude_code", "ais_agent", "aider").
+	// Kept adjacent to the plugin that defines it so callers never have to
+	// maintain a central switch over Name().
+	MonitoredSessionType() string
 }
 
 // SpawnConfig carries all parameters needed to launch an agent session.

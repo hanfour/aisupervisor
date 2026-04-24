@@ -103,12 +103,21 @@ func TestAiderRuntime_BuildCLICommand_EmptyConfig(t *testing.T) {
 }
 
 // TestAiderRuntime_BuildCLICommand_MessageFile verifies that a non-empty
-// systemPromptFile path is forwarded as --message-file <path>.
+// systemPromptFile path is forwarded as --message-file <shell-escaped-path>.
+// The path is shell-escaped so TMPDIR values containing spaces don't break
+// the CLI invocation.
 func TestAiderRuntime_BuildCLICommand_MessageFile(t *testing.T) {
 	cfg := agent.SpawnConfig{Model: "gpt-4o"}
+
+	// Paths are always single-quoted by shellEscape so spaces are safe.
 	cmd := buildCLICommand(cfg, "/tmp/aider-prompt-abc123.md")
-	if !strings.Contains(cmd, "--message-file /tmp/aider-prompt-abc123.md") {
-		t.Errorf("buildCLICommand: expected --message-file flag, got %q", cmd)
+	if !strings.Contains(cmd, "--message-file '/tmp/aider-prompt-abc123.md'") {
+		t.Errorf("buildCLICommand clean path: expected quoted --message-file flag, got %q", cmd)
+	}
+
+	cmd = buildCLICommand(cfg, "/var/folders/abc xyz/aider-prompt.md")
+	if !strings.Contains(cmd, "--message-file '/var/folders/abc xyz/aider-prompt.md'") {
+		t.Errorf("buildCLICommand spaced path: expected quoted --message-file, got %q", cmd)
 	}
 }
 
@@ -363,41 +372,5 @@ func TestAiderRuntime_CleanupSendsExit(t *testing.T) {
 	}
 }
 
-// TestAiderRuntime_PromptRenderDelay verifies the delay-scaling formula matches
-// the siblings (claudecode, aisagent).
-func TestAiderRuntime_PromptRenderDelay(t *testing.T) {
-	tests := []struct {
-		promptLen int
-		want      time.Duration
-	}{
-		{0, 1 * time.Second},
-		{1999, 1 * time.Second},
-		{2000, 1500 * time.Millisecond},
-		{4000, 2 * time.Second},
-		{100000, 5 * time.Second},
-	}
-	for _, tc := range tests {
-		if got := promptRenderDelay(tc.promptLen); got != tc.want {
-			t.Errorf("promptRenderDelay(%d) = %v, want %v", tc.promptLen, got, tc.want)
-		}
-	}
-}
-
-// TestAiderRuntime_ShellEscape verifies the shellEscape helper matches the
-// sibling convention (single-quote wrap, escape embedded quotes).
-func TestAiderRuntime_ShellEscape(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{"simple", "'simple'"},
-		{"with spaces", "'with spaces'"},
-		{"don't", `'don'\''t'`},
-		{"", "''"},
-	}
-	for _, tc := range tests {
-		if got := shellEscape(tc.in); got != tc.want {
-			t.Errorf("shellEscape(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
+// PromptRenderDelay and ShellEscape are now shared helpers in
+// internal/agent/runtimeutil/ and tested there.

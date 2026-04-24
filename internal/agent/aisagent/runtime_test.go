@@ -3,7 +3,6 @@ package aisagent
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/agent"
 )
@@ -298,41 +297,5 @@ func TestAISAgentRuntime_ParseTokenUsage(t *testing.T) {
 	})
 }
 
-// TestAISAgentRuntime_PromptRenderDelay verifies the delay-scaling formula
-// matches the claudecode implementation.
-func TestAISAgentRuntime_PromptRenderDelay(t *testing.T) {
-	tests := []struct {
-		promptLen int
-		want      time.Duration
-	}{
-		{0, 1 * time.Second},
-		{1999, 1 * time.Second},
-		{2000, 1500 * time.Millisecond},
-		{4000, 2 * time.Second},
-		{100000, 5 * time.Second},
-	}
-	for _, tc := range tests {
-		if got := promptRenderDelay(tc.promptLen); got != tc.want {
-			t.Errorf("promptRenderDelay(%d) = %v, want %v", tc.promptLen, got, tc.want)
-		}
-	}
-}
-
-// TestAISAgentRuntime_ShellEscape verifies the shellEscape helper matches the
-// existing spawner.go convention (single-quote wrap, escape embedded quotes).
-func TestAISAgentRuntime_ShellEscape(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{"simple", "'simple'"},
-		{"with spaces", "'with spaces'"},
-		{"don't", `'don'\''t'`},
-		{"", "''"},
-	}
-	for _, tc := range tests {
-		if got := shellEscape(tc.in); got != tc.want {
-			t.Errorf("shellEscape(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
+// PromptRenderDelay and ShellEscape are now shared helpers in
+// internal/agent/runtimeutil/ and tested there.

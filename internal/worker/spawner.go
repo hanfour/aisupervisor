@@ -1392,10 +1392,16 @@ func (s *Spawner) resolveDeps(t *project.Task) []depContext {
 }
 
 // resolveRuntimeName picks which runtime plugin to use for a worker.
-// Priority (highest wins): tier CLITool → growth config CLITool → worker CLITool → "claude".
 //
-// This mirrors the precedence already baked into resolveCLI so that the legacy
-// and plugin paths agree on which CLI would be used.
+// Resolution order — applied in sequence, each overwriting the previous
+// so the LAST matching source wins:
+//   1. Seed: "claude"
+//   2. w.CLITool (if non-empty)
+//   3. Growth config from w.SkillTree (if set and non-empty)
+//   4. Tier config (if found and non-empty)
+//
+// Effective precedence (highest first): tier > growth > worker > default.
+// This mirrors resolveCLI so legacy and plugin paths agree on CLI choice.
 func (s *Spawner) resolveRuntimeName(w *Worker) string {
 	name := "claude"
 	if w != nil && w.CLITool != "" {
@@ -1535,9 +1541,14 @@ func (s *Spawner) spawnViaRuntime(
 	// runtimes only `cd $WorkDir`, so we must check out the branch here before
 	// the runtime spawns — otherwise code tasks run on whatever branch happens
 	// to be checked out in RepoPath.
-	if !s.useWorktrees && !isNonCodeTask && t.BranchName != "" && s.gitOps != nil {
-		if err := s.gitOps.Checkout(p.RepoPath, t.BranchName); err != nil {
-			return fmt.Errorf("runtime %s checkout %s: %w", rt.Name(), t.BranchName, err)
+	if !s.useWorktrees && !isNonCodeTask && t.BranchName != "" {
+		if s.gitOps != nil {
+			if err := s.gitOps.Checkout(p.RepoPath, t.BranchName); err != nil {
+				return fmt.Errorf("runtime %s checkout %s: %w", rt.Name(), t.BranchName, err)
+			}
+		} else {
+			log.Printf("WARNING: spawnViaRuntime[%s] no gitOps configured — worker will run on current branch of %s, not %s",
+				rt.Name(), p.RepoPath, t.BranchName)
 		}
 	}
 
@@ -1591,13 +1602,12 @@ func (s *Spawner) spawnViaRuntime(
 	w.Status = WorkerWorking
 	w.CurrentTaskID = t.ID
 
-	// MonitoredSession setup (same as legacy).
-	toolType := "claude_code"
-	switch rt.Name() {
-	case "aider":
-		toolType = "aider"
-	case "ais-agent":
-		toolType = "ais_agent"
+	// MonitoredSession setup: runtime owns its own tool-type tag so the
+	// mapping lives next to the plugin, not in a central switch that drifts
+	// as new plugins land.
+	toolType := rt.MonitoredSessionType()
+	if toolType == "" {
+		toolType = "claude_code"
 	}
 	ms := &session.MonitoredSession{
 		ID:          fmt.Sprintf("worker-%s", w.ID),

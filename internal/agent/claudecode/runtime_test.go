@@ -147,6 +147,14 @@ func TestClaudeCodeRuntime_ParseReadyIndicators(t *testing.T) {
 		{"progress spinner", "⠋ Thinking...\n⠙ Thinking..."},
 		{"shell only", "user@host:~$"},
 		{"help without keyword", "i am here to assist"},
+		// M3 regression: a "> " prefix earlier in the buffer (e.g. a quoted
+		// response from a previous turn in scrollback) must NOT fire ready
+		// when the actual last non-empty line is something else — the CLI is
+		// still busy. Matches the stricter isClaudeIdle semantics.
+		{"gt prompt earlier, busy text last", ">\nstill thinking..."},
+		{"gt+text earlier, busy text last", "> quoted reply from last turn\nprocessing..."},
+		{"caret earlier, busy text last", "❯\nwriting response..."},
+		{"caret+text earlier, busy text last", "❯ partial\nmore work to do"},
 	}
 	for _, tc := range notReadyCases {
 		t.Run("notready/"+tc.name, func(t *testing.T) {

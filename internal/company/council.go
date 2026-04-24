@@ -537,9 +537,11 @@ func (c *CouncilEngine) spawnExpertViaRuntime(
 		}
 	}()
 
-	readyCtx, readyCancel := context.WithTimeout(ctx, 90*time.Second)
-	defer readyCancel()
-	if err := rt.DetectReady(readyCtx, session, 90*time.Second); err != nil {
+	// rt.DetectReady takes its own timeout argument and uses time.After
+	// internally, so an outer context.WithTimeout would just duplicate the
+	// 90 s deadline. Pass the caller's ctx unchanged and rely on the
+	// timeout arg.
+	if err := rt.DetectReady(ctx, session, 90*time.Second); err != nil {
 		return nil, fmt.Errorf("expert runtime ready: %w", err)
 	}
 
@@ -578,6 +580,7 @@ func (c *CouncilEngine) waitForRuntimeCompletion(
 	lastContent := ""
 	unchangedCount := 0
 	stableIdleCount := 0
+	detectErrLogged := false // one-shot gate so a broken runtime logs once, not every tick
 	for {
 		select {
 		case <-ctx.Done():
@@ -587,7 +590,12 @@ func (c *CouncilEngine) waitForRuntimeCompletion(
 			if err != nil {
 				continue
 			}
-			if done, derr := rt.DetectCompletion(ctx, session, content); derr == nil && done {
+			done, derr := rt.DetectCompletion(ctx, session, content)
+			if derr != nil && !detectErrLogged {
+				log.Printf("council: DetectCompletion error (falling back to no-change heuristic): %v", derr)
+				detectErrLogged = true
+			}
+			if derr == nil && done {
 				stableIdleCount++
 				if stableIdleCount >= 2 {
 					return nil

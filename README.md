@@ -20,13 +20,17 @@ You are the boss. You hire workers, assign tasks, and they autonomously write co
 
 - **Guided Onboarding** — A conversational setup wizard helps you build your first AI team, complete with an HR specialist who recommends the right roles
 - **Worker Management** — Hire AI workers with different skill profiles (coder, architect, QA, security, devops, designer, analyst, reviewer) and tiers (engineer, manager, consultant)
-- **Task Pipeline** — Assign coding/research tasks to workers; each task gets its own git branch for isolation
+- **Task Pipeline** — Assign coding/research tasks to workers; each task gets its own git branch (optionally isolated in a git worktree) for safe parallel work
 - **Automated Code Review** — Completed tasks are automatically routed to a reviewer worker; approved code gets merged
+- **Carmack-Council Review** — Multi-expert review pipeline: parallel domain experts (security, performance, testing, frontend, backend, …) produce findings, a Carmack filter suppresses noise, and a unified verdict is surfaced for the reviewer to act on
+- **Inter-Worker Communication** — Workers message each other via a persistent mailbox (YAML-backed), with synchronous ASK/REPLY for blocking questions that must be answered before work resumes
+- **Structured Meetings** — Built-in Review / Planning / Debug meeting scenarios orchestrate multi-participant conversations, capturing minutes and action items
+- **Pluggable Agent Backends** — Spawn workers with Claude Code CLI, `ais-agent`, or Aider via a unified `AgentRuntime` plugin interface; swap backends per worker without touching the spawner
 - **Company Hierarchy** — Organize workers into teams with managers and consultants overseeing engineers
 - **Personality System** — Each worker has unique personality traits, skill scores, moods, and relationships that evolve over time
 - **AI-Generated Narratives** — Generate backstories and personality descriptions for your workers using AI
 - **Training Loop** — Agentic training pipeline for autonomous code iteration and model fine-tuning
-- **Multi-Backend Support** — Works with Claude Code CLI, Anthropic API, OpenAI, Ollama, and Google Gemini
+- **Multi-Backend Chat Providers** — Narrator, HR, and council use Anthropic API, Claude Code CLI, OpenAI, Ollama, or Google Gemini interchangeably
 - **Pixel Office** — A virtual office view where you can see your workers at their desks
 - **Bilingual UI** — Full support for English and 繁體中文 (Traditional Chinese)
 
@@ -57,11 +61,12 @@ You (the Boss)
   ├── Break it into Tasks (code, research, review)
   └── AI Workers pick up tasks autonomously
         │
-        ├── Each worker runs Claude Code CLI in a tmux pane
-        ├── Creates a git branch per task
+        ├── Each worker runs an agent runtime (Claude Code / ais-agent / Aider) in a tmux pane
+        ├── Creates a git branch per task (and optionally a git worktree for isolation)
         ├── Writes code, runs tests
-        ├── Submits for code review (another AI worker reviews)
-        └── Approved → merged; Rejected → iterate
+        ├── Asks teammates via ASK/REPLY when blocked
+        ├── Submits for code review (reviewer worker + optional Carmack-Council)
+        └── Approved → merged; Rejected → iterate with reviewer feedback
 ```
 
 ### Tech Stack
@@ -70,7 +75,9 @@ You (the Boss)
 |-------|-----------|
 | Backend | Go 1.23+, Wails v2 |
 | Frontend | Svelte + Vite, NES.css (retro pixel theme) |
-| AI Workers | Claude Code CLI in tmux sessions |
+| AI Workers | Agent runtimes (Claude Code CLI / ais-agent / Aider) in tmux sessions |
+| Multi-Expert Review | Carmack-Council pipeline (parallel experts + Carmack filter) |
+| Inter-Worker Messaging | Mailbox (YAML) + synchronous ASK/REPLY |
 | Data Storage | YAML files (`~/.local/share/aisupervisor/company/`) |
 | Configuration | `~/.config/aisupervisor/config.yaml` |
 
@@ -121,20 +128,47 @@ cmd/
   aisupervisor-gui/   # Wails v2 GUI entry point
   aisupervisor/       # TUI entry point (terminal mode)
 internal/
-  ai/                 # AI backend abstraction (anthropic, openai, ollama, gemini)
-  company/            # Core business logic — task management, review pipeline
+  agent/              # AgentRuntime plugin system: interface + registry
+    runtimeutil/      # Shared helpers (shellEscape, token parsing, session naming)
+    claudecode/       # Claude Code CLI runtime
+    aisagent/         # ais-agent runtime
+    aider/            # Aider runtime
+  ai/                 # Chat provider abstraction (anthropic, openai, ollama, gemini, claudecli)
+  company/            # Core business logic — task management, review pipeline, meetings, council, mailbox
   config/             # App config + skill profiles
+  gitops/             # Git branch/worktree operations for task isolation
   gui/                # Wails bindings (Go ↔ Svelte bridge)
+  knowledge/          # Code graph, convention store, knowledge injection
+  messaging/          # Inter-worker messaging primitives
   personality/        # Worker personality traits, skill scores, narratives
   project/            # Project & Task data models
+  supervisor/         # Pane monitoring, activity observation
+  tmux/               # tmux client (exec-based) for managing AI sessions
   worker/             # Worker spawner, monitor, session management
-  tmux/               # tmux client for managing AI sessions
 frontend/
   src/lib/
     components/       # Svelte UI components
     office/           # Pixel office simulation
     pages/            # Route pages
     stores/           # Svelte stores + i18n
+```
+
+#### AgentRuntime plugin contract
+
+```
+AgentRuntime interface
+  ├── Name() / MonitoredSessionType()
+  ├── Spawn(ctx, SpawnConfig) → *AgentSession
+  ├── DetectReady(ctx, session, timeout)      // wait for CLI prompt
+  ├── SendPrompt(session, prompt)             // deliver user input
+  ├── CaptureOutput(session, lines)           // read pane buffer
+  ├── DetectCompletion(ctx, session, content) // pure check over captured content
+  ├── ParseTokenUsage(output) → TokenUsage
+  └── Cleanup(session)                        // tear down tmux session
+
+RuntimeRegistry (thread-safe, insertion-order-preserving)
+  └── Manager.New() registers claude, ais-agent, aider plugins
+     └── Spawner / CompletionMonitor / CouncilEngine / MeetingEngine all consult it
 ```
 
 ### Documentation
@@ -159,13 +193,17 @@ AI Supervisor 是一個 **Wails v2 桌面應用程式**（Go + Svelte），將 A
 
 - **引導式入職** — 對話式設定精靈幫你建立第一支 AI 團隊，配備 HR 專員推薦適合的角色
 - **員工管理** — 招募不同技能配置的 AI 員工（工程師、架構師、QA、安全、DevOps、設計師、分析師、審查員）和層級（工程師、管理者、顧問）
-- **任務流水線** — 為員工分配程式/研究任務；每個任務都有獨立的 git 分支
+- **任務流水線** — 為員工分配程式/研究任務；每個任務都有獨立的 git 分支（可選 git worktree 隔離），支援安全的並行作業
 - **自動程式碼審查** — 完成的任務自動轉給審查員；通過的程式碼自動合併
+- **Carmack-Council 多專家審查** — 並行領域專家（安全、效能、測試、前端、後端…）各自提出 findings，經 Carmack filter 去蕪存菁，最終合併出一致 verdict
+- **員工間通訊** — 員工透過持久化 mailbox（YAML）互相留言；支援同步 ASK/REPLY，工作中可阻塞等待回應後再繼續
+- **結構化會議** — 內建 Review / Planning / Debug 三種會議場景，協調多方對話並自動生成會議紀錄與行動項目
+- **可插拔 Agent 後端** — 透過統一的 `AgentRuntime` plugin interface 支援 Claude Code CLI、`ais-agent`、Aider；可按員工切換後端，無需修改 spawner
 - **公司層級** — 將員工組織成團隊，管理者和顧問監督工程師
 - **性格系統** — 每位員工都有獨特的性格特質、技能分數、心情和人際關係，會隨時間演變
 - **AI 生成敘事** — 使用 AI 為員工生成背景故事和性格描述
 - **訓練迴圈** — 自主訓練管線，用於程式碼迭代和模型微調
-- **多後端支援** — 支援 Claude Code CLI、Anthropic API、OpenAI、Ollama 和 Google Gemini
+- **多後端 Chat Provider** — Narrator / HR / Council 皆可選 Anthropic API、Claude Code CLI、OpenAI、Ollama 或 Google Gemini
 - **像素辦公室** — 虛擬辦公室視圖，看到你的員工在桌前工作
 - **雙語介面** — 完整支援 English 和繁體中文
 
@@ -178,11 +216,12 @@ AI Supervisor 是一個 **Wails v2 桌面應用程式**（Go + Svelte），將 A
   ├── 拆分為任務（程式、研究、審查）
   └── AI 員工自主領取任務
         │
-        ├── 每位員工在 tmux pane 中運行 Claude Code CLI
-        ├── 為每個任務建立 git 分支
+        ├── 每位員工在 tmux pane 中運行 agent runtime（Claude Code / ais-agent / Aider）
+        ├── 為每個任務建立 git 分支（可選 git worktree 隔離）
         ├── 撰寫程式碼、執行測試
-        ├── 提交給另一位 AI 員工進行程式碼審查
-        └── 通過 → 合併；退回 → 迭代修正
+        ├── 卡關時透過 ASK/REPLY 向同事發問
+        ├── 提交程式碼審查（審查員 + 可選的 Carmack-Council 多專家）
+        └── 通過 → 合併；退回 → 依審查回饋迭代
 ```
 
 ### 技術架構
@@ -191,7 +230,9 @@ AI Supervisor 是一個 **Wails v2 桌面應用程式**（Go + Svelte），將 A
 |------|------|
 | 後端 | Go 1.23+, Wails v2 |
 | 前端 | Svelte + Vite, NES.css（復古像素主題）|
-| AI 員工 | Claude Code CLI（tmux sessions）|
+| AI 員工 | Agent runtimes（Claude Code CLI / ais-agent / Aider）於 tmux sessions 中執行 |
+| 多專家審查 | Carmack-Council pipeline（parallel experts + Carmack filter）|
+| 員工通訊 | Mailbox（YAML）+ 同步 ASK/REPLY |
 | 資料儲存 | YAML 檔案（`~/.local/share/aisupervisor/company/`）|
 | 設定檔 | `~/.config/aisupervisor/config.yaml` |
 

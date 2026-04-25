@@ -20,6 +20,13 @@ type paneSnapshot struct {
 	since   time.Time
 }
 
+// stuckThreshold is how long a worker's tmux pane content must be
+// unchanged before HEALTH's runHealthCycle escalates to autoRecoverStuck
+// (Enter → Enter → kill). Generous because claude tasks legitimately
+// keep the pane visually static for long stretches during LLM
+// roundtrips. Exposed as a package-level var so tests can override it.
+var stuckThreshold = 30 * time.Minute
+
 // HealthReport summarises what the startup health check found and fixed.
 type HealthReport struct {
 	StaleWorkersReset  int      `json:"staleWorkersReset"`
@@ -196,6 +203,21 @@ func (m *Manager) runHealthCycle() {
 			continue
 		}
 
+		// Skip stuck-detect for workers actively monitored by
+		// monitor.WatchForCompletion (tracked via m.cancels). The monitor
+		// owns its own stuckness signal — `Reason: "no_change"` after a
+		// model-tuned threshold (60-180s) — and additionally understands
+		// runtime-specific idle layouts (claude v2+ status bar, etc.).
+		// HEALTH's cruder "pane unchanged" heuristic was racing the
+		// monitor and prematurely killing claude sessions during long
+		// generations (LLM API roundtrips can leave the pane visually
+		// stable for 60+s while real work is in flight). Leave HEALTH
+		// in charge only for workers that don't have an active monitor
+		// (legacy / recovery / orphan reset paths still use this loop).
+		if _, monitored := m.cancels[w.ID]; monitored {
+			continue
+		}
+
 		// Capture pane content and check for stalled output
 		content, err := m.tmuxClient.CapturePane(w.TmuxSession, 0, 0, 20)
 		if err != nil {
@@ -209,8 +231,13 @@ func (m *Manager) runHealthCycle() {
 			if w.RecoveryAttempts > 0 {
 				w.RecoveryAttempts = 0
 			}
-		} else if time.Since(prev.since) > 5*time.Minute {
-			// Content unchanged for 5+ minutes — attempt auto-recovery
+		} else if time.Since(prev.since) > stuckThreshold {
+			// Content unchanged for stuckThreshold — attempt auto-recovery.
+			// stuckThreshold is generous (30 min default) because
+			// claude tasks legitimately spend long stretches with the
+			// pane visually static (long LLM responses, file reads).
+			// This is a SAFETY NET for un-monitored workers; the
+			// primary completion path is monitor.WatchForCompletion.
 			m.autoRecoverStuck(w, content)
 			// Reset the timer so we don't spam every 60s
 			m.lastPaneContent[w.ID] = paneSnapshot{content: content, since: time.Now()}

@@ -197,6 +197,20 @@ func TestClaudeCodeRuntime_ParseCompletionIndicators(t *testing.T) {
 		{"caret with trailing space", "❯ "},
 		{"multiline ending in caret", "thinking...\ndone.\n❯"},
 		{"multiline ending in caret with trailing blank lines", "task complete\n❯\n\n\n"},
+		// Real Claude Code v2.1.119 idle layout: status bar sits BELOW the
+		// prompt, so the last non-empty line is the status bar text — not ❯.
+		// PR #19 fixed this for ready detection; idle detection has the same
+		// pane shape and must follow.
+		{"v2+ idle prompt above status bar", strings.Join([]string{
+			"some output",
+			"",
+			"────────────────────────────────",
+			"❯ ",
+			"────────────────────────────────",
+			"  ⏵⏵ bypass permissions on (shift+tab to cycle)   ● high · /effort",
+		}, "\n")},
+		{"v2+ idle no banner only prompt + status",
+			"────────────\n❯\n────────────\n  ⏵⏵ bypass permissions on\n"},
 	}
 	for _, tc := range idleCases {
 		t.Run("idle/"+tc.name, func(t *testing.T) {
@@ -211,9 +225,15 @@ func TestClaudeCodeRuntime_ParseCompletionIndicators(t *testing.T) {
 		content string
 	}{
 		{"empty", ""},
+		// Strict bare-prompt match means "❯" with user-typed text is NOT idle —
+		// the user is composing input, not waiting.
 		{"caret with user input on same line", "❯ run the tests"},
-		{"caret earlier in content, text after", "❯\nstill thinking"},
-		{"gt earlier in content, text after", ">\nresponse in progress"},
+		// During real claude generation the prompt area is replaced by
+		// progress indicators; bare ❯ is pushed past the trailing window.
+		{"prompt deep in scrollback, generating",
+			"❯\nfetching files\nrunning grep\nwriting changes\napplying patch\n✻ Crunched for 2m"},
+		{"gt prompt deep in scrollback",
+			">\nold log line\nmore log\nmore work\nstill more\n✻ Generating..."},
 		{"random shell prompt", "user@host:~$"},
 		{"progress spinner as last line", "⠋ Thinking..."},
 	}

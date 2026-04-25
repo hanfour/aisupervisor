@@ -372,17 +372,38 @@ func isClaudeReady(content string) bool {
 	return false
 }
 
-// isClaudeIdle reports whether the LAST non-empty line of content is a bare
-// Claude Code idle prompt. This avoids false positives when "❯" appears
-// earlier in the pane buffer followed by user-entered text.
+// idleScanLines is the trailing-pane window size for idle detection.
+// Claude Code v2+ renders the idle prompt with a status bar (⏵⏵ bypass
+// permissions, /effort) one to two lines BELOW ❯, so the last non-empty
+// line is the status bar — not the prompt. 5 covers the longest
+// observed idle layout (separator / ❯ / separator / status bar).
+const idleScanLines = 5
+
+// isClaudeIdle reports whether the captured pane content shows a bare
+// Claude Code idle prompt anywhere in the trailing idleScanLines lines.
+//
+// Compared to isClaudeReady, the match here is STRICT — only a bare
+// prompt (">", "> ", "❯", "❯ ") counts. "❯ user text" means the user is
+// composing input, not idle, so prefix matches are NOT accepted.
+//
+// Limiting the scan to a small trailing window prevents false positives
+// from a previous turn's prompt sitting deep in scrollback while claude
+// is busy generating: under real Claude Code v2+ behaviour the prompt
+// area is replaced by progress indicators ("✻ Crunched for 6m 27s") when
+// busy, so a bare ❯ in the last 5 lines is a strong signal that the CLI
+// has actually returned to idle.
 func isClaudeIdle(content string) bool {
 	lines := strings.Split(content, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
+	start := len(lines) - idleScanLines
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" {
-			continue
+		if trimmed == ">" || trimmed == "> " ||
+			trimmed == "❯" || trimmed == "❯ " {
+			return true
 		}
-		return trimmed == ">" || trimmed == "> " || trimmed == "❯" || trimmed == "❯ "
 	}
 	return false
 }

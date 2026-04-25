@@ -305,6 +305,98 @@ func TestCompletionMonitor_RuntimeErrorFallsBackToLegacy(t *testing.T) {
 	}
 }
 
+// TestCompletionMonitor_TransientIdleDoesNotFire verifies the
+// idleStableMinPolls gate added in PR #22: a pane that flickers in and
+// out of the idle layout (e.g. claude renders ❯ briefly between
+// SendPrompt and starting to generate, then progress indicators replace
+// it) must NOT be treated as a completed turn.
+//
+// The fixture interleaves "idle-shaped" frames with progress frames so
+// noChangeCount can never accumulate to 5 — the test is satisfied by the
+// monitor failing to fire idle within the bounded ctx, which we surface
+// as ctx.DeadlineExceeded.
+func TestCompletionMonitor_TransientIdleDoesNotFire(t *testing.T) {
+	defer withShortGrace(t, 10*time.Millisecond)()
+
+	tmuxC := &fakeTmuxClient{
+		contents: []string{
+			// First three entries satisfy changeCount >= 3.
+			"step 1\n",
+			"step 2\n",
+			"step 3\n",
+			// Then the pane bounces between idle-looking and busy-looking
+			// frames forever. Each tick the content is different from the
+			// previous, so noChangeCount stays at 0 — gating must hold.
+			"────────\n❯\n────────\n  status\n",
+			"✻ Crunched for 1m\n  status\n",
+			"────────\n❯\n────────\n  status\n",
+			"✻ Crunched for 2m\n  status\n",
+			"────────\n❯\n────────\n  status\n",
+			"✻ Crunched for 3m\n  status\n",
+			// After the slice is exhausted, fakeTmuxClient repeats the last
+			// entry forever — that's a busy frame, so still no idle.
+		},
+		sessionOK: true,
+	}
+	m := NewCompletionMonitor(tmuxC)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	w := &Worker{
+		TmuxSession:  "s",
+		Window:       0,
+		Pane:         0,
+		CLITool:      "claudecode",
+		ModelVersion: "sonnet",
+	}
+	_, err := m.WatchForCompletion(ctx, w)
+	if err == nil {
+		t.Fatal("expected ctx deadline (idle suppressed by stable-gate), got success")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+}
+
+// TestCompletionMonitor_StableIdleEventuallyFires verifies the gate
+// doesn't permanently block real idle: once content is stable for
+// idleStableMinPolls (~5s), idle_prompt fires.
+func TestCompletionMonitor_StableIdleEventuallyFires(t *testing.T) {
+	defer withShortGrace(t, 10*time.Millisecond)()
+
+	tmuxC := &fakeTmuxClient{
+		// 3 unique frames to satisfy changeCount, then a single idle frame
+		// repeated indefinitely. Once we tick onto that frame and stay there
+		// for 5 more ticks, idle fires.
+		contents: []string{
+			"step 1\n",
+			"step 2\n",
+			"step 3\n",
+			"────────\n❯\n────────\n  status bar text\n",
+		},
+		sessionOK: true,
+	}
+	m := NewCompletionMonitor(tmuxC)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	res, err := m.WatchForCompletion(ctx, &Worker{
+		TmuxSession:  "s",
+		Window:       0,
+		Pane:         0,
+		CLITool:      "claudecode",
+		ModelVersion: "sonnet",
+	})
+	if err != nil {
+		t.Fatalf("expected idle to fire eventually, got error: %v", err)
+	}
+	if res.Reason != "idle_prompt" {
+		t.Fatalf("expected Reason=idle_prompt, got %q", res.Reason)
+	}
+}
+
 // Sanity check that a nil runtime value in the registry is treated the same as
 // no registration (the Get-returned-nil branch in runtimeIdle).
 func TestCompletionMonitor_RuntimeIdle_NilRuntimeSafe(t *testing.T) {

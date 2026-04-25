@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -837,6 +838,14 @@ func (m *Manager) UpdateWorkerAppearance(workerID string, bodyRow int, outfit, h
 // --- Assignment + lifecycle ---
 
 func (m *Manager) AssignTask(ctx context.Context, workerID, taskID string) error {
+	// TEMP DEBUG (PR #25): log the call stack so we can identify the caller
+	// driving the post-PR-#24 re-spawn loop. Remove once the loop driver is
+	// found. See memory/project_midterm_progress.md for context.
+	{
+		buf := make([]byte, 4096)
+		n := runtime.Stack(buf, false)
+		log.Printf("[ASSIGN-TRACE] AssignTask w=%s t=%s\n%s", workerID, taskID, buf[:n])
+	}
 	m.mu.Lock()
 
 	w, ok := m.workers[workerID]

@@ -319,8 +319,27 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 				}
 			}
 
-			// Only trigger no_change after enough meaningful activity
-			if noChangeCount >= noChangeThreshold && hadActivity && changeCount >= minChanges {
+			// no_change is a long-tail safety net for the rare case where
+			// idle-shape detection (idle_prompt / runtime_idle) somehow
+			// missed a real completion. Now also requires the pane to be
+			// in a recognised idle shape — without this guard, claude's
+			// long LLM roundtrips during a turn (60-180 s of pane
+			// silence while the model is generating server-side) were
+			// mis-detected as "task complete" and re-spawned the worker.
+			//
+			// With idleShape required, no_change's threshold (60-180 s,
+			// model-tuned via noChangeThreshold) becomes strictly slower
+			// than idle_prompt's (idleStableMinPolls ≈ 8 s) for the same
+			// pane state — so in practice idle_prompt fires first and
+			// no_change is reachable only in pathological cases where
+			// idle_prompt was somehow blocked. Kept as defense-in-depth.
+			var idleShape bool
+			if useAider {
+				idleShape = isAiderIdle(content)
+			} else {
+				idleShape = isClaudeIdle(content)
+			}
+			if noChangeCount >= noChangeThreshold && hadActivity && changeCount >= minChanges && idleShape {
 				return CompletionResult{Success: true, Reason: "no_change"}, nil
 			}
 		}

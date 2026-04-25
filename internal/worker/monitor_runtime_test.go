@@ -305,6 +305,57 @@ func TestCompletionMonitor_RuntimeErrorFallsBackToLegacy(t *testing.T) {
 	}
 }
 
+// TestCompletionMonitor_NoChangeRequiresIdleShape verifies the gate
+// added in PR #24: the no_change exit must NOT fire when the pane is
+// stable for noChangeThreshold seconds but is NOT in an idle shape
+// (e.g. claude is mid-generation, pane shows progress text and stays
+// still during a long LLM roundtrip).
+//
+// Fixture: 3 unique frames to satisfy changeCount, then a single
+// progress-shape frame repeated forever. Without the idleShape guard,
+// no_change would fire after noChangeThreshold polls. With the guard,
+// it must NOT fire — only ctx timeout returns.
+//
+// We use haiku (noChangeThreshold = 60 polls) and a 70 s ctx so the
+// counter exceeds the threshold and the gate is exercised.
+func TestCompletionMonitor_NoChangeRequiresIdleShape(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: blocks on 70s ctx to exercise noChangeThreshold")
+	}
+	defer withShortGrace(t, 10*time.Millisecond)()
+
+	tmuxC := &fakeTmuxClient{
+		contents: []string{
+			"step 1\n",
+			"step 2\n",
+			"step 3\n",
+			// Repeats forever after slice exhausted: progress-shape (no
+			// bare prompt anywhere in last 5 lines), NOT an idle prompt.
+			"✻ Crunched for 30s\n  status bar\n",
+		},
+		sessionOK: true,
+	}
+	m := NewCompletionMonitor(tmuxC)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Second)
+	defer cancel()
+
+	w := &Worker{
+		TmuxSession:  "s",
+		Window:       0,
+		Pane:         0,
+		CLITool:      "claudecode",
+		ModelVersion: "haiku",
+	}
+	_, err := m.WatchForCompletion(ctx, w)
+	if err == nil {
+		t.Fatal("expected ctx deadline (no_change suppressed by idleShape gate), got success")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+}
+
 // TestCompletionMonitor_TransientIdleDoesNotFire verifies the
 // idleStableMinPolls gate added in PR #22: a pane that flickers in and
 // out of the idle layout (e.g. claude renders ❯ briefly between

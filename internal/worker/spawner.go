@@ -1567,14 +1567,38 @@ func (s *Spawner) spawnViaRuntime(
 
 // sanitizeForClaudeFallback returns a copy of cfg with fields cleared that
 // would have been runtime-specific to whatever non-claude plugin was tried
-// first. Most importantly, cfg.Model can carry a value like "llama3" or
-// "gpt-4o-mini" from ais-agent's growth config — claude rejects those and
-// will sit at an idle prompt printing "Run /model to pick a different
-// model" forever. Clearing Model lets claude pick its built-in default
-// (currently the latest sonnet variant).
+// first.
+//
+// Cleared fields:
+//   - Model — value like "llama3" or "gpt-4o-mini" from ais-agent's growth
+//     config makes claude idle forever printing "Run /model to pick a
+//     different model". Empty Model lets claude pick its built-in default
+//     (currently the latest sonnet variant).
+//   - ExtraCLIArgs — today this is SkillProfile-sourced (spawner.go
+//     buildSpawnConfig) and the bundled SkillProfiles are claude-shaped, so
+//     in practice it's safe. But the field is structurally a runtime-
+//     specific verbatim flag string ("--max-tokens 50000" for ais-agent
+//     would error claude), so clearing it on fallback is defensive: when
+//     claude is being used as a recovery substitute, we want the safest
+//     possible invocation, not whatever flags suited the failed runtime.
+//
+// Pass-through fields (intentionally NOT cleared because they're either
+// runtime-agnostic or claude ignores irrelevant entries):
+//   - PermissionMode, AllowedTools, DisallowedTools, SystemPrompt — runtime
+//     agnostic. Claude needs the same safety guarantees as the original.
+//   - EnvVars — claude reads no AIS_* keys; harmless leftovers stay.
+//   - WorkDir, Branch — same task target.
+//
+// The shallow copy via `out := cfg` shares the underlying AllowedTools /
+// DisallowedTools slices and EnvVars map with the input. The claude
+// runtime treats these as read-only (see claudecode/runtime.go
+// buildCLICommand), so callers can rely on the input cfg not being
+// mutated by sanitize-then-Spawn. Future runtime authors must keep this
+// read-only invariant.
 func sanitizeForClaudeFallback(cfg agent.SpawnConfig) agent.SpawnConfig {
 	out := cfg
 	out.Model = ""
+	out.ExtraCLIArgs = ""
 	return out
 }
 

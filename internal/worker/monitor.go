@@ -179,6 +179,15 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 	useAider := w.CLITool == "aider"
 	changeCount := 0              // total number of content changes observed
 	const minChanges = 3          // require at least 3 content changes before no_change can trigger
+	// idleStableMinPolls: pane content must be unchanged for this many
+	// consecutive polls (~N seconds at the 1s ticker) before idle fires.
+	// Avoids false-firing on the transient idle window between SendPrompt
+	// rendering in the pane and claude replacing it with progress
+	// indicators. Set to 8 (not 5) to give headroom for slow-starting
+	// turns (cold model load, slow network handshake) — the cost is ~3s
+	// extra on every real completion which is trivial relative to a
+	// typical generation turn.
+	const idleStableMinPolls = 8
 	captureErrors := 0            // consecutive CapturePane failures
 	const maxCaptureErrors = 30   // after 30 consecutive errors, check if session is dead
 	var lastAskSeen string        // tracks last ASK pattern to avoid re-triggering
@@ -267,11 +276,23 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 			lastContent = content
 
 			// Check for idle prompt based on CLI tool.
-			// Require changeCount >= minChanges to avoid triggering on the initial
-			// idle prompt before the worker has done any meaningful work.
-			// Also skip during grace period to avoid false completion when CLI
-			// briefly shows idle prompt between receiving and processing the prompt.
+			// Guards (all required to fire idle):
+			//   - changeCount >= minChanges: ensure meaningful activity happened
+			//   - pastGrace: avoid the early-window where CLI briefly shows the
+			//     idle prompt between receiving the prompt text and starting to
+			//     process it
+			//   - noChangeCount >= idleStableMinPolls: PANE CONTENT MUST BE
+			//     STABLE for the last N polls (default 5 = 5 seconds at the
+			//     1s ticker). After PR #21 loosened isClaudeIdle to scan the
+			//     last 5 lines for a bare prompt, the prompt is also visible
+			//     during the brief window between SendPrompt landing in the
+			//     pane and claude actually replacing it with progress
+			//     indicators — so a single-poll idle check would mis-fire on
+			//     transient idle. The stable-content check forces us to wait
+			//     until the prompt has been quiet for several seconds, which
+			//     is the real signal that claude has finished its turn.
 			pastGrace := time.Since(startTime) > grace
+			stable := noChangeCount >= idleStableMinPolls
 
 			// Prefer runtime-specific completion detection if a registry is wired
 			// and a matching runtime is registered for this worker's CLITool. Any
@@ -284,16 +305,16 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 				log.Printf("runtimeIdle[%s cli=%s] error (falling back to legacy detection): %v", w.TmuxSession, w.CLITool, derr)
 				runtimeErrLogged = true
 			}
-			if derr == nil && done && hadActivity && changeCount >= minChanges && pastGrace {
+			if derr == nil && done && hadActivity && changeCount >= minChanges && pastGrace && stable {
 				return CompletionResult{Success: true, Reason: "runtime_idle"}, nil
 			}
 
 			if useAider {
-				if isAiderIdle(content) && hadActivity && changeCount >= minChanges && pastGrace {
+				if isAiderIdle(content) && hadActivity && changeCount >= minChanges && pastGrace && stable {
 					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
 				}
 			} else {
-				if isClaudeIdle(content) && hadActivity && changeCount >= minChanges && pastGrace {
+				if isClaudeIdle(content) && hadActivity && changeCount >= minChanges && pastGrace && stable {
 					return CompletionResult{Success: true, Reason: "idle_prompt"}, nil
 				}
 			}

@@ -746,3 +746,83 @@ func TestSpawner_SpawnViaRuntime_FallbackSendPromptFailure(t *testing.T) {
 		}
 	}
 }
+
+// TestSpawner_SpawnViaRuntime_FallbackSanitizesModel verifies that when
+// fallback fires, the SpawnConfig delivered to the claude runtime has its
+// Model cleared. Without this, runtime-specific model names like "llama3"
+// (used by ais-agent's ollama provider) would be passed verbatim to
+// claude, which rejects them and sits at an idle prompt printing
+// "Run /model to pick a different model" forever — task never progresses.
+func TestSpawner_SpawnViaRuntime_FallbackSanitizesModel(t *testing.T) {
+	s := newTestSpawner()
+	// Worker requests "ais-agent" — its growth config seeds Model=llama3 via
+	// buildSpawnConfig. We simulate by registering a SkillProfile that pins
+	// the model so buildSpawnConfig produces a concrete Model.
+	s.skillProfiles["junior"] = config.SkillProfile{
+		ID:    "junior",
+		Model: "llama3",
+	}
+
+	failing := &fakeRuntime{name: "ais-agent", readyErr: errors.New("timeout")}
+	good := &fakeRuntime{name: "claude"}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	reg.Register(good)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-sm", Name: "Sanitize", Tier: TierEngineer, CLITool: "ais-agent", SkillProfile: "junior"}
+	tk := &project.Task{ID: "t-sm", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	if err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd"); err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+
+	// ais-agent saw the original model.
+	if failing.spawnCfg.Model != "llama3" {
+		t.Errorf("ais-agent SpawnConfig.Model = %q, want %q (sanity: original model preserved on first runtime)",
+			failing.spawnCfg.Model, "llama3")
+	}
+	// claude (fallback) MUST receive Model=="" so its built-in default applies.
+	if good.spawnCfg.Model != "" {
+		t.Errorf("claude fallback SpawnConfig.Model = %q, want \"\" (sanitization missed)",
+			good.spawnCfg.Model)
+	}
+}
+
+// TestSanitizeForClaudeFallback_PureUnit covers the helper directly so a
+// future refactor that adds more sanitized fields fails this test rather
+// than hiding a regression behind the spawnViaRuntime mock plumbing.
+func TestSanitizeForClaudeFallback_PureUnit(t *testing.T) {
+	in := agent.SpawnConfig{
+		WorkDir:         "/tmp/wd",
+		Branch:          "feat/x",
+		Model:           "llama3",
+		PermissionMode:  "bypassPermissions",
+		AllowedTools:    []string{"Read", "Glob"},
+		DisallowedTools: []string{"Edit"},
+		SystemPrompt:    "you are helpful",
+		ExtraCLIArgs:    "--max-tokens 50000",
+		EnvVars:         map[string]string{"AIS_PROVIDER": "ollama"},
+	}
+	out := sanitizeForClaudeFallback(in)
+
+	if out.Model != "" {
+		t.Errorf("Model = %q, want \"\"", out.Model)
+	}
+	// All other fields should pass through unchanged so claude inherits the
+	// worker's permission mode, tools, system prompt etc.
+	if out.WorkDir != in.WorkDir || out.Branch != in.Branch ||
+		out.PermissionMode != in.PermissionMode ||
+		out.SystemPrompt != in.SystemPrompt ||
+		out.ExtraCLIArgs != in.ExtraCLIArgs {
+		t.Errorf("scalar fields diverged: in=%+v out=%+v", in, out)
+	}
+	if len(out.AllowedTools) != len(in.AllowedTools) || len(out.DisallowedTools) != len(in.DisallowedTools) {
+		t.Errorf("tool slices changed shape")
+	}
+	// In is unchanged (sanitize returns a copy, doesn't mutate).
+	if in.Model != "llama3" {
+		t.Errorf("input was mutated: in.Model = %q", in.Model)
+	}
+}

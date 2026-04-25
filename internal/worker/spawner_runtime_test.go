@@ -746,3 +746,134 @@ func TestSpawner_SpawnViaRuntime_FallbackSendPromptFailure(t *testing.T) {
 		}
 	}
 }
+
+// TestSpawner_SpawnViaRuntime_FallbackSanitizesModel verifies that when
+// fallback fires, the SpawnConfig delivered to the claude runtime has its
+// Model + ExtraCLIArgs cleared (the two runtime-specific fields), while
+// other safety/policy fields (PermissionMode, AllowedTools,
+// DisallowedTools, SystemPrompt) pass through to claude unchanged.
+//
+// Without sanitization, runtime-specific model names like "llama3" (used
+// by ais-agent's ollama provider) would be passed verbatim to claude,
+// which rejects them and sits at an idle prompt printing "Run /model to
+// pick a different model" forever — task never progresses.
+func TestSpawner_SpawnViaRuntime_FallbackSanitizesModel(t *testing.T) {
+	s := newTestSpawner()
+	// Worker requests "ais-agent" — its growth config seeds Model=llama3 via
+	// buildSpawnConfig. Simulate by pinning the model + a runtime-specific
+	// ExtraCLIArgs and runtime-agnostic policy fields in the SkillProfile.
+	s.skillProfiles["junior"] = config.SkillProfile{
+		ID:              "junior",
+		Model:           "llama3",
+		PermissionMode:  "plan",
+		AllowedTools:    []string{"Read", "Glob"},
+		DisallowedTools: []string{"Write"},
+		SystemPrompt:    "you are a junior dev",
+		ExtraCLIArgs:    "--max-tokens 50000",
+	}
+
+	failing := &fakeRuntime{name: "ais-agent", readyErr: errors.New("timeout")}
+	good := &fakeRuntime{name: "claude"}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	reg.Register(good)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-sm", Name: "Sanitize", Tier: TierEngineer, CLITool: "ais-agent", SkillProfile: "junior"}
+	tk := &project.Task{ID: "t-sm", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	if err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd"); err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+
+	// ais-agent saw the original cfg in full.
+	if failing.spawnCfg.Model != "llama3" {
+		t.Errorf("ais-agent SpawnConfig.Model = %q, want %q", failing.spawnCfg.Model, "llama3")
+	}
+	if failing.spawnCfg.ExtraCLIArgs != "--max-tokens 50000" {
+		t.Errorf("ais-agent ExtraCLIArgs = %q, want %q", failing.spawnCfg.ExtraCLIArgs, "--max-tokens 50000")
+	}
+	// claude (fallback) MUST receive sanitized runtime-specific fields...
+	if good.spawnCfg.Model != "" {
+		t.Errorf("claude fallback Model = %q, want \"\"", good.spawnCfg.Model)
+	}
+	if good.spawnCfg.ExtraCLIArgs != "" {
+		t.Errorf("claude fallback ExtraCLIArgs = %q, want \"\"", good.spawnCfg.ExtraCLIArgs)
+	}
+	// ... but inherit the safety/policy fields verbatim.
+	if good.spawnCfg.PermissionMode != "plan" {
+		t.Errorf("claude fallback PermissionMode = %q, want %q (must pass through)",
+			good.spawnCfg.PermissionMode, "plan")
+	}
+	if got, want := strings.Join(good.spawnCfg.AllowedTools, ","), "Read,Glob"; got != want {
+		t.Errorf("claude fallback AllowedTools = %q, want %q (must pass through)", got, want)
+	}
+	// DisallowedTools also has the autonomous safety net merged in (Skill,
+	// EnterPlanMode, ExitPlanMode); just assert the SkillProfile-supplied
+	// "Write" is preserved.
+	hasWrite := false
+	for _, d := range good.spawnCfg.DisallowedTools {
+		if d == "Write" {
+			hasWrite = true
+		}
+	}
+	if !hasWrite {
+		t.Errorf("claude fallback DisallowedTools = %v, want to contain \"Write\" (must pass through)",
+			good.spawnCfg.DisallowedTools)
+	}
+	if good.spawnCfg.SystemPrompt != "you are a junior dev" {
+		t.Errorf("claude fallback SystemPrompt = %q, want %q (must pass through)",
+			good.spawnCfg.SystemPrompt, "you are a junior dev")
+	}
+}
+
+// TestSanitizeForClaudeFallback_PureUnit covers the helper directly so a
+// future refactor that adds more sanitized fields fails this test rather
+// than hiding a regression behind the spawnViaRuntime mock plumbing.
+//
+// Cleared fields (per docstring): Model, ExtraCLIArgs.
+// Pass-through fields: WorkDir, Branch, PermissionMode, AllowedTools,
+// DisallowedTools, SystemPrompt, EnvVars.
+func TestSanitizeForClaudeFallback_PureUnit(t *testing.T) {
+	in := agent.SpawnConfig{
+		WorkDir:         "/tmp/wd",
+		Branch:          "feat/x",
+		Model:           "llama3",
+		PermissionMode:  "bypassPermissions",
+		AllowedTools:    []string{"Read", "Glob"},
+		DisallowedTools: []string{"Edit"},
+		SystemPrompt:    "you are helpful",
+		ExtraCLIArgs:    "--max-tokens 50000",
+		EnvVars:         map[string]string{"AIS_PROVIDER": "ollama"},
+	}
+	out := sanitizeForClaudeFallback(in)
+
+	// Cleared fields.
+	if out.Model != "" {
+		t.Errorf("Model = %q, want \"\"", out.Model)
+	}
+	if out.ExtraCLIArgs != "" {
+		t.Errorf("ExtraCLIArgs = %q, want \"\"", out.ExtraCLIArgs)
+	}
+	// Pass-through scalar fields.
+	if out.WorkDir != in.WorkDir || out.Branch != in.Branch ||
+		out.PermissionMode != in.PermissionMode ||
+		out.SystemPrompt != in.SystemPrompt {
+		t.Errorf("scalar fields diverged: in=%+v out=%+v", in, out)
+	}
+	if len(out.AllowedTools) != len(in.AllowedTools) || len(out.DisallowedTools) != len(in.DisallowedTools) {
+		t.Errorf("tool slices changed shape")
+	}
+	// EnvVars passes through (claude reads no AIS_* keys; harmless).
+	if got := out.EnvVars["AIS_PROVIDER"]; got != "ollama" {
+		t.Errorf("EnvVars[AIS_PROVIDER] = %q, want %q", got, "ollama")
+	}
+	// Input must not be mutated (sanitize returns a copy).
+	if in.Model != "llama3" {
+		t.Errorf("input was mutated: in.Model = %q", in.Model)
+	}
+	if in.ExtraCLIArgs != "--max-tokens 50000" {
+		t.Errorf("input was mutated: in.ExtraCLIArgs = %q", in.ExtraCLIArgs)
+	}
+}

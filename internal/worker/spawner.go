@@ -1524,10 +1524,13 @@ func (s *Spawner) buildSpawnConfig(w *Worker, p *project.Project, workDir string
 //
 // Runtime fallback: if rt.DetectReady fails and rt is NOT already "claude"
 // AND ctx is still alive, this function cleans up the failed session and
-// recurses once into the "claude" runtime. If the claude fallback also
-// fails, the returned error wraps ErrRuntimeFallbackExhausted so the outer
-// SpawnForTask retry loop abandons the task instead of re-triggering the
-// same failure chain (ClassifyError routes the sentinel to ActionAbandon).
+// retries once with the "claude" runtime, using a SANITIZED SpawnConfig
+// (cfg.Model is cleared because runtime-specific model names like "llama3"
+// from ais-agent's ollama provider are rejected by claude). If the claude
+// fallback also fails, the returned error wraps ErrRuntimeFallbackExhausted
+// so the outer SpawnForTask retry loop abandons the task instead of
+// re-triggering the same failure chain (ClassifyError routes the sentinel
+// to ActionAbandon).
 func (s *Spawner) spawnViaRuntime(
 	ctx context.Context, rt agent.AgentRuntime,
 	w *Worker, t *project.Task, p *project.Project, workDir string,
@@ -1559,6 +1562,54 @@ func (s *Spawner) spawnViaRuntime(
 		}
 	}
 
+	return s.spawnViaRuntimeWithConfig(ctx, rt, cfg, w, t, p, workDir)
+}
+
+// sanitizeForClaudeFallback returns a copy of cfg with fields cleared that
+// would have been runtime-specific to whatever non-claude plugin was tried
+// first.
+//
+// Cleared fields:
+//   - Model — value like "llama3" or "gpt-4o-mini" from ais-agent's growth
+//     config makes claude idle forever printing "Run /model to pick a
+//     different model". Empty Model lets claude pick its built-in default
+//     (currently the latest sonnet variant).
+//   - ExtraCLIArgs — today this is SkillProfile-sourced (spawner.go
+//     buildSpawnConfig) and the bundled SkillProfiles are claude-shaped, so
+//     in practice it's safe. But the field is structurally a runtime-
+//     specific verbatim flag string ("--max-tokens 50000" for ais-agent
+//     would error claude), so clearing it on fallback is defensive: when
+//     claude is being used as a recovery substitute, we want the safest
+//     possible invocation, not whatever flags suited the failed runtime.
+//
+// Pass-through fields (intentionally NOT cleared because they're either
+// runtime-agnostic or claude ignores irrelevant entries):
+//   - PermissionMode, AllowedTools, DisallowedTools, SystemPrompt — runtime
+//     agnostic. Claude needs the same safety guarantees as the original.
+//   - EnvVars — claude reads no AIS_* keys; harmless leftovers stay.
+//   - WorkDir, Branch — same task target.
+//
+// The shallow copy via `out := cfg` shares the underlying AllowedTools /
+// DisallowedTools slices and EnvVars map with the input. The claude
+// runtime treats these as read-only (see claudecode/runtime.go
+// buildCLICommand), so callers can rely on the input cfg not being
+// mutated by sanitize-then-Spawn. Future runtime authors must keep this
+// read-only invariant.
+func sanitizeForClaudeFallback(cfg agent.SpawnConfig) agent.SpawnConfig {
+	out := cfg
+	out.Model = ""
+	out.ExtraCLIArgs = ""
+	return out
+}
+
+// spawnViaRuntimeWithConfig is the inner half of spawnViaRuntime that takes
+// a pre-built SpawnConfig. Splitting it lets the fallback path supply a
+// sanitized cfg (different Model) without re-running buildSpawnConfig and
+// without recursion shenanigans.
+func (s *Spawner) spawnViaRuntimeWithConfig(
+	ctx context.Context, rt agent.AgentRuntime, cfg agent.SpawnConfig,
+	w *Worker, t *project.Task, p *project.Project, workDir string,
+) error {
 	runtimeSess, err := rt.Spawn(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("runtime %s spawn: %w", rt.Name(), err)
@@ -1579,16 +1630,19 @@ func (s *Spawner) spawnViaRuntime(
 		//     the caller wants to stop, not switch runtimes.
 		//   - runtimeRegistry is wired and has a "claude" runtime registered.
 		//
+		// The cfg passed to claude is sanitizeForClaudeFallback'd because the
+		// requested model can be runtime-specific (e.g. "llama3" → claude
+		// rejects).
+		//
 		// If the claude fallback ALSO fails, we wrap the returned error with
 		// ErrRuntimeFallbackExhausted so ClassifyError returns ActionAbandon
-		// and SpawnForTask's 3x retry loop stops immediately — retrying the
-		// same (ais-agent → claude) chain 3 times just burns up to
-		// 6×120 s ≈ 12 min on a permanently broken setup.
+		// and SpawnForTask's 3x retry loop stops immediately.
 		if rt.Name() != "claude" && s.runtimeRegistry != nil && ctx.Err() == nil {
 			if fallback, ok := s.runtimeRegistry.Get("claude"); ok && fallback != nil {
-				log.Printf("spawnViaRuntime: fallback for worker %s task %s — runtime %s failed DetectReady (%v), retrying with claude",
-					w.ID, t.ID, rt.Name(), err)
-				if ferr := s.spawnViaRuntime(ctx, fallback, w, t, p, workDir); ferr != nil {
+				fallbackCfg := sanitizeForClaudeFallback(cfg)
+				log.Printf("spawnViaRuntime: fallback for worker %s task %s — runtime %s failed DetectReady (%v), retrying with claude (model %q → default)",
+					w.ID, t.ID, rt.Name(), err, cfg.Model)
+				if ferr := s.spawnViaRuntimeWithConfig(ctx, fallback, fallbackCfg, w, t, p, workDir); ferr != nil {
 					return fmt.Errorf("%w: runtime %s ready (%v); claude fallback also failed (%v)",
 						ErrRuntimeFallbackExhausted, rt.Name(), err, ferr)
 				}

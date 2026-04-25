@@ -179,9 +179,15 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 	useAider := w.CLITool == "aider"
 	changeCount := 0              // total number of content changes observed
 	const minChanges = 3          // require at least 3 content changes before no_change can trigger
-	const idleStableMinPolls = 5  // pane content must be unchanged for 5 polls (~5s) before idle fires —
-	// avoids false-firing on the transient idle window between SendPrompt
-	// rendering in the pane and claude replacing it with progress indicators.
+	// idleStableMinPolls: pane content must be unchanged for this many
+	// consecutive polls (~N seconds at the 1s ticker) before idle fires.
+	// Avoids false-firing on the transient idle window between SendPrompt
+	// rendering in the pane and claude replacing it with progress
+	// indicators. Set to 8 (not 5) to give headroom for slow-starting
+	// turns (cold model load, slow network handshake) — the cost is ~3s
+	// extra on every real completion which is trivial relative to a
+	// typical generation turn.
+	const idleStableMinPolls = 8
 	captureErrors := 0            // consecutive CapturePane failures
 	const maxCaptureErrors = 30   // after 30 consecutive errors, check if session is dead
 	var lastAskSeen string        // tracks last ASK pattern to avoid re-triggering

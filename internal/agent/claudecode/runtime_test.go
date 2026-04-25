@@ -211,6 +211,24 @@ func TestClaudeCodeRuntime_ParseCompletionIndicators(t *testing.T) {
 		}, "\n")},
 		{"v2+ idle no banner only prompt + status",
 			"────────────\n❯\n────────────\n  ⏵⏵ bypass permissions on\n"},
+		// Real-world reproducer: tmux capture-pane pads the buffer with empty
+		// trailing lines AFTER the status bar when the pane is taller than the
+		// rendered view. Without trimTrailingEmpty, the prompt lands above the
+		// last-N-lines window (4 trailing empty lines push ❯ out at scan size
+		// 5). Live-confirmed pane shape that previously hung the monitor
+		// indefinitely on completed claude tasks.
+		{"v2+ idle with trailing pane padding", strings.Join([]string{
+			"...PRD content...",
+			"",
+			"────────────────────────────────",
+			"❯ ",
+			"────────────────────────────────",
+			"  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+			"",
+			"",
+			"",
+			"",
+		}, "\n")},
 	}
 	for _, tc := range idleCases {
 		t.Run("idle/"+tc.name, func(t *testing.T) {

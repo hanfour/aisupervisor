@@ -356,11 +356,18 @@ func isClaudeReady(content string) bool {
 		return true
 	}
 	lines := strings.Split(content, "\n")
-	start := len(lines) - readyScanLines
+	// tmux capture-pane pads with empty lines after the visible content
+	// when the rendered view is shorter than the pane size, so the prompt
+	// + status bar can sit several lines above the absolute end. Trim
+	// trailing empty lines first, then scan the last readyScanLines of
+	// the meaningful content. Without this trim, a sparse pane (status
+	// bar followed by 3+ empty lines) pushes ❯ outside the window.
+	end := trimTrailingEmpty(lines)
+	start := end - readyScanLines
 	if start < 0 {
 		start = 0
 	}
-	for i := start; i < len(lines); i++ {
+	for i := start; i < end; i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if trimmed == ">" || trimmed == "> " ||
 			trimmed == "❯" || trimmed == "❯ " ||
@@ -370,6 +377,18 @@ func isClaudeReady(content string) bool {
 		}
 	}
 	return false
+}
+
+// trimTrailingEmpty returns the index one past the last non-empty
+// (whitespace-only) line in the slice. Used by both isClaudeReady and
+// isClaudeIdle to compensate for tmux capture-pane's tendency to pad
+// the output with empty lines after the rendered content.
+func trimTrailingEmpty(lines []string) int {
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return end
 }
 
 // idleScanLines is the trailing-pane window size for idle detection.
@@ -394,11 +413,12 @@ const idleScanLines = 5
 // has actually returned to idle.
 func isClaudeIdle(content string) bool {
 	lines := strings.Split(content, "\n")
-	start := len(lines) - idleScanLines
+	end := trimTrailingEmpty(lines)
+	start := end - idleScanLines
 	if start < 0 {
 		start = 0
 	}
-	for i := start; i < len(lines); i++ {
+	for i := start; i < end; i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if trimmed == ">" || trimmed == "> " ||
 			trimmed == "❯" || trimmed == "❯ " {

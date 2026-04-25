@@ -356,11 +356,19 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 // internal/agent/claudecode/runtime.go (legacy fallback path).
 func isClaudeIdle(content string) bool {
 	lines := strings.Split(content, "\n")
-	start := len(lines) - idleScanLines
+	// Trim trailing empty lines first — tmux capture-pane pads the
+	// output with blank lines after the rendered view when the pane
+	// buffer is taller, pushing the ❯ outside a fixed-size suffix
+	// window. Mirror of the trimming in claudecode/runtime.go.
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	start := end - idleScanLines
 	if start < 0 {
 		start = 0
 	}
-	for i := start; i < len(lines); i++ {
+	for i := start; i < end; i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if trimmed == ">" || trimmed == "> " ||
 			trimmed == "❯" || trimmed == "❯ " {

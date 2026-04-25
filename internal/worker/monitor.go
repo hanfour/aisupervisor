@@ -306,22 +306,39 @@ func (m *CompletionMonitor) WatchForCompletion(ctx context.Context, w *Worker) (
 	}
 }
 
+// isClaudeIdle reports whether the captured pane content shows a bare
+// Claude Code idle prompt ("❯", "❯ ", ">", "> ") in the trailing
+// idleScanLines lines. Claude Code v2+ renders a status bar (⏵⏵ bypass
+// permissions, /effort) one to two lines BELOW the prompt, so the last
+// non-empty line is not the prompt — a window-based scan is required to
+// match the real idle layout. Match is strict (no prefix); "❯ user text"
+// means the user is composing input, not idle. Mirrors the helper in
+// internal/agent/claudecode/runtime.go (legacy fallback path).
 func isClaudeIdle(content string) bool {
 	lines := strings.Split(content, "\n")
-	// Find the last non-empty line. The idle prompt ❯ must be the very last
-	// non-empty content — not just appearing anywhere in the last 5 lines.
-	// This prevents false positives from ❯ in interactive selection menus
-	// or in the prompt input display (e.g. "❯ some user input").
-	for i := len(lines) - 1; i >= 0; i-- {
+	start := len(lines) - idleScanLines
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" {
-			continue
+		if trimmed == ">" || trimmed == "> " ||
+			trimmed == "❯" || trimmed == "❯ " {
+			return true
 		}
-		// Claude Code uses ❯ (U+276F) as its prompt character
-		return trimmed == ">" || trimmed == "> " || trimmed == "❯" || trimmed == "❯ "
 	}
 	return false
 }
+
+// idleScanLines mirrors the constant in internal/agent/claudecode/runtime.go.
+// Kept duplicated rather than imported because importing internal/agent/claudecode
+// here would couple the worker package — which sits BELOW the AgentRuntime
+// abstraction in the dependency graph — to a specific runtime implementation.
+// The legacy path is intentionally implementation-agnostic; if the two values
+// ever need to diverge per runtime, the AgentRuntime plugin already owns the
+// authoritative version. (internal/worker already imports internal/agent for
+// the AgentRuntime interface, so a dep cycle is not the issue.)
+const idleScanLines = 5
 
 // isAiderIdle detects when aider returns to its ">" prompt.
 func isAiderIdle(content string) bool {

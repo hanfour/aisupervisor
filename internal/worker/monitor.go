@@ -331,8 +331,13 @@ func isClaudeIdle(content string) bool {
 }
 
 // idleScanLines mirrors the constant in internal/agent/claudecode/runtime.go.
-// Kept duplicated rather than imported to avoid an internal/worker → internal/agent
-// dep cycle (worker is a long-standing root pkg; agent is a Phase 3 addition).
+// Kept duplicated rather than imported because importing internal/agent/claudecode
+// here would couple the worker package — which sits BELOW the AgentRuntime
+// abstraction in the dependency graph — to a specific runtime implementation.
+// The legacy path is intentionally implementation-agnostic; if the two values
+// ever need to diverge per runtime, the AgentRuntime plugin already owns the
+// authoritative version. (internal/worker already imports internal/agent for
+// the AgentRuntime interface, so a dep cycle is not the issue.)
 const idleScanLines = 5
 
 // isAiderIdle detects when aider returns to its ">" prompt.

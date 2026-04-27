@@ -189,6 +189,14 @@ func main() {
 	}
 	companyApp.SetSkillProfiles(config.MergeSkillProfiles(cfg.SkillProfiles))
 	companyMgr.SetReviewConfig(cfg.Review)
+	// Honour explicit AutoAssign config from disk when it disables
+	// auto-assign (Enabled:false in YAML); otherwise leave the constructor
+	// default (Enabled:true) in place so users get auto-assign out of the
+	// box without having to populate the YAML.
+	if cfg.AutoAssign.Enabled || cfg.AutoAssign.IdleTimeout > 0 {
+		companyMgr.SetAutoAssignConfig(cfg.AutoAssign)
+	}
+	companyMgr.LoadHumanGateConfig(cfg.HumanGate)
 	if cfg.UpdateURL != "" {
 		companyApp.SetUpdateURL(cfg.UpdateURL)
 	}

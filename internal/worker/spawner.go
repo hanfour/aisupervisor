@@ -958,9 +958,9 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 		}
 		if t.Type == project.TaskTypeDesign {
 			if lang == "en" {
-				prompt += "\n\nOutput design documents to the docs/design/ directory. Create the directory if it doesn't exist.\nWhen done, commit your changes and type /stop to signal completion."
+				prompt += "\n\nOutput design documents to the docs/design/ directory. Create the directory if it doesn't exist.\nWhen done, commit your changes. The system will detect completion automatically once your turn finishes — do NOT type /stop."
 			} else {
-				prompt += "\n\n將設計文件輸出到 docs/design/ 目錄。如果目錄不存在，請建立它。\n完成時，提交變更並輸入 /stop 表示完成。"
+				prompt += "\n\n將設計文件輸出到 docs/design/ 目錄。如果目錄不存在，請建立它。\n完成時，提交變更。回合結束時系統會自動偵測完成，**不要**輸入 /stop。"
 			}
 		}
 		// Add verification instructions for PRD/design tasks too
@@ -1028,15 +1028,14 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 			sb.WriteString("Follow this loop:\n")
 			sb.WriteString("1. Make your changes\n")
 			sb.WriteString("2. Run the verification command above\n")
-			sb.WriteString("3. If it PASSES → commit and /stop\n")
+			sb.WriteString("3. If it PASSES → commit\n")
 			sb.WriteString("4. If it FAILS → read the output, fix the issues, go back to step 2\n")
-			sb.WriteString("5. Repeat up to 5 times. If still failing, commit your best attempt and /stop\n")
+			sb.WriteString("5. Repeat up to 5 times. If still failing, commit your best attempt\n")
 			sb.WriteString("\nDo NOT skip verification. Do NOT commit code that fails the check.\n")
 		}
 
 		sb.WriteString("\n\n--- When Done ---\n")
-		sb.WriteString("1. Commit all changes with a descriptive message\n")
-		sb.WriteString("2. Type /stop to signal completion\n")
+		sb.WriteString("Commit all changes with a descriptive message. The system will detect completion automatically once your turn finishes — do NOT type /stop.\n")
 		if (tier == TierManager || tier == TierConsultant) && shouldIncludeDelegation(t) {
 			sb.WriteString("\n--- Delegation ---\n")
 			sb.WriteString("If you need to delegate sub-tasks to subordinates, output EXACTLY this JSON format:\n")
@@ -1088,15 +1087,14 @@ func (s *Spawner) buildPromptForTierInner(t *project.Task, p *project.Project, t
 			sb.WriteString("按照以下流程操作：\n")
 			sb.WriteString("1. 完成修改\n")
 			sb.WriteString("2. 執行上面的驗證指令\n")
-			sb.WriteString("3. 如果通過 → 提交並輸入 /stop\n")
+			sb.WriteString("3. 如果通過 → 提交\n")
 			sb.WriteString("4. 如果失敗 → 閱讀輸出，修正問題，回到步驟 2\n")
-			sb.WriteString("5. 最多重複 5 次。如果仍然失敗，提交你最好的版本並輸入 /stop\n")
+			sb.WriteString("5. 最多重複 5 次。如果仍然失敗，提交你最好的版本\n")
 			sb.WriteString("\n不要跳過驗證。不要提交無法通過檢查的程式碼。\n")
 		}
 
 		sb.WriteString("\n\n--- 完成時 ---\n")
-		sb.WriteString("1. 用描述性訊息提交所有變更\n")
-		sb.WriteString("2. 輸入 /stop 表示完成\n")
+		sb.WriteString("用描述性訊息提交所有變更。回合結束時系統會自動偵測完成，**不要**輸入 /stop。\n")
 		if (tier == TierManager || tier == TierConsultant) && shouldIncludeDelegation(t) {
 			sb.WriteString("\n--- 委派 ---\n")
 			sb.WriteString("當你需要將工作委派給下屬時，請嚴格按照以下 JSON 格式輸出：\n")
@@ -1161,9 +1159,9 @@ func (s *Spawner) buildTrainingPrompt(t *project.Task, p *project.Project) strin
 		sb.WriteString(fmt.Sprintf("4. Test command: %s\n", cfg.TestCmd))
 		if cfg.BenchmarkCmd != "" {
 			sb.WriteString(fmt.Sprintf("5. Benchmark command: %s\n", cfg.BenchmarkCmd))
-			sb.WriteString("6. When done with your changes, commit and type /stop\n")
+			sb.WriteString("6. When done with your changes, commit. The system will detect completion automatically once your turn finishes — do NOT type /stop.\n")
 		} else {
-			sb.WriteString("5. When done with your changes, commit and type /stop\n")
+			sb.WriteString("5. When done with your changes, commit. The system will detect completion automatically once your turn finishes — do NOT type /stop.\n")
 		}
 		sb.WriteString("\nIMPORTANT: Focus on making targeted improvements. Do NOT rewrite everything.\n")
 		if scoreTrend != "" {
@@ -1196,9 +1194,9 @@ func (s *Spawner) buildTrainingPrompt(t *project.Task, p *project.Project) strin
 		sb.WriteString(fmt.Sprintf("4. 測試指令：%s\n", cfg.TestCmd))
 		if cfg.BenchmarkCmd != "" {
 			sb.WriteString(fmt.Sprintf("5. 基準測試指令：%s\n", cfg.BenchmarkCmd))
-			sb.WriteString("6. 完成修改後，提交變更並輸入 /stop\n")
+			sb.WriteString("6. 完成修改後，提交變更。回合結束時系統會自動偵測完成，**不要**輸入 /stop。\n")
 		} else {
-			sb.WriteString("5. 完成修改後，提交變更並輸入 /stop\n")
+			sb.WriteString("5. 完成修改後，提交變更。回合結束時系統會自動偵測完成，**不要**輸入 /stop。\n")
 		}
 		sb.WriteString("\n重要：專注於針對性改進，不要重寫所有程式碼。\n")
 		if scoreTrend != "" {
@@ -1235,7 +1233,7 @@ func (s *Spawner) buildResearchPrompt(t *project.Task, deps []depContext) string
 		sb.WriteString("After completing your research, output the following JSON report (must be valid JSON):\n")
 		sb.WriteString(`{"summary": "Research summary (under 200 words)", "keyFindings": ["Finding 1", ...], "recommendations": ["Recommendation 1", ...], "references": ["Reference 1", ...], "rawContent": "Full research content in markdown"}`)
 		sb.WriteString("\n\n--- When Done ---\n")
-		sb.WriteString("After outputting the JSON above, type /stop to complete the task.\n")
+		sb.WriteString("After outputting the JSON above, your turn naturally ends — the system will detect completion automatically. Do NOT type /stop.\n")
 	} else {
 		sb.WriteString("你是一位專業研究員。請針對以下主題進行深入調查研究：\n\n")
 		sb.WriteString(t.Prompt)
@@ -1249,7 +1247,7 @@ func (s *Spawner) buildResearchPrompt(t *project.Task, deps []depContext) string
 		sb.WriteString("研究完成後，請輸出以下 JSON 格式的報告（必須是合法 JSON）：\n")
 		sb.WriteString(`{"summary": "研究摘要 (200字以內)", "keyFindings": ["發現1", "發現2", ...], "recommendations": ["建議1", ...], "references": ["參考資料1", ...], "rawContent": "完整研究內容 markdown"}`)
 		sb.WriteString("\n\n--- When Done ---\n")
-		sb.WriteString("將上述 JSON 輸出後，輸入 /stop 完成任務。\n")
+		sb.WriteString("將上述 JSON 輸出後，回合自然結束 — 系統會自動偵測完成。**不要**輸入 /stop。\n")
 	}
 
 	return sb.String()
@@ -1282,8 +1280,7 @@ func (s *Spawner) buildAdminPrompt(t *project.Task, deps []depContext) string {
 		sb.WriteString("2. If found, read the template and fill in fields from the task description\n")
 		sb.WriteString("3. If not found, create a clean Markdown document from scratch\n")
 		sb.WriteString("4. Output the completed document to docs/output/ (create directory if needed)\n")
-		sb.WriteString("5. Commit your changes with a descriptive message\n")
-		sb.WriteString("6. Type /stop to signal completion\n")
+		sb.WriteString("5. Commit your changes with a descriptive message. The system will detect completion automatically once your turn finishes — do NOT type /stop.\n")
 	} else {
 		sb.WriteString("你是一位行政助理。請產生所要求的文件。\n\n")
 		sb.WriteString("重要：你正在自主工作，沒有人類操作員。\n")
@@ -1302,8 +1299,7 @@ func (s *Spawner) buildAdminPrompt(t *project.Task, deps []depContext) string {
 		sb.WriteString("2. 如果有模板，讀取並根據任務描述填入欄位\n")
 		sb.WriteString("3. 如果沒有模板，用 Markdown 從頭建立乾淨的文件\n")
 		sb.WriteString("4. 將完成的文件輸出到 docs/output/（如目錄不存在請建立）\n")
-		sb.WriteString("5. 用描述性訊息提交變更\n")
-		sb.WriteString("6. 輸入 /stop 表示完成\n")
+		sb.WriteString("5. 用描述性訊息提交變更。回合結束時系統會自動偵測完成，**不要**輸入 /stop。\n")
 	}
 
 	return sb.String()
@@ -1340,8 +1336,7 @@ func (s *Spawner) buildHRPrompt(t *project.Task, deps []depContext) string {
 		sb.WriteString("2. Search SkillsMP for matching profiles using WebFetch\n")
 		sb.WriteString("3. Produce a recruitment report in Markdown with: candidate profiles, match scores, recommendations\n")
 		sb.WriteString("4. Output the report to docs/hr/ (create directory if needed)\n")
-		sb.WriteString("5. Commit your changes with a descriptive message\n")
-		sb.WriteString("6. Type /stop to signal completion\n")
+		sb.WriteString("5. Commit your changes with a descriptive message. The system will detect completion automatically once your turn finishes — do NOT type /stop.\n")
 	} else {
 		sb.WriteString("你是一位人資專員。請根據職缺描述搜尋匹配的技能配置。\n\n")
 		sb.WriteString("重要：你正在自主工作，沒有人類操作員。\n")
@@ -1364,8 +1359,7 @@ func (s *Spawner) buildHRPrompt(t *project.Task, deps []depContext) string {
 		sb.WriteString("2. 使用 WebFetch 在 SkillsMP 搜尋匹配的配置\n")
 		sb.WriteString("3. 用 Markdown 產生招募報告：候選配置、匹配分數、建議\n")
 		sb.WriteString("4. 將報告輸出到 docs/hr/（如目錄不存在請建立）\n")
-		sb.WriteString("5. 用描述性訊息提交變更\n")
-		sb.WriteString("6. 輸入 /stop 表示完成\n")
+		sb.WriteString("5. 用描述性訊息提交變更。回合結束時系統會自動偵測完成，**不要**輸入 /stop。\n")
 	}
 
 	return sb.String()

@@ -2850,9 +2850,9 @@ func (m *Manager) handleHelpRequest(w *worker.Worker, helpContent string) {
 	lang := m.GetLanguage()
 	var prompt string
 	if lang == "en" {
-		prompt = fmt.Sprintf("A colleague needs help with the following:\n\n%s\n\nContext: They are working on task %q in project %q.\n\nPlease research this and provide a concise answer. Output your findings and type /stop when done.", helpContent, t.Title, p.Name)
+		prompt = fmt.Sprintf("A colleague needs help with the following:\n\n%s\n\nContext: They are working on task %q in project %q.\n\nPlease research this and provide a concise answer. Output your findings; the system will detect completion automatically once your turn finishes — do NOT type /stop.", helpContent, t.Title, p.Name)
 	} else {
-		prompt = fmt.Sprintf("一位同事在以下問題上需要幫助：\n\n%s\n\n背景：他們正在專案「%s」的任務「%s」上工作。\n\n請研究並提供簡潔答案。輸出你的發現後輸入 /stop 完成。", helpContent, p.Name, t.Title)
+		prompt = fmt.Sprintf("一位同事在以下問題上需要幫助：\n\n%s\n\n背景：他們正在專案「%s」的任務「%s」上工作。\n\n請研究並提供簡潔答案。輸出你的發現後，回合結束時系統會自動偵測完成，**不要**輸入 /stop。", helpContent, p.Name, t.Title)
 	}
 
 	helpTask, err := m.AddTask(p.ID, m.msgf("Help: %s", "幫助：%s", truncate(helpContent, 50)), "Auto-created help request", prompt, nil, 1, "", "research")

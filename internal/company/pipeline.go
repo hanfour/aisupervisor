@@ -66,9 +66,7 @@ Output the PRD to docs/prd.md in the repository. Create the docs/ directory if i
 
 Format the document in Markdown with clear sections. Be thorough but practical.
 
-When done:
-1. Commit the docs/prd.md file with message "docs: add PRD for %s"
-2. Type /stop to signal completion`, name, description, goals, name)
+When done, commit the docs/prd.md file with message "docs: add PRD for %s". The system will detect completion automatically once your turn finishes — do NOT type /stop.`, name, description, goals, name)
 	}
 
 	return fmt.Sprintf(`你是一位產品經理，負責撰寫 PRD（產品需求文件）。
@@ -95,9 +93,7 @@ When done:
 
 以 Markdown 格式撰寫，結構清晰。務實且完整。
 
-完成時：
-1. 用訊息 "docs: add PRD for %s" 提交 docs/prd.md
-2. 輸入 /stop 表示完成`, name, description, goals, name)
+完成時，用訊息 "docs: add PRD for %s" 提交 docs/prd.md。回合結束後系統會自動偵測完成，**不要**輸入 /stop。`, name, description, goals, name)
 }
 
 // handlePRDCompletion processes a completed PRD task.

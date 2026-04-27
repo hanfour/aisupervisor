@@ -75,6 +75,56 @@ func TestSaveAndGetTask(t *testing.T) {
 	}
 }
 
+// TestSaveTaskPreservesStatusOnExisting reproduces the re-spawn loop bug:
+// GetTask returns a defensive copy whose Status field captures the value at
+// fetch time. Subsequent UpdateTaskStatus calls update the stored entry but
+// NOT the copy. Calling SaveTask(copy) afterwards used to overwrite the
+// freshly-updated stored status with the stale one — silently reverting
+// status changes (e.g. a Done PRD task being clobbered back to ready,
+// causing ReadyTasksByPriority to re-surface the same task and tryAutoAssign
+// to re-spawn the worker indefinitely).
+//
+// SaveTask must preserve the stored Status when an entry already exists.
+func TestSaveTaskPreservesStatusOnExisting(t *testing.T) {
+	s := tempStore(t)
+
+	task := &Task{ProjectID: "p1", Title: "PRD"}
+	if err := s.SaveTask(task); err != nil {
+		t.Fatalf("SaveTask seed: %v", err)
+	}
+
+	// Caller A grabs a defensive copy via GetTask — copy has Status=Backlog.
+	copyA, _ := s.GetTask(task.ID)
+	if copyA.Status != TaskBacklog {
+		t.Fatalf("copyA initial status: want Backlog, got %s", copyA.Status)
+	}
+
+	// Caller B advances the canonical status via the proper API.
+	if err := s.ForceUpdateTaskStatus(task.ID, TaskDone); err != nil {
+		t.Fatalf("ForceUpdateTaskStatus: %v", err)
+	}
+
+	// Caller A mutates a non-status field on its stale copy and persists.
+	// Pre-fix this would overwrite store status with the stale Backlog.
+	copyA.GateRequestID = "gate-xyz"
+	copyA.ErrorLog = append(copyA.ErrorLog, "non-status update")
+	if err := s.SaveTask(copyA); err != nil {
+		t.Fatalf("SaveTask copyA: %v", err)
+	}
+
+	// Status must still be Done; non-status fields must reflect copyA's edits.
+	got, _ := s.GetTask(task.ID)
+	if got.Status != TaskDone {
+		t.Fatalf("status was reverted by stale-copy SaveTask: want Done, got %s", got.Status)
+	}
+	if got.GateRequestID != "gate-xyz" {
+		t.Fatalf("non-status field lost: want gate-xyz, got %q", got.GateRequestID)
+	}
+	if len(got.ErrorLog) != 1 || got.ErrorLog[0] != "non-status update" {
+		t.Fatalf("ErrorLog edit lost: %+v", got.ErrorLog)
+	}
+}
+
 func TestTasksForProject(t *testing.T) {
 	s := tempStore(t)
 

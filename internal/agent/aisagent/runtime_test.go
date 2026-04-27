@@ -24,8 +24,10 @@ func TestAISAgentRuntime_InterfaceSatisfied(t *testing.T) {
 // translated into the expected CLI flags for the ais-agent binary.
 //
 // ais-agent flag conventions (differ from Claude Code):
-//   - --allowed-tools / --disallowed-tools take a single COMMA-SEPARATED value
-//     (one flag + one argument), NOT multiple shell-escaped tokens.
+//   - --allowed-tools takes a single COMMA-SEPARATED value (one flag + one
+//     argument), NOT multiple shell-escaped tokens.
+//   - --disallowed-tools is NOT supported by ais-agent v0.1.0 — DisallowedTools
+//     in SpawnConfig is silently dropped, never forwarded to the CLI.
 //   - Permission is controlled by --permission-mode only; there is no
 //     --dangerously-skip-permissions counterpart.
 //   - Provider comes from EnvVars["AIS_PROVIDER"].
@@ -74,9 +76,11 @@ func TestAISAgentRuntime_BuildCLICommand(t *testing.T) {
 		t.Errorf("buildCLICommand: expected comma-separated --allowed-tools, got %q", cmd)
 	}
 
-	// --disallowed-tools <csv>
-	if !strings.Contains(cmd, "--disallowed-tools Skill,EnterPlanMode") {
-		t.Errorf("buildCLICommand: expected comma-separated --disallowed-tools, got %q", cmd)
+	// --disallowed-tools is NOT forwarded to ais-agent v0.1.0 even when
+	// SpawnConfig.DisallowedTools is populated — the CLI does not implement
+	// the flag, so passing it crashes ais-agent at startup.
+	if strings.Contains(cmd, "--disallowed-tools") {
+		t.Errorf("buildCLICommand: --disallowed-tools must NOT appear in command (ais-agent v0.1.0 does not support it), got %q", cmd)
 	}
 
 	// --append-system-prompt <shell-escaped>

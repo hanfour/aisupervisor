@@ -11,11 +11,14 @@
 //
 //   - ais-agent does NOT have a --dangerously-skip-permissions flag. All
 //     permission handling goes through --permission-mode <mode>.
-//   - --allowed-tools / --disallowed-tools take a SINGLE comma-separated
-//     argument, not a sequence of shell-escaped tokens.
-//   - ais-agent does not load .claude/ skills, so no SessionStart-hook skill
-//     isolation is required. Callers may still supply DisallowedTools
-//     explicitly; they will be forwarded.
+//   - --allowed-tools takes a SINGLE comma-separated argument, not a
+//     sequence of shell-escaped tokens.
+//   - ais-agent v0.1.0 does NOT support --disallowed-tools. SpawnConfig.
+//     DisallowedTools is silently dropped when this runtime is selected.
+//     Spawner-side autonomous skill isolation is the load-bearing barrier
+//     for tool restriction; ais-agent additionally does not load .claude/
+//     skills, so the SessionStart-hook isolation that motivates Claude
+//     Code's DisallowedTools list does not apply here.
 //   - Provider selection (--provider) and max-token budget (--max-tokens) are
 //     not first-class fields on agent.SpawnConfig. To keep the shared struct
 //     backend-agnostic, this runtime reads them from SpawnConfig.EnvVars:
@@ -259,10 +262,16 @@ func (r *Runtime) Cleanup(session *agent.AgentSession) error {
 //  2. --model
 //  3. --permission-mode   (ais-agent has no --dangerously-skip-permissions)
 //  4. --allowed-tools <csv>
-//  5. --disallowed-tools <csv>
-//  6. --append-system-prompt <escaped>
-//  7. --max-tokens        (from EnvVars["AIS_MAX_TOKENS"])
-//  8. ExtraCLIArgs (verbatim, caller-controlled)
+//  5. --append-system-prompt <escaped>
+//  6. --max-tokens        (from EnvVars["AIS_MAX_TOKENS"])
+//  7. ExtraCLIArgs (verbatim, caller-controlled)
+//
+// Note: SpawnConfig.DisallowedTools is intentionally NOT forwarded.
+// ais-agent v0.1.0 does not implement a --disallowed-tools flag, so
+// passing one causes the CLI to exit immediately with
+// "flag provided but not defined: -disallowed-tools" — which previously
+// cost every spawn ~120s waiting for ais-agent's DetectReady to time
+// out before falling back to claude.
 func buildCLICommand(cfg agent.SpawnConfig) string {
 	parts := []string{"ais-agent"}
 
@@ -284,9 +293,7 @@ func buildCLICommand(cfg agent.SpawnConfig) string {
 		parts = append(parts, "--allowed-tools", strings.Join(cfg.AllowedTools, ","))
 	}
 
-	if len(cfg.DisallowedTools) > 0 {
-		parts = append(parts, "--disallowed-tools", strings.Join(cfg.DisallowedTools, ","))
-	}
+	// cfg.DisallowedTools is intentionally dropped — see func comment.
 
 	if cfg.SystemPrompt != "" {
 		parts = append(parts, "--append-system-prompt", runtimeutil.ShellEscape(cfg.SystemPrompt))

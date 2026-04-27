@@ -148,6 +148,11 @@ func New(
 		monitor:          monitor,
 		tmuxClient:       tmuxClient,
 		autoSchedule:     true,
+		// AutoAssign defaults to enabled so the periodic
+		// proactiveTaskDiscovery() loop will pick up idle workers and
+		// drain ready tasks. main.go's SetAutoAssignConfig(cfg.AutoAssign)
+		// can override this when an explicit config is loaded.
+		autoAssignCfg: config.AutoAssignConfig{Enabled: true},
 		workers:          make(map[string]*worker.Worker),
 		cancels:          make(map[string]context.CancelFunc),
 		dataDir:          dataDir,
@@ -266,6 +271,13 @@ func New(
 
 	// Startup health check: fix orphaned tasks, check deps, clean old gates
 	m.lastHealthReport = m.RunHealthCheck()
+
+	// Periodic health check (60s tick): orphan-session detection,
+	// stuck-worker recovery, and proactiveTaskDiscovery. Without this loop
+	// the system only ever ran RunHealthCheck once at startup, leaving
+	// idle workers + ready tasks indefinitely sitting unmatched after
+	// the initial drain. Lifetime is bound to bgCtx so Shutdown stops it.
+	go m.StartHealthCheck(bgCtx)
 
 	// Periodically persist personality data
 	go func() {

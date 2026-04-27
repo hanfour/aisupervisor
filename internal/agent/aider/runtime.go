@@ -59,6 +59,12 @@ func New(tc tmux.TmuxClient) *Runtime {
 // Name returns the stable identifier for this runtime.
 func (r *Runtime) Name() string { return "aider" }
 
+// Validate is a no-op: aider takes provider info implicitly through the
+// model string ("openai/gpt-4o", "anthropic/claude-3-5-sonnet", ...) and
+// has no separate provider flag the spawner could mis-set. Bad models
+// surface at DetectReady time.
+func (r *Runtime) Validate(cfg agent.SpawnConfig) error { return nil }
+
 // MonitoredSessionType returns the tool-type tag used by supervisor.MonitoredSession.
 func (r *Runtime) MonitoredSessionType() string { return "aider" }
 

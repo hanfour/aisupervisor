@@ -57,6 +57,34 @@ func New(tc tmux.TmuxClient) *Runtime {
 // Name returns the stable identifier for this runtime.
 func (r *Runtime) Name() string { return "ais-agent" }
 
+// supportedProviders is the set of LLM provider names ais-agent v0.1.0
+// accepts via --provider. The bundled binary exits at startup with
+// "Failed to create provider: unknown provider: <name>" when given any
+// other value (notably "ollama"), and the absence of a banner means
+// DetectReady would otherwise burn the full ~120s timeout before the
+// spawner's claude fallback fires. Listed in lookup order; extend this
+// when bumping the ais-agent dependency. Empty string ("") means
+// "no --provider flag will be passed" and is always allowed.
+var supportedProviders = map[string]struct{}{
+	"":          {}, // no --provider passed
+	"openai":    {},
+	"anthropic": {},
+}
+
+// Validate rejects SpawnConfigs whose AIS_PROVIDER env var names a
+// provider this ais-agent build cannot drive. Returning a fast error
+// here (instead of at DetectReady) lets the spawner skip straight to
+// its claude fallback in <1s rather than waiting out the 120s
+// DetectReady timeout for a CLI that has already exited.
+func (r *Runtime) Validate(cfg agent.SpawnConfig) error {
+	provider := cfg.EnvVars["AIS_PROVIDER"]
+	if _, ok := supportedProviders[provider]; !ok {
+		supported := []string{"(empty)", "openai", "anthropic"}
+		return fmt.Errorf("aisagent: unsupported provider %q (supported: %s)", provider, strings.Join(supported, ", "))
+	}
+	return nil
+}
+
 // MonitoredSessionType returns the tool-type tag used by supervisor.MonitoredSession.
 func (r *Runtime) MonitoredSessionType() string { return "ais_agent" }
 

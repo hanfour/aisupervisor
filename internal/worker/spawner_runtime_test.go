@@ -17,17 +17,26 @@ import (
 // It records the sequence of method calls and values passed through so that
 // spawnViaRuntime can be exercised without touching tmux or a real CLI.
 type fakeRuntime struct {
-	name       string
-	calls      []string
-	spawnCfg   agent.SpawnConfig
-	readyErr   error
-	spawnErr   error
-	sendErr    error
-	promptSent string
-	session    *agent.AgentSession
+	name        string
+	calls       []string
+	spawnCfg    agent.SpawnConfig
+	readyErr    error
+	spawnErr    error
+	sendErr     error
+	validateErr error
+	promptSent  string
+	session     *agent.AgentSession
 }
 
 func (f *fakeRuntime) Name() string { return f.name }
+
+// Validate intentionally does NOT append to f.calls — most existing
+// tests assert exact call sequences (Spawn → DetectReady → ...) and we
+// don't want to perturb them. Tests that specifically exercise the
+// fast-fail path inspect f.validateErr / cfg directly.
+func (f *fakeRuntime) Validate(cfg agent.SpawnConfig) error {
+	return f.validateErr
+}
 
 func (f *fakeRuntime) Spawn(ctx context.Context, cfg agent.SpawnConfig) (*agent.AgentSession, error) {
 	f.calls = append(f.calls, "Spawn")
@@ -875,5 +884,104 @@ func TestSanitizeForClaudeFallback_PureUnit(t *testing.T) {
 	}
 	if in.ExtraCLIArgs != "--max-tokens 50000" {
 		t.Errorf("input was mutated: in.ExtraCLIArgs = %q", in.ExtraCLIArgs)
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_ValidateFastFailFallsBack verifies the
+// fast-fail path: when a non-claude runtime's Validate rejects cfg,
+// the spawner skips Spawn + DetectReady entirely and immediately tries
+// the claude fallback. This is the path that saves ~120s per spawn for
+// e.g. ais-agent + ollama (where ais-agent v0.1.0 crashes at startup
+// with no banner).
+func TestSpawner_SpawnViaRuntime_ValidateFastFailFallsBack(t *testing.T) {
+	s := newTestSpawner()
+
+	failing := &fakeRuntime{name: "ais-agent", validateErr: errors.New("unsupported provider")}
+	good := &fakeRuntime{name: "claude"}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing)
+	reg.Register(good)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-vff", Name: "VFF"}
+	tk := &project.Task{ID: "t-vff", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	if err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd"); err != nil {
+		t.Fatalf("expected fallback to succeed, got %v", err)
+	}
+	// failing runtime should NOT have reached Spawn/DetectReady.
+	for _, c := range failing.calls {
+		if c == "Spawn" || c == "DetectReady" {
+			t.Fatalf("validate-fast-fail should skip %s, got calls=%v", c, failing.calls)
+		}
+	}
+	// claude must have run a complete spawn cycle.
+	wantClaude := []string{"Spawn", "DetectReady", "SendPrompt"}
+	if len(good.calls) < len(wantClaude) {
+		t.Fatalf("claude calls insufficient: %v", good.calls)
+	}
+	for i, want := range wantClaude {
+		if good.calls[i] != want {
+			t.Fatalf("claude call[%d] = %q, want %q (full: %v)", i, good.calls[i], want, good.calls)
+		}
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_ValidateNilContinuesNormalPath verifies that
+// when Validate returns nil (the default), the spawn proceeds through the
+// usual Spawn → DetectReady → SendPrompt sequence — Validate is purely
+// additive in the success path and must not change behaviour.
+func TestSpawner_SpawnViaRuntime_ValidateNilContinuesNormalPath(t *testing.T) {
+	s := newTestSpawner()
+
+	rt := &fakeRuntime{name: "ais-agent"} // validateErr nil → passes
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(rt)
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-vok", Name: "VOK"}
+	tk := &project.Task{ID: "t-vok", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	if err := s.spawnViaRuntime(context.Background(), rt, w, tk, proj, "/tmp/wd"); err != nil {
+		t.Fatalf("expected success when Validate returns nil, got %v", err)
+	}
+	want := []string{"Spawn", "DetectReady", "SendPrompt"}
+	if len(rt.calls) < len(want) {
+		t.Fatalf("calls insufficient: %v", rt.calls)
+	}
+	for i, w := range want {
+		if rt.calls[i] != w {
+			t.Fatalf("call[%d] = %q, want %q (full: %v)", i, rt.calls[i], w, rt.calls)
+		}
+	}
+}
+
+// TestSpawner_SpawnViaRuntime_ValidateFailWithoutClaudeReturnsError covers
+// the case where Validate fails AND there is no claude runtime to fall
+// back to: spawn must return the validation error directly, without
+// wrapping it in ErrRuntimeFallbackExhausted (no fallback was attempted).
+func TestSpawner_SpawnViaRuntime_ValidateFailWithoutClaudeReturnsError(t *testing.T) {
+	s := newTestSpawner()
+
+	failing := &fakeRuntime{name: "ais-agent", validateErr: errors.New("unsupported provider")}
+	reg := agent.NewRuntimeRegistry()
+	reg.Register(failing) // no claude registered
+	s.SetRuntimeRegistry(reg)
+
+	w := &Worker{ID: "w-vne", Name: "VNE"}
+	tk := &project.Task{ID: "t-vne", Title: "x", Prompt: "p", Type: project.TaskTypeCode}
+	proj := &project.Project{Name: "D", RepoPath: "/tmp/nope"}
+
+	err := s.spawnViaRuntime(context.Background(), failing, w, tk, proj, "/tmp/wd")
+	if err == nil {
+		t.Fatal("expected error when Validate fails with no claude fallback registered")
+	}
+	if errors.Is(err, ErrRuntimeFallbackExhausted) {
+		t.Errorf("should NOT wrap with ErrRuntimeFallbackExhausted — no fallback was attempted")
+	}
+	if !strings.Contains(err.Error(), "validate") {
+		t.Errorf("error should mention 'validate' stage, got %q", err.Error())
 	}
 }

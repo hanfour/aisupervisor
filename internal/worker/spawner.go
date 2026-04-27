@@ -1604,6 +1604,14 @@ func (s *Spawner) spawnViaRuntimeWithConfig(
 	ctx context.Context, rt agent.AgentRuntime, cfg agent.SpawnConfig,
 	w *Worker, t *project.Task, p *project.Project, workDir string,
 ) error {
+	// Early compatibility check. Validate is a fast pure inspection of cfg —
+	// when it fails we know the CLI would crash at startup (e.g. ais-agent
+	// v0.1.0 given --provider ollama) and we should skip straight to the
+	// claude fallback rather than spending ~120s waiting out DetectReady.
+	if verr := rt.Validate(cfg); verr != nil {
+		return s.tryClaudeFallback(ctx, rt, cfg, w, t, p, workDir, verr, "validate")
+	}
+
 	runtimeSess, err := rt.Spawn(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("runtime %s spawn: %w", rt.Name(), err)
@@ -1611,40 +1619,7 @@ func (s *Spawner) spawnViaRuntimeWithConfig(
 
 	if err := rt.DetectReady(ctx, runtimeSess, 120*time.Second); err != nil {
 		_ = rt.Cleanup(runtimeSess)
-
-		// Fallback: if a non-"claude" runtime fails to become ready (typically
-		// because the CLI crashed at startup — e.g. ais-agent rejects a
-		// misconfigured provider and exits before printing any banner our
-		// detector would match), retry once with the "claude" runtime so the
-		// worker isn't stuck in a retry loop forever.
-		//
-		// Preconditions for fallback (all must hold):
-		//   - rt is NOT "claude" (avoid infinite recursion).
-		//   - ctx has not been cancelled / expired — a context error means
-		//     the caller wants to stop, not switch runtimes.
-		//   - runtimeRegistry is wired and has a "claude" runtime registered.
-		//
-		// The cfg passed to claude is sanitizeForClaudeFallback'd because the
-		// requested model can be runtime-specific (e.g. "llama3" → claude
-		// rejects).
-		//
-		// If the claude fallback ALSO fails, we wrap the returned error with
-		// ErrRuntimeFallbackExhausted so ClassifyError returns ActionAbandon
-		// and SpawnForTask's 3x retry loop stops immediately.
-		if rt.Name() != "claude" && s.runtimeRegistry != nil && ctx.Err() == nil {
-			if fallback, ok := s.runtimeRegistry.Get("claude"); ok && fallback != nil {
-				fallbackCfg := sanitizeForClaudeFallback(cfg)
-				log.Printf("spawnViaRuntime: fallback for worker %s task %s — runtime %s failed DetectReady (%v), retrying with claude (model %q → default)",
-					w.ID, t.ID, rt.Name(), err, cfg.Model)
-				if ferr := s.spawnViaRuntimeWithConfig(ctx, fallback, fallbackCfg, w, t, p, workDir); ferr != nil {
-					return fmt.Errorf("%w: runtime %s ready (%v); claude fallback also failed (%v)",
-						ErrRuntimeFallbackExhausted, rt.Name(), err, ferr)
-				}
-				return nil
-			}
-		}
-
-		return fmt.Errorf("runtime %s ready: %w", rt.Name(), err)
+		return s.tryClaudeFallback(ctx, rt, cfg, w, t, p, workDir, err, "ready")
 	}
 
 	// Build prompt (same logic as legacy path).
@@ -1713,6 +1688,47 @@ func (s *Spawner) spawnViaRuntimeWithConfig(
 		go s.sup.Monitor(ctx, ms)
 	}
 
+	return nil
+}
+
+// tryClaudeFallback retries the spawn via the "claude" runtime when a
+// non-claude runtime fails either at Validate (fast-fail) or DetectReady
+// (~120s timeout). Both failure modes share the same recovery path:
+// switch to claude with a sanitized cfg so the worker isn't stuck in a
+// retry loop on a permanently misconfigured plugin.
+//
+// Preconditions for fallback (all must hold):
+//   - rt is NOT "claude" (avoid infinite recursion).
+//   - ctx has not been cancelled / expired — a context error means the
+//     caller wants to stop, not switch runtimes.
+//   - runtimeRegistry is wired and has a "claude" runtime registered.
+//
+// stage is a short verb describing where in the lifecycle the failure
+// happened ("validate", "ready"), used in log + error messages so the
+// trail tells operators which path triggered the fallback.
+//
+// If claude itself fails, the returned error wraps
+// ErrRuntimeFallbackExhausted so ClassifyError returns ActionAbandon and
+// SpawnForTask's 3x retry loop short-circuits.
+func (s *Spawner) tryClaudeFallback(
+	ctx context.Context, rt agent.AgentRuntime, cfg agent.SpawnConfig,
+	w *Worker, t *project.Task, p *project.Project, workDir string,
+	cause error, stage string,
+) error {
+	if rt.Name() == "claude" || s.runtimeRegistry == nil || ctx.Err() != nil {
+		return fmt.Errorf("runtime %s %s: %w", rt.Name(), stage, cause)
+	}
+	fallback, ok := s.runtimeRegistry.Get("claude")
+	if !ok || fallback == nil {
+		return fmt.Errorf("runtime %s %s: %w", rt.Name(), stage, cause)
+	}
+	fallbackCfg := sanitizeForClaudeFallback(cfg)
+	log.Printf("spawnViaRuntime: fallback for worker %s task %s — runtime %s failed at %s (%v), retrying with claude (model %q → default)",
+		w.ID, t.ID, rt.Name(), stage, cause, cfg.Model)
+	if ferr := s.spawnViaRuntimeWithConfig(ctx, fallback, fallbackCfg, w, t, p, workDir); ferr != nil {
+		return fmt.Errorf("%w: runtime %s %s (%v); claude fallback also failed (%v)",
+			ErrRuntimeFallbackExhausted, rt.Name(), stage, cause, ferr)
+	}
 	return nil
 }
 

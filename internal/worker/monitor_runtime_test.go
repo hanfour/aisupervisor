@@ -68,7 +68,8 @@ type stubRuntime struct {
 	detectCall int
 }
 
-func (f *stubRuntime) Name() string { return f.name }
+func (f *stubRuntime) Name() string                    { return f.name }
+func (f *stubRuntime) Validate(cfg agent.SpawnConfig) error { return nil }
 func (f *stubRuntime) Spawn(ctx context.Context, cfg agent.SpawnConfig) (*agent.AgentSession, error) {
 	return &agent.AgentSession{RuntimeName: f.name}, nil
 }

@@ -17,6 +17,8 @@ type fakeRuntime struct {
 
 func (f *fakeRuntime) Name() string { return f.name }
 
+func (f *fakeRuntime) Validate(cfg SpawnConfig) error { return nil }
+
 func (f *fakeRuntime) Spawn(ctx context.Context, cfg SpawnConfig) (*AgentSession, error) {
 	return nil, nil
 }

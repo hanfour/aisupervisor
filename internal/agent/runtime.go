@@ -12,6 +12,21 @@ type AgentRuntime interface {
 	// Name returns the unique identifier for this runtime (e.g. "claudecode").
 	Name() string
 
+	// Validate inspects cfg for runtime-specific compatibility and returns
+	// nil if Spawn would succeed launching with it, or a descriptive error
+	// when this runtime cannot drive the requested configuration (e.g.
+	// ais-agent v0.1.0 was given an unsupported --provider value).
+	//
+	// The spawner calls Validate BEFORE Spawn so incompatible runtimes are
+	// skipped immediately, avoiding the ~120s DetectReady timeout cost
+	// otherwise paid when a CLI crashes at startup with no recoverable
+	// banner. Validate must be a fast pure check — no side effects, no IO,
+	// no blocking — because it runs on every spawn attempt.
+	//
+	// Runtimes with no compatibility constraints (e.g. claude, aider) MUST
+	// return nil unconditionally.
+	Validate(cfg SpawnConfig) error
+
 	// Spawn launches a new agent process according to cfg and returns a
 	// session handle that other methods can operate on.
 	Spawn(ctx context.Context, cfg SpawnConfig) (*AgentSession, error)

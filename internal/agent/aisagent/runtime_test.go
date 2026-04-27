@@ -20,6 +20,45 @@ func TestAISAgentRuntime_InterfaceSatisfied(t *testing.T) {
 	var _ agent.AgentRuntime = (*Runtime)(nil)
 }
 
+// TestAISAgentRuntime_Validate exercises the provider compatibility check.
+// ais-agent v0.1.0 only accepts openai / anthropic via --provider; any
+// other value (notably "ollama") makes it crash at startup with no banner,
+// which used to cost ~120s of wasted DetectReady polling. Validate fails
+// fast so the spawner can pivot to the claude fallback immediately.
+func TestAISAgentRuntime_Validate(t *testing.T) {
+	cases := []struct {
+		name      string
+		provider  string
+		wantError bool
+	}{
+		{"empty provider is allowed (no flag passed)", "", false},
+		{"openai supported", "openai", false},
+		{"anthropic supported", "anthropic", false},
+		{"ollama rejected", "ollama", true},
+		{"google rejected", "google", true},
+		{"typo rejected", "openaii", true},
+	}
+	r := New(nil)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := agent.SpawnConfig{}
+			if tc.provider != "" {
+				cfg.EnvVars = map[string]string{"AIS_PROVIDER": tc.provider}
+			}
+			err := r.Validate(cfg)
+			if tc.wantError && err == nil {
+				t.Fatalf("Validate(provider=%q): want error, got nil", tc.provider)
+			}
+			if !tc.wantError && err != nil {
+				t.Fatalf("Validate(provider=%q): want nil, got %v", tc.provider, err)
+			}
+			if tc.wantError && !strings.Contains(err.Error(), "unsupported provider") {
+				t.Fatalf("Validate error should mention 'unsupported provider', got %q", err.Error())
+			}
+		})
+	}
+}
+
 // TestAISAgentRuntime_BuildCLICommand verifies that a populated SpawnConfig is
 // translated into the expected CLI flags for the ais-agent binary.
 //

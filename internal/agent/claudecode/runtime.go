@@ -41,6 +41,12 @@ func New(tc tmux.TmuxClient) *Runtime {
 // Name returns the stable identifier for this runtime.
 func (r *Runtime) Name() string { return "claude" }
 
+// Validate is a no-op: Claude Code has a single fixed backend (Anthropic
+// Claude) and accepts every Model / PermissionMode / tool list the
+// spawner produces. Any cfg shape this runtime would still reject is
+// caught at Spawn or DetectReady time.
+func (r *Runtime) Validate(cfg agent.SpawnConfig) error { return nil }
+
 // MonitoredSessionType returns the tool-type tag used by supervisor.MonitoredSession.
 func (r *Runtime) MonitoredSessionType() string { return "claude_code" }
 

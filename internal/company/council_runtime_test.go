@@ -23,8 +23,9 @@ type fakeCouncilRuntime struct {
 	done           bool
 }
 
-func (f *fakeCouncilRuntime) Name() string                 { return "claude" }
-func (f *fakeCouncilRuntime) MonitoredSessionType() string { return "claude_code" }
+func (f *fakeCouncilRuntime) Name() string                       { return "claude" }
+func (f *fakeCouncilRuntime) Validate(_ agent.SpawnConfig) error { return nil }
+func (f *fakeCouncilRuntime) MonitoredSessionType() string       { return "claude_code" }
 
 func (f *fakeCouncilRuntime) Spawn(_ context.Context, cfg agent.SpawnConfig) (*agent.AgentSession, error) {
 	f.mu.Lock()

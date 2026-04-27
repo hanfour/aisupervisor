@@ -144,6 +144,19 @@ func (s *Store) DeleteProject(projectID string) error {
 }
 
 // SaveTask creates or updates a task.
+//
+// For an EXISTING task (one already present in the store), Status is read
+// back from the stored entry and the supplied t.Status is overwritten
+// before the entry is replaced. This protects against a stale defensive
+// copy from GetTask silently reverting a status change applied via
+// UpdateTaskStatus / ForceUpdateTaskStatus between GetTask and SaveTask.
+// Callers that need to change status MUST go through the status-mutator
+// APIs; SaveTask is for non-status field updates (ErrorLog, GateRequestID,
+// PreTaskCommit, BranchName, RetryCount, …).
+//
+// For a NEW task (no existing entry), the supplied t.Status is honored —
+// this is the AddTask path that legitimately seeds Status to TaskReady or
+// TaskBacklog.
 func (s *Store) SaveTask(t *Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,6 +169,10 @@ func (s *Store) SaveTask(t *Task) error {
 	}
 	if t.Status == "" {
 		t.Status = TaskBacklog
+	}
+
+	if existing, ok := s.tasks[t.ID]; ok {
+		t.Status = existing.Status
 	}
 
 	s.tasks[t.ID] = t

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/ai"
@@ -271,6 +272,19 @@ func (m *Manager) advanceFromPRD(prdTaskID string) {
 	defer cancel()
 	if err := m.DecomposeFromPRD(ctx, p.ID, prdContent); err != nil {
 		log.Printf("WARNING: DecomposeFromPRD failed for project %s: %v", p.ID, err)
+	}
+
+	// Phase 0 Architecture Review: catch gaps the decompose AI silently
+	// dropped (e.g. produced 10 SQL tasks for a SaaS PRD that demanded
+	// frontend / backend / integration / tests / infra). The reviewer
+	// reads the just-created task list against the PRD and emits
+	// additional tasks for any required layer that is unrepresented or
+	// underrepresented. Failure is non-fatal — original tasks still
+	// proceed to development if review can't reach the AI.
+	reviewCtx, reviewCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer reviewCancel()
+	if err := m.ReviewDecomposedTasks(reviewCtx, p.ID, prdContent); err != nil {
+		log.Printf("WARNING: ReviewDecomposedTasks failed for project %s: %v — proceeding with original task list", p.ID, err)
 	}
 
 	// Engage idle workers with newly created tasks
@@ -555,4 +569,173 @@ func findBestWorkerForCommunity(task *project.Task, idle []idleWorkerSnapshot, g
 		}
 	}
 	return ""
+}
+
+// ReviewDecomposedTasks runs a Phase-0 architecture-review pass over the
+// task list a fresh DecomposeFromPRD just produced. It exists because
+// even with the explicit "FULL-STACK MANDATORY COVERAGE" decompose
+// prompt, the AI sometimes still drops layers — most often when the PRD
+// is dominated by data-model spec and treats backend / frontend /
+// integration / infra as implicit. This second pass uses a different
+// system prompt focused exclusively on gap-finding, and appends any
+// missing-layer tasks back into the project's task list.
+//
+// Idempotency: the reviewer receives the project's existing task titles
+// + descriptions so it knows what is already covered and only emits
+// additional tasks. It is safe to call ReviewDecomposedTasks more than
+// once — subsequent runs that find nothing missing are no-ops.
+//
+// Failure mode: if the chat provider is unavailable or returns a
+// malformed response, this method returns an error. advanceFromPRD logs
+// the warning and proceeds with the original (possibly incomplete) task
+// list rather than blocking the whole project.
+func (m *Manager) ReviewDecomposedTasks(ctx context.Context, projectID, prdContent string) error {
+	if m.chatProvider == nil {
+		return fmt.Errorf("chat provider not configured")
+	}
+
+	p, ok := m.projectStore.GetProject(projectID)
+	if !ok {
+		return fmt.Errorf("project %q not found", projectID)
+	}
+
+	existing := m.projectStore.TasksForProject(projectID)
+	if len(existing) == 0 {
+		// Nothing to review against — the decompose step produced no
+		// tasks. Returning nil here preserves the previous (no-review)
+		// behaviour for that pathological case.
+		return nil
+	}
+
+	var summary strings.Builder
+	summary.WriteString("# 既有任務清單 / Existing tasks\n\n")
+	for _, t := range existing {
+		summary.WriteString(fmt.Sprintf("- [%s] %s — %s\n", t.Type, t.Title, t.Description))
+	}
+
+	systemPrompt := reviewDecomposedTasksSystemPrompt(m.GetLanguage())
+	userMsg := fmt.Sprintf("專案名稱：%s\n描述：%s\n\n%s\n\n--- PRD 內容 ---\n%s",
+		p.Name, p.Description, summary.String(), prdContent)
+
+	messages := []ai.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userMsg},
+	}
+
+	text, err := m.chatProvider.Chat(ctx, messages)
+	if err != nil {
+		return fmt.Errorf("review chat: %w", err)
+	}
+
+	var result struct {
+		Gaps  []string         `json:"gaps"`
+		Tasks []decomposedTask `json:"tasks"`
+	}
+	extracted := extractChatJSON(text)
+	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
+		return fmt.Errorf("parse review JSON: %w (raw: %s)", err, text)
+	}
+
+	if len(result.Tasks) == 0 {
+		log.Printf("phase0-review: project %s — no gaps found, %d existing tasks accepted as complete", projectID, len(existing))
+		return nil
+	}
+
+	log.Printf("phase0-review: project %s — found %d gap(s): %v; appending %d new task(s)",
+		projectID, len(result.Gaps), result.Gaps, len(result.Tasks))
+
+	for _, dt := range result.Tasks {
+		taskType := "code"
+		switch dt.Type {
+		case "research", "design", "admin", "hr":
+			taskType = dt.Type
+		}
+		if _, err := m.AddTask(projectID, dt.Title, dt.Description, dt.Prompt, nil, dt.Priority, "", taskType); err != nil {
+			return fmt.Errorf("add gap-fill task %q: %w", dt.Title, err)
+		}
+	}
+
+	m.emit(Event{
+		Type:      EventTaskCreated,
+		ProjectID: projectID,
+		Message: m.msgf(
+			"Phase-0 review added %d gap-fill tasks (gaps: %s)",
+			"Phase-0 review 補上 %d 個缺漏任務（缺漏層：%s）",
+			len(result.Tasks), strings.Join(result.Gaps, ", "),
+		),
+	})
+
+	return nil
+}
+
+// reviewDecomposedTasksSystemPrompt returns the system prompt for the
+// Phase-0 architecture reviewer. The reviewer is intentionally
+// gap-finding-only: it does NOT re-decompose the whole PRD, only emits
+// tasks for layers that are unrepresented or underrepresented relative
+// to the eight-layer coverage contract.
+func reviewDecomposedTasksSystemPrompt(lang string) string {
+	if lang == "en" {
+		return `You are a senior architect reviewing the task list a project manager has just produced from a PRD.
+
+Your only job is to identify GAPS: layers the PRD requires that the existing task list does not cover, or covers too thinly.
+
+# THE EIGHT LAYERS
+
+  1. Database / data model — DDL, indexes, RLS, GDPR, audit log
+  2. Backend API / services — handlers, models, middleware
+  3. Frontend — pages, components, routing, state, API client
+  4. Third-party integration — webhooks, OAuth, vendor SDKs
+  5. Background jobs / workers / queues
+  6. Tests — unit, integration, e2e, fixtures
+  7. Documentation — API ref, ops runbook
+  8. Infrastructure / deployment — Dockerfile, compose, CI/CD
+
+For each layer the PRD mentions (explicitly or implicitly), check whether the existing task list has at least one task that delivers it. If not, that is a GAP.
+
+# DO NOT
+
+- Do NOT re-emit tasks that the existing list already covers (read titles + descriptions carefully).
+- Do NOT lower the bar by accepting a single SQL task as "tests covered" — tests need their own dedicated task.
+- Do NOT pad: if a layer is genuinely out-of-scope per the PRD, it is NOT a gap.
+- Do NOT renumber priorities of existing tasks.
+
+# OUTPUT FORMAT
+
+Respond with valid JSON only. The "gaps" array is a human-readable list of the layers/components found missing (one short string each). The "tasks" array contains ONLY the additional tasks needed to fill those gaps; same shape as decompose output (title / description / prompt / type / priority).
+
+If nothing is missing, return {"gaps": [], "tasks": []}.
+
+{"gaps": ["..."], "tasks": [{"title": "...", "description": "...", "prompt": "...", "type": "code", "priority": 20}]}`
+	}
+	return `你是一位資深架構師，負責 review PM 剛從 PRD 拆出的任務清單。
+
+你的唯一職責是**找出缺漏**：PRD 要求但既有任務清單沒涵蓋、或涵蓋太薄的層。
+
+# 八層
+
+  1. 資料庫 / 資料模型 — DDL、索引、RLS、GDPR、audit log
+  2. 後端 API / services — handler、model、middleware
+  3. 前端 — 頁面、component、routing、state、API client
+  4. 第三方整合 — webhook、OAuth、vendor SDK
+  5. 背景任務 / workers / queues
+  6. 測試 — 單元、整合、e2e、fixture
+  7. 文件 — API 參考、運維 runbook
+  8. 基礎設施 / 部署 — Dockerfile、compose、CI/CD
+
+對每一層，檢查既有任務清單是否至少有一個 task 交付它。若無，即為缺漏。
+
+# 禁止事項
+
+- **不要**重發既有清單已涵蓋的任務（仔細讀 title + description）
+- **不要**降標：把單個 SQL task 當成「測試已涵蓋」是不行的，測試需要獨立 task
+- **不要**灌水：若 PRD 真的明確 out-of-scope，那不算缺漏
+- **不要**改既有任務的 priority
+
+# 輸出格式
+
+只用有效 JSON 回應。"gaps" 陣列為缺漏層/元件的人類可讀清單（每項一段短字串）。"tasks" 陣列僅包含補洞所需的額外任務，與 decompose 輸出同 shape（title / description / prompt / type / priority）。
+
+若無缺漏，回傳 {"gaps": [], "tasks": []}。
+
+{"gaps": ["..."], "tasks": [{"title": "...", "description": "...", "prompt": "...", "type": "code", "priority": 20}]}`
 }

@@ -15,7 +15,12 @@ type ProjectPhase string
 const (
 	PhasePRD         ProjectPhase = "prd"
 	PhaseDevelopment ProjectPhase = "development"
-	PhaseCompleted   ProjectPhase = "completed"
+	// PhaseVerifying is the post-development phase where the project's
+	// verify_cmd runs against the assembled deliverable. On failure the
+	// AI decomposes the test output into fix tasks and the phase reverts
+	// to development; on success it advances to completed.
+	PhaseVerifying ProjectPhase = "verifying"
+	PhaseCompleted ProjectPhase = "completed"
 )
 
 type Project struct {
@@ -37,4 +42,14 @@ type Project struct {
 	// MaxIterations is the project-level default for how many self-improve cycles
 	// a worker can attempt before accepting the result (default 3).
 	MaxIterations int `yaml:"max_iterations,omitempty" json:"maxIterations,omitempty"`
+
+	// VerifyIterations counts how many times the project-level verify_cmd
+	// has been run + the test output decomposed into fix tasks. Reaches
+	// MaxVerifyIterations and the project is force-completed even if
+	// verify still fails (avoids unbounded loops on un-fixable bugs).
+	VerifyIterations int `yaml:"verify_iterations,omitempty" json:"verifyIterations,omitempty"`
+	// MaxVerifyIterations caps how many "all-tasks-done → verify → fail
+	// → decompose → development" cycles a project can take before being
+	// declared completed-with-failures. Defaults to 5 when zero.
+	MaxVerifyIterations int `yaml:"max_verify_iterations,omitempty" json:"maxVerifyIterations,omitempty"`
 }

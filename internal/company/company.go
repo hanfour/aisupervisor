@@ -2317,7 +2317,24 @@ func (m *Manager) ProjectProgress(projectID string) ProgressDTO {
 	return dto
 }
 
-// checkProjectCompletion checks if all tasks in a project are done/failed and triggers retro.
+// checkProjectCompletion checks if all tasks in a project are done/failed
+// and either runs the project-level verify gate, advances to completed,
+// or schedules a self-fix iteration.
+//
+// Flow:
+//
+//	all tasks done? --no--> return (wait for next completion)
+//	         |yes
+//	         v
+//	verify_cmd set & under MaxVerifyIterations? --no--> mark completed
+//	         |yes
+//	         v
+//	run verify_cmd
+//	  passes? --yes--> mark completed
+//	  fails?  --yes--> AI decomposes test output into fix tasks,
+//	                   appends them, reverts phase to development,
+//	                   bumps VerifyIterations. Next task completion
+//	                   re-enters this function.
 func (m *Manager) checkProjectCompletion(projectID string) {
 	progress := m.ProjectProgress(projectID)
 	if progress.Total == 0 {
@@ -2337,7 +2354,27 @@ func (m *Manager) checkProjectCompletion(projectID string) {
 		return
 	}
 
+	// Project-level verify-and-iterate gate. Only runs when:
+	//   - the project has a verify_cmd configured, AND
+	//   - we haven't exhausted MaxVerifyIterations (default 5).
+	// When neither holds we fall through to the original "mark completed"
+	// behaviour, preserving compatibility with projects that never opted in
+	// to project-level verification.
+	if p.VerifyCmd != "" {
+		maxIter := p.MaxVerifyIterations
+		if maxIter <= 0 {
+			maxIter = 5
+		}
+		if p.VerifyIterations < maxIter {
+			m.runProjectVerifyAndIterate(p, progress)
+			return
+		}
+		log.Printf("project-verify: project %s reached MaxVerifyIterations=%d — accepting current state and marking completed",
+			projectID, maxIter)
+	}
+
 	p.Status = project.ProjectCompleted
+	p.Phase = project.PhaseCompleted
 	m.projectStore.SaveProject(p)
 
 	m.emit(Event{
@@ -2357,6 +2394,244 @@ func (m *Manager) checkProjectCompletion(projectID string) {
 			log.Printf("WARNING: auto-retro for project %s failed: %v", projectID, err)
 		}
 	}()
+}
+
+// runProjectVerifyAndIterate executes the project's verify_cmd and either
+// advances to completed (on pass) or appends AI-generated fix tasks and
+// reverts phase to development (on fail). Always called with the
+// progress snapshot that triggered the verify, so we can include it in
+// the event message for completed-on-pass.
+//
+// Concurrency: this method may take seconds (build/test cmd I/O) and
+// then minutes (AI decompose). It runs in a goroutine to avoid blocking
+// the calling task-completion handler. Failures are logged and the
+// project remains in the verifying phase until the next task completion
+// re-enters checkProjectCompletion (defensive against transient errors).
+func (m *Manager) runProjectVerifyAndIterate(p *project.Project, progress ProgressDTO) {
+	go func() {
+		// Mark the project as verifying so observers (GUI, retro,
+		// downstream automations) see the gate in action.
+		p.Phase = project.PhaseVerifying
+		m.projectStore.SaveProject(p)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+
+		passed, output, err := m.runProjectVerification(ctx, p)
+		if err != nil {
+			log.Printf("project-verify[%s]: execution error: %v", p.ID, err)
+			// Treat execution error as failure — same recovery path: ask
+			// AI to decompose and fix.
+			passed = false
+			output = fmt.Sprintf("verify_cmd execution error: %v\n%s", err, output)
+		}
+
+		if passed {
+			p.Phase = project.PhaseCompleted
+			p.Status = project.ProjectCompleted
+			m.projectStore.SaveProject(p)
+
+			m.emit(Event{
+				Type:      EventProjectCompleted,
+				ProjectID: p.ID,
+				Message: m.msgf(
+					"Project %q passed verification on iteration %d (%d done, %d failed)",
+					"專案「%s」於第 %d 輪驗證通過（%d 完成、%d 失敗）",
+					p.Name, p.VerifyIterations+1, progress.Done, progress.Failed,
+				),
+			})
+
+			m.updateObjectiveProgress(p.ID)
+
+			retroCtx, retroCancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer retroCancel()
+			if err := m.RunRetro(retroCtx, p.ID); err != nil {
+				log.Printf("WARNING: auto-retro for project %s failed: %v", p.ID, err)
+			}
+			return
+		}
+
+		// Failed — bump counter and ask AI to decompose into fix tasks.
+		p.VerifyIterations++
+		m.projectStore.SaveProject(p)
+
+		log.Printf("project-verify[%s]: iteration %d FAILED — decomposing test output into fix tasks", p.ID, p.VerifyIterations)
+		m.emit(Event{
+			Type:      EventTaskFailed,
+			ProjectID: p.ID,
+			Message: m.msgf(
+				"Project %q verify FAILED on iteration %d — generating fix tasks",
+				"專案「%s」第 %d 輪驗證失敗 — 產生修復任務中",
+				p.Name, p.VerifyIterations,
+			),
+		})
+
+		decomposeCtx, decomposeCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer decomposeCancel()
+		if err := m.decomposeFromVerifyFailure(decomposeCtx, p.ID, output); err != nil {
+			log.Printf("project-verify[%s]: decompose-from-failure error: %v — leaving project in verifying phase", p.ID, err)
+			// Don't revert phase; next task completion may retry, or
+			// human can intervene via GUI.
+			return
+		}
+
+		// Revert to development so newly added fix tasks are picked up
+		// by proactiveTaskDiscovery / drainReadyQueue.
+		p.Phase = project.PhaseDevelopment
+		m.projectStore.SaveProject(p)
+
+		// Engage idle workers immediately so the iteration starts now,
+		// not on the next 60s tick.
+		go m.drainReadyQueue(context.Background())
+	}()
+}
+
+// runProjectVerification executes the project's verify_cmd inside the
+// project repo and returns (passed, combined-stdout-stderr, execution-error).
+// Output is capped at 32 KB to keep AI prompts small and keep memory
+// bounded if the test runner streams gigabytes.
+func (m *Manager) runProjectVerification(ctx context.Context, p *project.Project) (bool, string, error) {
+	if p.VerifyCmd == "" {
+		return true, "", nil
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", p.VerifyCmd)
+	cmd.Dir = p.RepoPath
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+	const maxOutput = 32 * 1024
+	if len(output) > maxOutput {
+		output = output[:maxOutput] + "\n... [truncated to 32 KB]"
+	}
+	if err != nil {
+		// Distinguish "command exited non-zero" (test failed) from
+		// "couldn't run command at all" (executor error).
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			_ = exitErr
+			return false, output, nil
+		}
+		return false, output, err
+	}
+	return true, output, nil
+}
+
+// decomposeFromVerifyFailure asks the AI to translate a failed
+// verify_cmd's output into fix tasks. The prompt instructs the AI to
+// focus narrowly on the actual error signatures rather than re-doing
+// the whole PRD; failures from a verify_cmd are usually localised
+// (one missing function, one bad SQL constraint, one broken import).
+//
+// Tasks emitted are appended to the project (status=ready) so
+// drainReadyQueue picks them up. They carry a description prefix
+// "[verify-iter-N]" to make the iteration trail visible.
+func (m *Manager) decomposeFromVerifyFailure(ctx context.Context, projectID, testOutput string) error {
+	if m.chatProvider == nil {
+		return fmt.Errorf("chat provider not configured")
+	}
+
+	p, ok := m.projectStore.GetProject(projectID)
+	if !ok {
+		return fmt.Errorf("project %q not found", projectID)
+	}
+
+	systemPrompt := decomposeFromVerifyFailureSystemPrompt(m.GetLanguage())
+	userMsg := fmt.Sprintf(
+		"專案：%s\n描述：%s\n迭代次數：%d / %d\n\n--- verify_cmd 輸出（測試失敗） ---\n%s",
+		p.Name, p.Description, p.VerifyIterations,
+		func() int {
+			if p.MaxVerifyIterations > 0 {
+				return p.MaxVerifyIterations
+			}
+			return 5
+		}(),
+		testOutput,
+	)
+
+	messages := []ai.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userMsg},
+	}
+
+	text, err := m.chatProvider.Chat(ctx, messages)
+	if err != nil {
+		return fmt.Errorf("chat: %w", err)
+	}
+
+	var result struct {
+		Tasks []decomposedTask `json:"tasks"`
+	}
+	extracted := extractChatJSON(text)
+	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
+		return fmt.Errorf("parse fix-task JSON: %w (raw: %s)", err, text)
+	}
+
+	prefix := fmt.Sprintf("[verify-iter-%d] ", p.VerifyIterations)
+	for _, dt := range result.Tasks {
+		taskType := "code"
+		switch dt.Type {
+		case "research", "design", "admin", "hr":
+			taskType = dt.Type
+		}
+		desc := prefix + dt.Description
+		if _, err := m.AddTask(projectID, dt.Title, desc, dt.Prompt, nil, dt.Priority, "", taskType); err != nil {
+			return fmt.Errorf("add fix task %q: %w", dt.Title, err)
+		}
+	}
+
+	log.Printf("project-verify[%s]: iteration %d generated %d fix task(s)", projectID, p.VerifyIterations, len(result.Tasks))
+	return nil
+}
+
+// decomposeFromVerifyFailureSystemPrompt is a narrower-scope prompt
+// than DecomposeFromPRD's: the input here is a verify_cmd's stderr/
+// stdout, not a PRD. The AI should emit *only* the tasks needed to
+// fix the specific failures, not re-decompose the whole project.
+func decomposeFromVerifyFailureSystemPrompt(lang string) string {
+	if lang == "en" {
+		return `You are a senior engineer reading the failing output of a project's verify_cmd (typically tests, lint, type-check, or build).
+
+Your job: emit the SMALLEST set of fix tasks that would make the verify_cmd pass. Read the error signatures carefully; do not re-decompose the whole project.
+
+# RULES
+
+- One distinct error class = one task. (Ten missing imports across the same file = one task; ten failing test assertions across ten different modules = ten tasks.)
+- Read line + file references in the output. Cite them in the task prompt.
+- Each task must be independently completable: a worker reading the prompt should know exactly which file to edit, which test to make green, and how to verify the fix locally.
+- Do NOT re-emit "write tests" tasks unless a NEW test must be written (the verify output already says which tests fail; the fix is to make them pass).
+- Do NOT pad with documentation/infra tasks unless the failure is in those layers.
+
+# TASK SHAPE
+
+Each task: { title, description, prompt, type ("code" | "research" | "design" | "admin" | "hr"), priority }
+Priorities: start at 100 + iteration so fix tasks sort after original PRD tasks but in stable order.
+
+# OUTPUT FORMAT
+
+Respond with valid JSON only — no markdown fences, no commentary:
+
+{"tasks": [{"title": "...", "description": "...", "prompt": "...", "type": "code", "priority": 100}]}`
+	}
+	return `你是一位資深工程師，正在讀專案 verify_cmd 失敗的輸出（通常是測試、lint、type-check 或 build）。
+
+你的工作：產出**最小集合的修復任務**，讓 verify_cmd 通過。仔細讀錯誤訊號；不要把整個專案重新拆解。
+
+# 規則
+
+- 一類錯誤一個任務。（同一檔案 10 個 missing import = 1 個 task；10 個 module 各 1 個 failing assertion = 10 個 task）
+- 讀輸出中的行號 + 檔案引用，在任務 prompt 中列出
+- 每個任務必須可獨立完成：worker 讀 prompt 就知道該改哪個檔案、要讓哪個 test 變綠、如何在本地驗證
+- **不要**再開「寫測試」任務，除非必須寫**新**測試（verify 輸出已指出失敗的 test，修復目標是讓它通過）
+- **不要**灌水文件 / 基礎設施任務，除非失敗發生在那些層
+
+# 任務形狀
+
+每個任務：{ title, description, prompt, type ("code" | "research" | "design" | "admin" | "hr"), priority }
+優先序：從 100 + 迭代次數開始，讓修復任務在原 PRD 任務之後排序但內部穩定。
+
+# 輸出格式
+
+只用有效 JSON 回應 — 不要 markdown 圍欄、不要註解：
+
+{"tasks": [{"title": "...", "description": "...", "prompt": "...", "type": "code", "priority": 100}]}`
 }
 
 // Subscribe creates a new event channel that receives all future events.

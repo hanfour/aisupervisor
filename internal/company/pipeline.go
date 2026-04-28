@@ -339,36 +339,80 @@ func (m *Manager) DecomposeFromPRD(ctx context.Context, projectID, prdContent st
 
 func decomposeFromPRDSystemPrompt(lang string) string {
 	if lang == "en" {
-		return `You are a project manager who breaks down a PRD into actionable development tasks.
+		return `You are a senior project manager breaking down a PRD into actionable development tasks for an autonomous AI worker swarm.
 
-Given a project name, description, and PRD content, create a list of concrete tasks.
+Your output must produce a FULL-STACK task list — not just the easy slice. Workers cannot deliver a working product if entire layers are missing.
 
-Rules:
-- Each task should be small and focused (completable in a few hours).
-- Include a clear title, description, and a detailed prompt that a developer can directly use.
-- Set type to "code" for implementation, "research" for investigation, "design" for UI/UX, "admin" for document/template tasks, or "hr" for hiring/workforce tasks.
-- Design tasks should output to docs/design/ directory.
-- Priority: 1 = highest, higher numbers = lower priority. Order tasks logically.
-- The prompt should be specific enough that an AI coding assistant can execute it.
-- Generate 3-15 tasks depending on the project scope.
+# MANDATORY COVERAGE
 
-Respond with valid JSON only:
+For every layer the PRD mentions (explicitly or implicitly), produce at least one task. If the PRD does not mention a layer, do NOT skip it silently — instead include exactly one task with title prefixed "out-of-scope: <layer>" and a prompt that says "PRD does not require this layer; no work needed". This makes the omission auditable.
+
+The layers (apply each test against the PRD):
+
+  1. Database / data model — DDL, indexes, RLS, GDPR, audit log if multi-tenant. Output: schema/*.sql
+  2. Backend API / services — handlers, models, middleware (auth, rate-limit). Output: backend/, src/api/, internal/
+  3. Frontend — pages, components, routing, state, API client; LIFF/SPA build infra. Output: frontend/, web/
+  4. Third-party integration — webhook endpoints, OAuth flow, SDK setup, retry/idempotency. Output: integration/, webhooks/
+  5. Background jobs / workers / queues — cron, queue consumers, async pipelines. Output: jobs/, workers/
+  6. Tests — unit, integration, e2e, fixtures. Output: tests/, *_test.go, *.spec.ts
+  7. Documentation — API reference, ops runbook. Output: docs/
+  8. Infrastructure / deployment — Dockerfile, compose, CI/CD, env config. Output: infra/, .github/, Dockerfile
+
+# TASK SHAPE
+
+Each task must have:
+  - title: imperative, scope-narrow ("Implement LINE webhook signature verification middleware" — not "Handle LINE integration")
+  - description: one paragraph stating what is delivered and how it is verified
+  - prompt: concrete enough that an AI coding assistant can run it without further questions. Include file paths, key APIs, validation criteria.
+  - type: "code", "research", "design", "admin", "hr"
+  - priority: 1 (highest) — order topologically: data layer → API → frontend → tests → infra → docs
+
+# QUANTITY
+
+Generate as many tasks as the PRD genuinely requires (typical full-stack SaaS: 25-50). Do NOT cap at 15. Do NOT pad: one file = one task; ten endpoints = ten tasks.
+
+# OUTPUT FORMAT
+
+Respond with valid JSON only — no markdown fences, no commentary:
+
 {"tasks": [{"title": "...", "description": "...", "prompt": "...", "type": "code", "priority": 1}]}`
 	}
-	return `你是一位專案經理，負責將 PRD 分解為可執行的開發任務。
+	return `你是一位資深專案經理，負責將 PRD 分解為可執行的開發任務，給自主 AI worker swarm 執行。
 
-根據專案名稱、描述和 PRD 內容，建立一份具體任務清單。
+輸出**必須是全棧任務清單** — 不能只挑容易的一層做。整層沒人做的話 worker 永遠交不出可用產品。
 
-規則：
-- 每個任務應該小而專注（幾小時內可完成）。
-- 包含清楚的標題、描述，以及開發者可以直接使用的詳細 prompt。
-- type 設為 "code"（實作）、"research"（調查）、"design"（UI/UX 設計）、"admin"（文件/模板任務）或 "hr"（招募/人力任務）。
-- 設計任務應輸出到 docs/design/ 目錄。
-- 優先順序：1 = 最高，數字越大優先度越低。按邏輯順序排列任務。
-- prompt 要夠具體，讓 AI 程式助手可以直接執行。
-- 根據專案規模生成 3-15 個任務。
+# 強制涵蓋
 
-只用有效的 JSON 回應：
+PRD 提到（明示或暗示）的每一層，至少產出一個任務。若 PRD 沒提到某層，**不要無聲跳過** — 改用標題前綴 "out-of-scope: <層>" 並在 prompt 中註明「PRD 未要求此層，本任務無需執行」。這樣遺漏可被稽核。
+
+各層（逐項對照 PRD）：
+
+  1. 資料庫 / 資料模型 — DDL、索引、RLS、GDPR、若多租戶必含 audit log。輸出：schema/*.sql
+  2. 後端 API / services — handler、model、middleware（auth、rate-limit）。輸出：backend/、src/api/、internal/
+  3. 前端 — 頁面、component、routing、state、API client；LIFF/SPA build 基礎設施。輸出：frontend/、web/
+  4. 第三方整合 — webhook endpoint、OAuth flow、SDK 設定、retry/idempotency。輸出：integration/、webhooks/
+  5. 背景任務 / workers / queues — cron、queue consumer、async pipeline。輸出：jobs/、workers/
+  6. 測試 — 單元、整合、e2e、fixture。輸出：tests/、*_test.go、*.spec.ts
+  7. 文件 — API 參考、運維 runbook。輸出：docs/
+  8. 基礎設施 / 部署 — Dockerfile、compose、CI/CD、env 設定。輸出：infra/、.github/、Dockerfile
+
+# 任務形狀
+
+每個任務必須有：
+  - title：祈使語氣、範圍窄（「實作 LINE webhook 簽章驗證 middleware」，不要「處理 LINE 整合」）
+  - description：一段話說明交付內容與驗收方式
+  - prompt：足夠具體，AI 程式助手不必再問就能執行。包含檔案路徑、關鍵 API、驗收標準
+  - type："code"（實作）、"research"（調查）、"design"（UI/UX 或架構設計）、"admin"（文件/模板）、"hr"（招募）
+  - priority：1 = 最高，按拓撲順序：資料層 → API → 前端 → 測試 → 基礎設施 → 文件
+
+# 數量
+
+依 PRD 實際需求生成（典型全棧 SaaS：25-50 個任務）。**不要硬限 15 個**。也不要灌水：一檔案一個 task；10 個 endpoint 就 10 個 task。
+
+# 輸出格式
+
+只用有效 JSON 回應 — 不要 markdown 圍欄、不要註解：
+
 {"tasks": [{"title": "...", "description": "...", "prompt": "...", "type": "code", "priority": 1}]}`
 }
 

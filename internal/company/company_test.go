@@ -1,11 +1,33 @@
 package company
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/hanfourmini/aisupervisor/internal/project"
+	"github.com/hanfourmini/aisupervisor/internal/worker"
 )
+
+// recoverTestStart sets up a Manager wired with a tmux mock that says
+// "the session is alive" and a real CompletionMonitor pointing at the
+// same mock (so watchCompletion's polling won't crash on a nil monitor).
+// Tests using this helper should call m.Shutdown() in a defer to cancel
+// any goroutines the recovery actually spawns — the watchCompletion
+// goroutine will block forever otherwise.
+func recoverTestStart(t *testing.T) (*Manager, *project.Store) {
+	t.Helper()
+	dir := t.TempDir()
+	store := testStore(t)
+	m, err := New(store, nil, nil, nil, nil, dir, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	tmuxC := &stuckTestTmux{} // HasSession returns true, capture returns frozen
+	m.tmuxClient = tmuxC
+	m.monitor = worker.NewCompletionMonitor(tmuxC)
+	return m, store
+}
 
 func testStore(t *testing.T) *project.Store {
 	t.Helper()
@@ -522,5 +544,117 @@ func TestNew_StartsPeriodicHealthCheck(t *testing.T) {
 		// every spawned goroutine, including StartHealthCheck if it ran.
 	case <-time.After(2 * time.Second):
 		t.Fatal("Shutdown did not return within 2s — StartHealthCheck or another goroutine is not respecting bgCtx")
+	}
+}
+
+// TestRecoverActiveMonitors_RestartsForLiveTmux covers the recovery path:
+// a worker persisted as `working` with a tmux session that's still alive
+// gets a watchCompletion goroutine restarted (visible via m.cancels). This
+// is the path that prevents the wails-dev hot-reload / OS-restart class of
+// "stranded worker" bug, where a tmux pane keeps running a claude/ais-agent
+// process but no goroutine polls it for completion.
+func TestRecoverActiveMonitors_RestartsForLiveTmux(t *testing.T) {
+	m, store := recoverTestStart(t)
+	defer m.Shutdown()
+
+	// Set up a project + task + worker that look like an in-flight task.
+	p, err := m.CreateProject("recover-proj", "test", t.TempDir(), "main", nil)
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	tk, err := m.AddTask(p.ID, "in-flight", "desc", "do stuff", nil, 1, "", "code")
+	if err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+	if err := store.ForceUpdateTaskStatus(tk.ID, project.TaskInProgress); err != nil {
+		t.Fatalf("ForceUpdateTaskStatus: %v", err)
+	}
+
+	w, err := m.CreateWorker("RecoverTest", "")
+	if err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	m.mu.Lock()
+	w.Status = worker.WorkerWorking
+	w.CurrentTaskID = tk.ID
+	w.TmuxSession = "test-session-alive"
+	m.mu.Unlock()
+
+	// Pre-condition: no monitor goroutine is registered for w yet.
+	m.mu.RLock()
+	if _, ok := m.cancels[w.ID]; ok {
+		m.mu.RUnlock()
+		t.Fatal("precondition: cancels map should be empty before recoverActiveMonitors")
+	}
+	m.mu.RUnlock()
+
+	bgCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.recoverActiveMonitors(bgCtx)
+
+	// Post-condition: a cancel func is registered, meaning watchCompletion
+	// goroutine was started for this worker. (The goroutine itself is
+	// already polling the stuckTestTmux mock and will exit when Shutdown
+	// cancels bgCtx or when the test's defer cancel() fires.)
+	m.mu.RLock()
+	_, ok := m.cancels[w.ID]
+	m.mu.RUnlock()
+	if !ok {
+		t.Fatal("expected cancels[worker] to be registered after recoverActiveMonitors — goroutine not started")
+	}
+}
+
+// TestRecoverActiveMonitors_SkipsIdleWorker verifies the negative case:
+// a worker in idle state (typical post-recovery) is NOT recovered, even
+// if it still has a CurrentTaskID set.
+func TestRecoverActiveMonitors_SkipsIdleWorker(t *testing.T) {
+	m, _ := recoverTestStart(t)
+	defer m.Shutdown()
+
+	w, err := m.CreateWorker("IdleWorker", "")
+	if err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	// Worker is idle (default). Don't set Working.
+
+	bgCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.recoverActiveMonitors(bgCtx)
+
+	m.mu.RLock()
+	_, ok := m.cancels[w.ID]
+	m.mu.RUnlock()
+	if ok {
+		t.Fatal("idle worker should not be recovered — no monitor needed")
+	}
+}
+
+// TestRecoverActiveMonitors_SkipsMissingTask verifies that a working
+// worker pointing at a no-longer-existent task is NOT recovered (we can't
+// watch for completion of a task that isn't there). The worker is left
+// untouched so a human can inspect.
+func TestRecoverActiveMonitors_SkipsMissingTask(t *testing.T) {
+	m, _ := recoverTestStart(t)
+	defer m.Shutdown()
+
+	w, err := m.CreateWorker("OrphanTask", "")
+	if err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	m.mu.Lock()
+	w.Status = worker.WorkerWorking
+	w.CurrentTaskID = "t-does-not-exist"
+	w.TmuxSession = "test-session-alive"
+	m.mu.Unlock()
+
+	bgCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.recoverActiveMonitors(bgCtx)
+
+	m.mu.RLock()
+	_, ok := m.cancels[w.ID]
+	m.mu.RUnlock()
+	if ok {
+		t.Fatal("worker with missing task should not be recovered")
 	}
 }

@@ -1559,9 +1559,9 @@ func (s *Spawner) spawnViaRuntime(
 	return s.spawnViaRuntimeWithConfig(ctx, rt, cfg, w, t, p, workDir)
 }
 
-// sanitizeForClaudeFallback returns a copy of cfg with fields cleared that
-// would have been runtime-specific to whatever non-claude plugin was tried
-// first.
+// sanitizeForClaudeFallback returns a copy of cfg with fields cleared or
+// normalized that would have been runtime-specific to whatever non-claude
+// plugin was tried first.
 //
 // Cleared fields:
 //   - Model — value like "llama3" or "gpt-4o-mini" from ais-agent's growth
@@ -1576,10 +1576,21 @@ func (s *Spawner) spawnViaRuntime(
 //     claude is being used as a recovery substitute, we want the safest
 //     possible invocation, not whatever flags suited the failed runtime.
 //
+// Normalized fields:
+//   - PermissionMode — forced to "bypassPermissions". The growth config
+//     for low-level workers (growth/config_mapper.go level 1) sets
+//     PermissionMode to "plan", which makes claude print proposed actions
+//     and wait indefinitely for human approval — incompatible with this
+//     project's autonomous-worker model where every prompt instructs the
+//     CLI to "work without a human operator". When claude is the fallback
+//     of last resort, the autonomous contract still applies, so we
+//     override the growth-supplied mode to ensure the worker can actually
+//     execute.
+//
 // Pass-through fields (intentionally NOT cleared because they're either
 // runtime-agnostic or claude ignores irrelevant entries):
-//   - PermissionMode, AllowedTools, DisallowedTools, SystemPrompt — runtime
-//     agnostic. Claude needs the same safety guarantees as the original.
+//   - AllowedTools, DisallowedTools, SystemPrompt — runtime agnostic.
+//     Claude needs the same safety guarantees as the original.
 //   - EnvVars — claude reads no AIS_* keys; harmless leftovers stay.
 //   - WorkDir, Branch — same task target.
 //
@@ -1593,6 +1604,7 @@ func sanitizeForClaudeFallback(cfg agent.SpawnConfig) agent.SpawnConfig {
 	out := cfg
 	out.Model = ""
 	out.ExtraCLIArgs = ""
+	out.PermissionMode = "bypassPermissions"
 	return out
 }
 

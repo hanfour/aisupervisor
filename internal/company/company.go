@@ -269,6 +269,15 @@ func New(
 	// Recovery: reset workers with stale tmux sessions to idle
 	m.recoverStaleWorkers()
 
+	// Recovery: restart watchCompletion goroutines for workers that were
+	// persisted as working with a tmux session that's still alive. This
+	// covers the wails-dev hot-reload + production-restart case: the OS
+	// process dies, all goroutines die with it, but the tmux pane and
+	// its claude/ais-agent process keep running independently. Without
+	// this, those workers stay "working" forever because nothing polls
+	// their pane for completion.
+	m.recoverActiveMonitors(bgCtx)
+
 	// Startup health check: fix orphaned tasks, check deps, clean old gates
 	m.lastHealthReport = m.RunHealthCheck()
 
@@ -370,6 +379,70 @@ func (m *Manager) recoverStaleWorkers() {
 	}
 	if changed {
 		m.saveWorkers()
+	}
+}
+
+// recoverActiveMonitors restarts watchCompletion goroutines for workers
+// whose tmux session is still alive but whose previous monitor goroutine
+// died with the prior process (wails-dev hot-reload, OS restart, panic
+// recovery). recoverStaleWorkers handles the OPPOSITE case (tmux is
+// gone) by resetting the worker to idle; this method handles the case
+// where state on disk says "working" AND tmux confirms "still running".
+//
+// Must be called with m.mu unheld (it acquires its own locks per
+// watchCompletion start). Should be called AFTER recoverStaleWorkers so
+// dead-tmux workers are already cleaned up first. bgCtx is the
+// long-lived background context whose cancellation propagates to all
+// monitor goroutines on Shutdown.
+//
+// For each surviving worker the function:
+//  1. Resolves task and project from the worker's persisted CurrentTaskID.
+//  2. Creates a per-worker cancel context derived from bgCtx.
+//  3. Registers the cancel func in m.cancels so HEALTH/Pause/Reset can
+//     cancel it just like a freshly-spawned monitor.
+//  4. Starts watchCompletion in a goroutine.
+//
+// Workers whose CurrentTaskID is missing/invalid are NOT recovered —
+// they'd have nothing to watch for completion of. They're left as-is
+// for the human to inspect (typically a bug worth reporting).
+func (m *Manager) recoverActiveMonitors(bgCtx context.Context) {
+	if m.tmuxClient == nil || m.monitor == nil {
+		return
+	}
+	for _, w := range m.workers {
+		if w.Status != worker.WorkerWorking {
+			continue
+		}
+		if w.TmuxSession == "" {
+			continue
+		}
+		has, err := m.tmuxClient.HasSession(w.TmuxSession)
+		if err != nil || !has {
+			// recoverStaleWorkers already handled this — tmux is gone.
+			continue
+		}
+		if w.CurrentTaskID == "" {
+			log.Printf("RECOVER: worker %s is working with live tmux %s but has no CurrentTaskID — leaving as-is for inspection", w.ID, w.TmuxSession)
+			continue
+		}
+		t, ok := m.projectStore.GetTask(w.CurrentTaskID)
+		if !ok {
+			log.Printf("RECOVER: worker %s task %s not found — leaving worker as-is", w.ID, w.CurrentTaskID)
+			continue
+		}
+		p, ok := m.projectStore.GetProject(t.ProjectID)
+		if !ok {
+			log.Printf("RECOVER: worker %s task %s project %s not found — leaving worker as-is", w.ID, t.ID, t.ProjectID)
+			continue
+		}
+
+		workerCtx, cancel := context.WithCancel(bgCtx)
+		m.mu.Lock()
+		m.cancels[w.ID] = cancel
+		m.mu.Unlock()
+		m.wg.Add(1)
+		log.Printf("RECOVER: restarted watchCompletion for worker %s on task %s (tmux %s)", w.ID, t.ID, w.TmuxSession)
+		go m.watchCompletion(workerCtx, w, t, p)
 	}
 }
 

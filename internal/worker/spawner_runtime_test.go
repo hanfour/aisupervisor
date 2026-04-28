@@ -810,10 +810,13 @@ func TestSpawner_SpawnViaRuntime_FallbackSanitizesModel(t *testing.T) {
 	if good.spawnCfg.ExtraCLIArgs != "" {
 		t.Errorf("claude fallback ExtraCLIArgs = %q, want \"\"", good.spawnCfg.ExtraCLIArgs)
 	}
-	// ... but inherit the safety/policy fields verbatim.
-	if good.spawnCfg.PermissionMode != "plan" {
-		t.Errorf("claude fallback PermissionMode = %q, want %q (must pass through)",
-			good.spawnCfg.PermissionMode, "plan")
+	// PermissionMode is normalized to bypassPermissions on fallback —
+	// growth-config-supplied "plan" mode would make claude block on
+	// every action waiting for approval, breaking the autonomous-worker
+	// contract. See sanitizeForClaudeFallback's docstring.
+	if good.spawnCfg.PermissionMode != "bypassPermissions" {
+		t.Errorf("claude fallback PermissionMode = %q, want %q (sanitize must normalize)",
+			good.spawnCfg.PermissionMode, "bypassPermissions")
 	}
 	if got, want := strings.Join(good.spawnCfg.AllowedTools, ","), "Read,Glob"; got != want {
 		t.Errorf("claude fallback AllowedTools = %q, want %q (must pass through)", got, want)
@@ -842,14 +845,15 @@ func TestSpawner_SpawnViaRuntime_FallbackSanitizesModel(t *testing.T) {
 // than hiding a regression behind the spawnViaRuntime mock plumbing.
 //
 // Cleared fields (per docstring): Model, ExtraCLIArgs.
-// Pass-through fields: WorkDir, Branch, PermissionMode, AllowedTools,
-// DisallowedTools, SystemPrompt, EnvVars.
+// Normalized fields: PermissionMode → "bypassPermissions".
+// Pass-through fields: WorkDir, Branch, AllowedTools, DisallowedTools,
+// SystemPrompt, EnvVars.
 func TestSanitizeForClaudeFallback_PureUnit(t *testing.T) {
 	in := agent.SpawnConfig{
 		WorkDir:         "/tmp/wd",
 		Branch:          "feat/x",
 		Model:           "llama3",
-		PermissionMode:  "bypassPermissions",
+		PermissionMode:  "plan",
 		AllowedTools:    []string{"Read", "Glob"},
 		DisallowedTools: []string{"Edit"},
 		SystemPrompt:    "you are helpful",
@@ -865,9 +869,12 @@ func TestSanitizeForClaudeFallback_PureUnit(t *testing.T) {
 	if out.ExtraCLIArgs != "" {
 		t.Errorf("ExtraCLIArgs = %q, want \"\"", out.ExtraCLIArgs)
 	}
+	// Normalized: PermissionMode forced to bypass regardless of input.
+	if out.PermissionMode != "bypassPermissions" {
+		t.Errorf("PermissionMode = %q, want \"bypassPermissions\"", out.PermissionMode)
+	}
 	// Pass-through scalar fields.
 	if out.WorkDir != in.WorkDir || out.Branch != in.Branch ||
-		out.PermissionMode != in.PermissionMode ||
 		out.SystemPrompt != in.SystemPrompt {
 		t.Errorf("scalar fields diverged: in=%+v out=%+v", in, out)
 	}
@@ -884,6 +891,30 @@ func TestSanitizeForClaudeFallback_PureUnit(t *testing.T) {
 	}
 	if in.ExtraCLIArgs != "--max-tokens 50000" {
 		t.Errorf("input was mutated: in.ExtraCLIArgs = %q", in.ExtraCLIArgs)
+	}
+	if in.PermissionMode != "plan" {
+		t.Errorf("input was mutated: in.PermissionMode = %q", in.PermissionMode)
+	}
+}
+
+// TestSanitizeForClaudeFallback_PermissionModeNormalizedFromBypass verifies
+// the normalization is idempotent — already-bypass cfgs stay bypass.
+func TestSanitizeForClaudeFallback_PermissionModeNormalizedFromBypass(t *testing.T) {
+	in := agent.SpawnConfig{PermissionMode: "bypassPermissions"}
+	out := sanitizeForClaudeFallback(in)
+	if out.PermissionMode != "bypassPermissions" {
+		t.Errorf("PermissionMode = %q, want \"bypassPermissions\"", out.PermissionMode)
+	}
+}
+
+// TestSanitizeForClaudeFallback_PermissionModeNormalizedFromEmpty verifies
+// an empty input mode is also forced to bypass (claude defaults to "default"
+// otherwise, which still prompts on Bash/Edit).
+func TestSanitizeForClaudeFallback_PermissionModeNormalizedFromEmpty(t *testing.T) {
+	in := agent.SpawnConfig{}
+	out := sanitizeForClaudeFallback(in)
+	if out.PermissionMode != "bypassPermissions" {
+		t.Errorf("PermissionMode = %q, want \"bypassPermissions\"", out.PermissionMode)
 	}
 }
 

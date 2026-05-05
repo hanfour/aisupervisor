@@ -45,10 +45,21 @@ const (
 )
 
 // WorkerAppearance stores pixel office visual customization.
+//
+// The legacy layered fields (BodyRow / Outfit / Hair) drive the
+// MetroCity static-spritesheet pipeline (frontend/src/lib/office/sprites.js).
+// They remain for backward compatibility and are still used as the
+// fallback when no AI sprite is available.
+//
+// SpriteSheetPath, when set, points at a per-worker PixelLab AI
+// generated sprite sheet on disk. The frontend prefers it over the
+// layered fields; if the file is missing or unreadable it falls back
+// to the layered renderer.
 type WorkerAppearance struct {
-	BodyRow int    `yaml:"body_row" json:"bodyRow"`   // 0-5 skin tone
-	Outfit  string `yaml:"outfit" json:"outfit"`       // "outfit1".."outfit6"
-	Hair    string `yaml:"hair" json:"hair"`           // "hair1".."hair7"
+	BodyRow         int    `yaml:"body_row" json:"bodyRow"`                   // 0-5 skin tone (layered fallback)
+	Outfit          string `yaml:"outfit" json:"outfit"`                       // "outfit1".."outfit6" (layered fallback)
+	Hair            string `yaml:"hair" json:"hair"`                           // "hair1".."hair7" (layered fallback)
+	SpriteSheetPath string `yaml:"sprite_sheet_path,omitempty" json:"spriteSheetPath,omitempty"` // absolute path to AI-generated sheet, empty = use layered
 }
 
 type Worker struct {

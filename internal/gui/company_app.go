@@ -2,7 +2,9 @@ package gui
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -485,6 +487,36 @@ func (c *CompanyApp) UpdateWorkerFields(workerID, parentID, modelVersion, backen
 // UpdateWorkerAppearance updates the pixel office appearance for a worker.
 func (c *CompanyApp) UpdateWorkerAppearance(workerID string, bodyRow int, outfit, hair string) error {
 	return c.company.UpdateWorkerAppearance(workerID, bodyRow, outfit, hair)
+}
+
+// HasPixelLabSpriteGen reports whether PixelLab AI sprite generation is
+// wired (i.e. an API key is configured). Frontend uses this to decide
+// whether to show the "Regenerate AI Sprite" affordance.
+func (c *CompanyApp) HasPixelLabSpriteGen() bool {
+	return c.company.HasSpriteGenerator()
+}
+
+// GenerateWorkerSprite triggers PixelLab generation for the worker and
+// persists the resulting sprite-sheet path on the worker. Blocks until
+// generation finishes (typically several seconds). Returns the on-disk
+// path on success.
+func (c *CompanyApp) GenerateWorkerSprite(workerID string) (string, error) {
+	return c.company.GenerateWorkerSprite(c.ctx, workerID)
+}
+
+// GetWorkerSpriteDataURL returns the worker's AI sprite sheet as a
+// data: URL the frontend can drop straight into an <img> / Image src.
+// Returns the empty string when no AI sprite exists or read fails — the
+// caller should fall back to the legacy layered renderer in that case.
+func (c *CompanyApp) GetWorkerSpriteDataURL(workerID string) string {
+	png, err := c.company.GetWorkerSpritePNG(workerID)
+	if err != nil {
+		if !errors.Is(err, company.ErrSpriteNotFound) {
+			log.Printf("GetWorkerSpriteDataURL %s: %v", workerID, err)
+		}
+		return ""
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 }
 
 // GetHierarchy returns workers organized by tier.

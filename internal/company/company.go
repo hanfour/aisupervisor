@@ -27,6 +27,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/knowledge"
 	"github.com/hanfourmini/aisupervisor/internal/personality"
 	"github.com/hanfourmini/aisupervisor/internal/project"
+	"github.com/hanfourmini/aisupervisor/internal/sprite"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/training"
 	"github.com/hanfourmini/aisupervisor/internal/worker"
@@ -89,6 +90,7 @@ type Manager struct {
 	mailbox             *Mailbox
 	meetingEngine       *MeetingEngine
 	meetingStore        *MeetingStore
+	spriteGenerator     *sprite.Generator // optional; set via SetSpriteGenerator when PixelLab API key is configured
 }
 
 type workersFile struct {
@@ -901,6 +903,9 @@ func (m *Manager) UpdateWorkerFields(workerID, parentID, modelVersion, backendID
 }
 
 // UpdateWorkerAppearance updates the pixel office appearance for a worker.
+// Preserves any existing AI-generated SpriteSheetPath so a layered-fields
+// edit (changing skin tone / outfit / hair) doesn't accidentally drop the
+// custom sprite reference.
 func (m *Manager) UpdateWorkerAppearance(workerID string, bodyRow int, outfit, hair string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -910,14 +915,135 @@ func (m *Manager) UpdateWorkerAppearance(workerID string, bodyRow int, outfit, h
 		return fmt.Errorf("worker %q not found", workerID)
 	}
 
+	existingSheet := ""
+	if w.Appearance != nil {
+		existingSheet = w.Appearance.SpriteSheetPath
+	}
 	w.Appearance = &worker.WorkerAppearance{
-		BodyRow: bodyRow,
-		Outfit:  outfit,
-		Hair:    hair,
+		BodyRow:         bodyRow,
+		Outfit:          outfit,
+		Hair:            hair,
+		SpriteSheetPath: existingSheet,
 	}
 
 	return m.saveWorkers()
 }
+
+// SetSpriteGenerator wires a *sprite.Generator into the manager. Called
+// once from main.go when a PixelLab API key is configured. Passing nil
+// disables AI sprite generation; callers (GUI bindings) treat this as
+// "feature unavailable" and surface that to the operator.
+func (m *Manager) SetSpriteGenerator(g *sprite.Generator) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.spriteGenerator = g
+}
+
+// HasSpriteGenerator reports whether AI sprite generation is wired.
+// Used by GUI bindings to decide whether to show the "regenerate AI
+// sprite" button or a tooltip explaining the missing API key.
+func (m *Manager) HasSpriteGenerator() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.spriteGenerator != nil
+}
+
+// GenerateWorkerSprite kicks off PixelLab generation for workerID, waits
+// for the sheet to land on disk, persists the path on the worker's
+// Appearance, and saves. Returns the absolute path on success.
+//
+// Errors:
+//
+//   - ErrSpriteGeneratorNotConfigured if SetSpriteGenerator was never
+//     called (typically: no PIXELLAB_API_KEY).
+//   - PixelLab API errors (401 / 429 / 5xx) propagate from the
+//     underlying sprite.Generator.
+//   - Network / disk errors propagate as-is.
+//
+// Concurrency: safe for parallel calls on different workers; per-worker
+// concurrency relies on sprite.Generator's atomic write.
+func (m *Manager) GenerateWorkerSprite(ctx context.Context, workerID string) (string, error) {
+	m.mu.RLock()
+	g := m.spriteGenerator
+	w, ok := m.workers[workerID]
+	m.mu.RUnlock()
+
+	if g == nil {
+		return "", ErrSpriteGeneratorNotConfigured
+	}
+	if !ok {
+		return "", fmt.Errorf("worker %q not found", workerID)
+	}
+
+	gender := ""
+	if w.Gender != "" {
+		gender = string(w.Gender)
+	}
+	personalityFlavor := ""
+	if m.personalityStore != nil {
+		if profile := m.personalityStore.GetProfile(workerID); profile != nil {
+			personalityFlavor = profile.Narrative.Description
+		}
+	}
+
+	path, err := g.GenerateForWorker(ctx, sprite.WorkerProfile{
+		ID:           w.ID,
+		Name:         w.Name,
+		SkillProfile: w.SkillProfile,
+		Gender:       gender,
+		Personality:  personalityFlavor,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	// Persist the path on the worker's appearance under the lock,
+	// preserving the layered fallback fields.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if w.Appearance == nil {
+		w.Appearance = &worker.WorkerAppearance{}
+	}
+	w.Appearance.SpriteSheetPath = path
+	if err := m.saveWorkers(); err != nil {
+		return path, fmt.Errorf("save workers after sprite generation: %w", err)
+	}
+	return path, nil
+}
+
+// GetWorkerSpritePNG returns the raw PNG bytes of a worker's
+// AI-generated sprite sheet. Returns ErrSpriteNotFound when the worker
+// has no SpriteSheetPath set or the file is missing on disk; callers
+// (GUI binding) translate that into the layered-fallback signal.
+func (m *Manager) GetWorkerSpritePNG(workerID string) ([]byte, error) {
+	m.mu.RLock()
+	w, ok := m.workers[workerID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("worker %q not found", workerID)
+	}
+	if w.Appearance == nil || w.Appearance.SpriteSheetPath == "" {
+		return nil, ErrSpriteNotFound
+	}
+	data, err := os.ReadFile(w.Appearance.SpriteSheetPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrSpriteNotFound
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
+// ErrSpriteGeneratorNotConfigured is returned when sprite-generation
+// methods are called without a PixelLab generator wired. Lets callers
+// distinguish "no API key" from "generation actually failed".
+var ErrSpriteGeneratorNotConfigured = fmt.Errorf("company: sprite generator not configured (set PIXELLAB_API_KEY)")
+
+// ErrSpriteNotFound signals that a worker has no AI sprite available
+// (either never generated, or the file was deleted from cache).
+// Callers should fall back to the layered renderer.
+var ErrSpriteNotFound = fmt.Errorf("company: worker has no AI sprite — fall back to layered renderer")
 
 // --- Assignment + lifecycle ---
 

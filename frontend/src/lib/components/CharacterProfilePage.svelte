@@ -3,7 +3,7 @@
   import { getWorker, getManager, getSubordinates } from '../stores/workers.js'
   import { loadCharacterProfile, loadWorkerRelationships, generateNarrative } from '../stores/personality.js'
   import { events } from '../stores/events.js'
-  import { prerenderCharacter, prerenderCharacterFromAppearance, getCharacterType, loadAllSprites, spritesReady } from '../office/sprites.js'
+  import { prerenderCharacter, prerenderCharacterFromAppearance, getCharacterType, loadAllSprites, spritesReady, invalidateCustomSpriteSheet, loadCustomSpriteSheet } from '../office/sprites.js'
   import { openChat } from '../stores/workerChat.js'
   import { t } from '../stores/i18n.js'
   import { calcAge, genderIcon } from '../utils/worker.js'
@@ -25,6 +25,10 @@
   let showAppearanceEditor = false
   let narrativeLoading = false
   let narrativeError = ''
+  let aiSpriteAvailable = false
+  let aiSpriteGenerating = false
+  let aiSpriteError = ''
+  let customSheetCache = null  // animation cache from AI sprite, when available
 
   $: workerEvents = ($events || []).filter(e =>
     e.workerID === workerId || e.workerId === workerId
@@ -45,8 +49,37 @@
   onMount(async () => {
     await loadAllSprites()
     await loadData()
+    try {
+      const has = window?.go?.gui?.CompanyApp?.HasPixelLabSpriteGen
+      aiSpriteAvailable = has ? await has() : false
+    } catch (e) {
+      aiSpriteAvailable = false
+    }
+    if (worker?.appearance?.spriteSheetPath) {
+      customSheetCache = await loadCustomSpriteSheet(workerId)
+    }
     startPortraitAnim()
   })
+
+  async function handleRegenerateSprite() {
+    if (!worker || aiSpriteGenerating) return
+    aiSpriteGenerating = true
+    aiSpriteError = ''
+    try {
+      const path = await window.go.gui.CompanyApp.GenerateWorkerSprite(workerId)
+      // Refresh worker so we get the new spriteSheetPath, then re-load the
+      // custom sheet (invalidate to force a network fetch of the new PNG).
+      worker = await getWorker(workerId)
+      invalidateCustomSpriteSheet(workerId)
+      customSheetCache = await loadCustomSpriteSheet(workerId)
+      drawPortrait()
+    } catch (e) {
+      console.error('GenerateWorkerSprite failed', e)
+      aiSpriteError = e?.message || 'AI sprite generation failed'
+    } finally {
+      aiSpriteGenerating = false
+    }
+  }
 
   onDestroy(() => {
     if (animTimer) clearInterval(animTimer)
@@ -101,9 +134,12 @@
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, 128, 128)
 
-    const cache = worker.appearance
-      ? prerenderCharacterFromAppearance(worker.appearance)
-      : prerenderCharacter(getCharacterType(worker, 0))
+    // Prefer AI-generated sprite sheet when available; otherwise fall back to
+    // layered renderer (custom appearance) or static character config.
+    const cache = customSheetCache
+      || (worker.appearance
+        ? prerenderCharacterFromAppearance(worker.appearance)
+        : prerenderCharacter(getCharacterType(worker, 0)))
     if (!cache || !cache.idle) return
 
     const frame = cache.idle[animFrame % cache.idle.length]
@@ -185,6 +221,19 @@
         <button class="nes-btn appearance-btn" on:click={() => showAppearanceEditor = !showAppearanceEditor}>
           {$t('appearance.title')}
         </button>
+        {#if aiSpriteAvailable}
+          <button
+            class="nes-btn is-warning appearance-btn"
+            on:click={handleRegenerateSprite}
+            disabled={aiSpriteGenerating}
+            title="使用 PixelLab AI 生成專屬角色圖"
+          >
+            {aiSpriteGenerating ? '🪄 AI 生成中…' : '🪄 AI 角色圖'}
+          </button>
+          {#if aiSpriteError}
+            <div class="ai-sprite-error">{aiSpriteError}</div>
+          {/if}
+        {/if}
 
         {#if showAppearanceEditor}
           <div class="appearance-editor-wrapper">
@@ -574,6 +623,13 @@
     font-size: 8px !important;
     padding: 4px 10px !important;
     margin-top: 4px;
+  }
+
+  .ai-sprite-error {
+    font-size: 8px;
+    color: var(--accent-red, #e74c3c);
+    margin-top: 4px;
+    text-align: center;
   }
 
   .appearance-editor-wrapper {

@@ -225,6 +225,71 @@ export function prerenderCharacterFromAppearance(appearance) {
   return _renderFromAppearance(appearance)
 }
 
+// ── PixelLab AI custom sprite sheet ──────────────────────────────────────────
+// When a worker has an AI-generated 768×32 sprite sheet (24 frames × 1 row,
+// layout: cols 0-5 south/down, 6-11 west/left, 12-17 east/right, 18-23 north/up
+// — matches backend internal/sprite/composer.go), we slice it into the same
+// animation-cache shape as the layered renderer.
+const customSheetImages = {}
+const customSheetLoading = {}
+
+function _renderFromCustomSheet(img) {
+  const cache = {}
+  for (const [state, frameIndices] of Object.entries(ANIM_FRAME_MAP)) {
+    cache[state] = frameIndices.map(fi =>
+      extractFrame(img, DIR.down * FRAMES_PER_DIR + fi, 0))
+  }
+  const WALK_FRAMES = [0, 1, 2]
+  for (const [dirName, dirIdx] of Object.entries(DIR)) {
+    const animName = 'walk' + dirName[0].toUpperCase() + dirName.slice(1)
+    cache[animName] = WALK_FRAMES.map(fi =>
+      extractFrame(img, dirIdx * FRAMES_PER_DIR + fi, 0))
+  }
+  return cache
+}
+
+// Async: load a worker's AI sprite sheet via the Wails binding and return
+// a prerendered animation cache. Returns null when the binding is absent
+// (non-Wails dev preview), the worker has no AI sheet, or load/decode fails.
+// The caller should fall back to the layered renderer in those cases.
+export async function loadCustomSpriteSheet(workerID) {
+  if (customSheetImages[workerID]) {
+    return _renderFromCustomSheet(customSheetImages[workerID])
+  }
+  if (customSheetLoading[workerID]) {
+    await customSheetLoading[workerID]
+    return customSheetImages[workerID]
+      ? _renderFromCustomSheet(customSheetImages[workerID])
+      : null
+  }
+  const binding = window?.go?.gui?.CompanyApp?.GetWorkerSpriteDataURL
+  if (!binding) return null
+  const promise = (async () => {
+    try {
+      const dataURL = await binding(workerID)
+      if (!dataURL) return null
+      const img = await loadImage(dataURL)
+      customSheetImages[workerID] = img
+      return img
+    } catch (err) {
+      console.warn('loadCustomSpriteSheet failed', workerID, err)
+      return null
+    }
+  })()
+  customSheetLoading[workerID] = promise
+  const img = await promise
+  delete customSheetLoading[workerID]
+  if (!img) return null
+  return _renderFromCustomSheet(img)
+}
+
+// Drop a worker's cached custom sheet so the next setWorkers reload picks up
+// a freshly-regenerated one. Called from the "Regenerate AI Sprite" action.
+export function invalidateCustomSpriteSheet(workerID) {
+  delete customSheetImages[workerID]
+  delete customSheetLoading[workerID]
+}
+
 // ── Character type resolution ────────────────────────────────────────────────
 const AVATAR_TO_CHAR = {
   'coder': 'coder',

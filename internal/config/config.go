@@ -36,6 +36,17 @@ type Config struct {
 	AutoAssign           AutoAssignConfig               `yaml:"auto_assign,omitempty"`
 	Review               ReviewConfig                   `yaml:"review,omitempty"`
 	APIKeys              []APIKeyConfig                 `yaml:"api_keys,omitempty" json:"apiKeys,omitempty"`
+	PixelLab             PixelLabConfig                 `yaml:"pixellab,omitempty" json:"pixellab,omitempty"`
+}
+
+// PixelLabConfig configures the PixelLab AI sprite-generation client.
+// Resolution rules:
+//   - APIKey: env var PIXELLAB_API_KEY wins over the YAML field;
+//     PixelLabAPIKey() does the resolution.
+//   - BaseURL: empty falls back to pixellab.DefaultBaseURL.
+type PixelLabConfig struct {
+	APIKey  string `yaml:"api_key,omitempty" json:"apiKey,omitempty"`
+	BaseURL string `yaml:"base_url,omitempty" json:"baseUrl,omitempty"`
 }
 
 // AutoAssignConfig controls proactive task assignment to idle workers.
@@ -391,4 +402,16 @@ func (c *Config) Save(path string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// ResolvePixelLabAPIKey returns the effective PixelLab API key,
+// preferring the PIXELLAB_API_KEY environment variable over the
+// supplied YAML field. Empty result means no key is configured;
+// callers should treat that as "PixelLab features disabled" rather
+// than as an error so the rest of the supervisor still boots.
+func ResolvePixelLabAPIKey(cfg PixelLabConfig) string {
+	if env := os.Getenv("PIXELLAB_API_KEY"); env != "" {
+		return env
+	}
+	return cfg.APIKey
 }

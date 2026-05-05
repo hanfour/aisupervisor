@@ -1,0 +1,302 @@
+package pixellab
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// =============================================================
+// Construction
+// =============================================================
+
+func TestNewClient_RejectsEmptyAPIKey(t *testing.T) {
+	if _, err := NewClient("", ""); err == nil {
+		t.Fatal("expected error for empty apiKey")
+	}
+}
+
+func TestNewClient_DefaultBaseURL(t *testing.T) {
+	c, err := NewClient("", "key")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if c.baseURL != DefaultBaseURL {
+		t.Errorf("baseURL = %q, want %q", c.baseURL, DefaultBaseURL)
+	}
+}
+
+func TestNewClient_TrimsTrailingSlash(t *testing.T) {
+	c, _ := NewClient("https://example.com/v1/", "key")
+	if c.baseURL != "https://example.com/v1" {
+		t.Errorf("baseURL = %q, want trimmed", c.baseURL)
+	}
+}
+
+// =============================================================
+// Auth header propagation
+// =============================================================
+
+func TestClient_SendsBearerAuthHeader(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"type":"usd","usd":12.34}`))
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "secret-token")
+	c.SetHTTPClient(srv.Client())
+
+	if _, err := c.Balance(context.Background()); err != nil {
+		t.Fatalf("Balance: %v", err)
+	}
+	if gotAuth != "Bearer secret-token" {
+		t.Errorf("Authorization header = %q, want %q", gotAuth, "Bearer secret-token")
+	}
+}
+
+// =============================================================
+// /balance
+// =============================================================
+
+func TestClient_Balance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/balance" || r.Method != http.MethodGet {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"type":"usd","usd":42.5}`))
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "k")
+	c.SetHTTPClient(srv.Client())
+
+	got, err := c.Balance(context.Background())
+	if err != nil {
+		t.Fatalf("Balance: %v", err)
+	}
+	if got.USD != 42.5 || got.Type != "usd" {
+		t.Errorf("Balance() = %+v, want USD=42.5 Type=usd", got)
+	}
+}
+
+// =============================================================
+// /generate-image-pixflux
+// =============================================================
+
+func TestClient_GenerateImagePixflux(t *testing.T) {
+	pngBytes := []byte("fake-png-bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/generate-image-pixflux" || r.Method != http.MethodPost {
+			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
+		}
+		var body PixfluxRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.Description != "a pixel art devops engineer in hoodie" {
+			t.Errorf("description = %q", body.Description)
+		}
+		if body.ImageSize.Width != 32 || body.ImageSize.Height != 32 {
+			t.Errorf("image_size = %+v", body.ImageSize)
+		}
+		resp := PixfluxResponse{
+			Image: Base64Image{Type: "base64", Base64: base64.StdEncoding.EncodeToString(pngBytes)},
+			Usage: Usage{Type: "usd", USD: 0.05},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "k")
+	c.SetHTTPClient(srv.Client())
+
+	got, err := c.GenerateImagePixflux(context.Background(), PixfluxRequest{
+		Description: "a pixel art devops engineer in hoodie",
+		ImageSize:   ImageSize{Width: 32, Height: 32},
+	})
+	if err != nil {
+		t.Fatalf("GenerateImagePixflux: %v", err)
+	}
+	decoded, err := got.Image.PNGBytes()
+	if err != nil {
+		t.Fatalf("PNGBytes: %v", err)
+	}
+	if string(decoded) != string(pngBytes) {
+		t.Errorf("decoded = %q, want %q", decoded, pngBytes)
+	}
+	if got.Usage.USD != 0.05 {
+		t.Errorf("usage = %v, want 0.05", got.Usage.USD)
+	}
+}
+
+// =============================================================
+// /rotate
+// =============================================================
+
+func TestClient_Rotate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rotate" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		var body RotateRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.FromDirection != "south" || body.ToDirection != "east" {
+			t.Errorf("dirs = %s -> %s", body.FromDirection, body.ToDirection)
+		}
+		resp := RotateResponse{
+			Image: Base64Image{Type: "base64", Base64: base64.StdEncoding.EncodeToString([]byte("rotated"))},
+			Usage: Usage{Type: "usd", USD: 0.02},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "k")
+	c.SetHTTPClient(srv.Client())
+
+	got, err := c.Rotate(context.Background(), RotateRequest{
+		ImageSize:     ImageSize{Width: 32, Height: 32},
+		FromImage:     &Base64Image{Type: "base64", Base64: "aGVsbG8="},
+		FromDirection: "south",
+		ToDirection:   "east",
+	})
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	if got.Image.Base64 == "" {
+		t.Error("expected base64 payload")
+	}
+}
+
+// =============================================================
+// /animate-with-skeleton
+// =============================================================
+
+func TestClient_AnimateWithSkeleton(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/animate-with-skeleton" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		var body AnimateWithSkeletonRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body.Skeletons) != 6 {
+			t.Errorf("skeletons = %d, want 6", len(body.Skeletons))
+		}
+		resp := AnimateWithSkeletonResponse{
+			Images: make([]Base64Image, 6),
+			Usage:  Usage{Type: "usd", USD: 0.30},
+		}
+		for i := range resp.Images {
+			resp.Images[i] = Base64Image{Type: "base64", Base64: base64.StdEncoding.EncodeToString([]byte{byte('A' + i)})}
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "k")
+	c.SetHTTPClient(srv.Client())
+
+	skeletons := make([]Skeleton, 6)
+	got, err := c.AnimateWithSkeleton(context.Background(), AnimateWithSkeletonRequest{
+		ImageSize:      ImageSize{Width: 32, Height: 32},
+		ReferenceImage: &Base64Image{Type: "base64", Base64: "aGVsbG8="},
+		Skeletons:      skeletons,
+	})
+	if err != nil {
+		t.Fatalf("AnimateWithSkeleton: %v", err)
+	}
+	if len(got.Images) != 6 {
+		t.Errorf("got %d frames, want 6", len(got.Images))
+	}
+}
+
+// =============================================================
+// /estimate-skeleton
+// =============================================================
+
+func TestClient_EstimateSkeleton(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := EstimateSkeletonResponse{
+			Skeleton: Skeleton{Keypoints: []SkeletonPoint{
+				{X: 16, Y: 8, Label: "head"},
+				{X: 16, Y: 16, Label: "torso"},
+			}},
+			Usage: Usage{Type: "usd", USD: 0.01},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "k")
+	c.SetHTTPClient(srv.Client())
+
+	got, err := c.EstimateSkeleton(context.Background(), EstimateSkeletonRequest{
+		Image: &Base64Image{Type: "base64", Base64: "aGVsbG8="},
+	})
+	if err != nil {
+		t.Fatalf("EstimateSkeleton: %v", err)
+	}
+	if len(got.Skeleton.Keypoints) != 2 {
+		t.Errorf("keypoints = %d, want 2", len(got.Skeleton.Keypoints))
+	}
+}
+
+// =============================================================
+// Error path: non-2xx response
+// =============================================================
+
+func TestClient_APIErrorOn401(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid_api_key"}`))
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "bad-key")
+	c.SetHTTPClient(srv.Client())
+
+	_, err := c.Balance(context.Background())
+	if err == nil {
+		t.Fatal("expected error for 401")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", apiErr.StatusCode)
+	}
+	if !strings.Contains(apiErr.Body, "invalid_api_key") {
+		t.Errorf("body should preserve upstream error, got %q", apiErr.Body)
+	}
+}
+
+// =============================================================
+// Base64Image.PNGBytes()
+// =============================================================
+
+func TestBase64Image_PNGBytes(t *testing.T) {
+	original := []byte("\x89PNG\r\n\x1a\nrest-of-png")
+	b := Base64Image{Type: "base64", Base64: base64.StdEncoding.EncodeToString(original)}
+	got, err := b.PNGBytes()
+	if err != nil {
+		t.Fatalf("PNGBytes: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Errorf("decoded mismatch")
+	}
+}
+
+func TestBase64Image_PNGBytes_RejectsUnknownType(t *testing.T) {
+	b := Base64Image{Type: "url", Base64: "ignored"}
+	if _, err := b.PNGBytes(); err == nil {
+		t.Error("expected error for non-base64 type")
+	}
+}

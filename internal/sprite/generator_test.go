@@ -111,11 +111,11 @@ func (f *fakePixelLab) AnimateWithSkeleton(ctx context.Context, req pixellab.Ani
 	if err != nil {
 		return nil, err
 	}
-	out := make([]pixellab.Base64Image, FramesPerDirection)
-	for i := 0; i < FramesPerDirection; i++ {
+	out := make([]pixellab.Base64Image, WalkCycleFrames)
+	for i := 0; i < WalkCycleFrames; i++ {
 		out[i] = pixellab.Base64Image{
 			Type:   "base64",
-			Base64: encodeBase64(tintedPNG(refImg, uint8(i*5))), // stride 5 / frame
+			Base64: encodeBase64(tintedPNG(refImg, uint8(i*15))), // stride 15 / frame
 		}
 	}
 	return &pixellab.AnimateWithSkeletonResponse{
@@ -420,24 +420,39 @@ func TestGenerator_WalkCycle_FramesAreDistinct(t *testing.T) {
 		t.Fatalf("decode sprite: %v", err)
 	}
 
-	// Pick centre pixel of each of the 24 columns and require that
-	// within each direction's 6-column band, no two columns share the
-	// exact same colour. This asserts the cycle is animated, not a
-	// 6× static repeat.
+	// PixelLab's animate-with-skeleton returns exactly WalkCycleFrames
+	// (3) frames per direction; the generator repeats them to fill the
+	// sheet's FramesPerDirection (6) columns as [k0, k1, k2, k0, k1, k2].
+	// So within a direction, the *first 3 columns* must all be distinct
+	// (proves we're not collapsing to static), while col[i] == col[i+3]
+	// (proves we're applying the documented repeat pattern, not e.g.
+	// silently emitting blank frames in the second half).
+	colourAt := func(col int) uint32 {
+		cx := col*FrameSize + FrameSize/2
+		cy := FrameSize / 2
+		r, gC, b, a := sheet.At(cx, cy).RGBA()
+		return (uint32(r>>8) << 24) | (uint32(gC>>8) << 16) | (uint32(b>>8) << 8) | uint32(a>>8)
+	}
 	for dirIdx := 0; dirIdx < 4; dirIdx++ {
 		seen := map[uint32]int{}
-		for f := 0; f < FramesPerDirection; f++ {
+		for f := 0; f < WalkCycleFrames; f++ {
 			col := dirIdx*FramesPerDirection + f
-			cx := col*FrameSize + FrameSize/2
-			cy := FrameSize / 2
-			r, gC, b, a := sheet.At(cx, cy).RGBA()
-			key := (uint32(r>>8) << 24) | (uint32(gC>>8) << 16) | (uint32(b>>8) << 8) | uint32(a>>8)
+			key := colourAt(col)
 			if prev, ok := seen[key]; ok {
-				t.Errorf("dir %d: frames %d and %d share colour 0x%08x — walk cycle collapsed to static",
+				t.Errorf("dir %d: keyframes %d and %d share colour 0x%08x — walk cycle collapsed to static",
 					dirIdx, prev, f, key)
 				break
 			}
 			seen[key] = f
+		}
+		// Repeat invariant: col[k] == col[k + WalkCycleFrames].
+		for f := 0; f < WalkCycleFrames; f++ {
+			a := colourAt(dirIdx*FramesPerDirection + f)
+			b := colourAt(dirIdx*FramesPerDirection + f + WalkCycleFrames)
+			if a != b {
+				t.Errorf("dir %d: col %d (0x%08x) != col %d (0x%08x) — repeat pattern broken",
+					dirIdx, f, a, f+WalkCycleFrames, b)
+			}
 		}
 	}
 }

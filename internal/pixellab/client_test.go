@@ -186,8 +186,8 @@ func TestClient_AnimateWithSkeleton(t *testing.T) {
 		}
 		var body AnimateWithSkeletonRequest
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if len(body.Skeletons) != 6 {
-			t.Errorf("skeletons = %d, want 6", len(body.Skeletons))
+		if len(body.SkeletonKeypoints) != 6 {
+			t.Errorf("skeleton_keypoints = %d, want 6", len(body.SkeletonKeypoints))
 		}
 		resp := AnimateWithSkeletonResponse{
 			Images: make([]Base64Image, 6),
@@ -203,11 +203,14 @@ func TestClient_AnimateWithSkeleton(t *testing.T) {
 	c, _ := NewClient(srv.URL, "k")
 	c.SetHTTPClient(srv.Client())
 
-	skeletons := make([]Skeleton, 6)
+	frames := make([][]SkeletonPoint, 6)
+	for i := range frames {
+		frames[i] = []SkeletonPoint{{X: 16, Y: 16, Label: LabelNose}}
+	}
 	got, err := c.AnimateWithSkeleton(context.Background(), AnimateWithSkeletonRequest{
-		ImageSize:      ImageSize{Width: 32, Height: 32},
-		ReferenceImage: &Base64Image{Type: "base64", Base64: "aGVsbG8="},
-		Skeletons:      skeletons,
+		ImageSize:         ImageSize{Width: 32, Height: 32},
+		ReferenceImage:    &Base64Image{Type: "base64", Base64: "aGVsbG8="},
+		SkeletonKeypoints: frames,
 	})
 	if err != nil {
 		t.Fatalf("AnimateWithSkeleton: %v", err)
@@ -224,10 +227,10 @@ func TestClient_AnimateWithSkeleton(t *testing.T) {
 func TestClient_EstimateSkeleton(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := EstimateSkeletonResponse{
-			Skeleton: Skeleton{Keypoints: []SkeletonPoint{
-				{X: 16, Y: 8, Label: "head"},
-				{X: 16, Y: 16, Label: "torso"},
-			}},
+			Keypoints: []SkeletonPoint{
+				{X: 16, Y: 8, Label: LabelNose},
+				{X: 16, Y: 12, Label: LabelNeck},
+			},
 			Usage: Usage{Type: "usd", USD: 0.01},
 		}
 		_ = json.NewEncoder(w).Encode(resp)
@@ -243,8 +246,8 @@ func TestClient_EstimateSkeleton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EstimateSkeleton: %v", err)
 	}
-	if len(got.Skeleton.Keypoints) != 2 {
-		t.Errorf("keypoints = %d, want 2", len(got.Skeleton.Keypoints))
+	if len(got.Keypoints) != 2 {
+		t.Errorf("keypoints = %d, want 2", len(got.Keypoints))
 	}
 }
 

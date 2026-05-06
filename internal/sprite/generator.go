@@ -155,20 +155,21 @@ func (g *Generator) GenerateForWorker(ctx context.Context, p WorkerProfile) (str
 	for _, dir := range AllDirections {
 		ref := pixellab.Base64Image{Type: "base64", Base64: encodeBase64(views[dir])}
 		anim, aerr := g.client.AnimateWithSkeleton(ctx, pixellab.AnimateWithSkeletonRequest{
-			ImageSize:      pixellab.ImageSize{Width: FrameSize, Height: FrameSize},
-			ReferenceImage: &ref,
-			Skeletons:      skeletons,
-			Direction:      string(dir),
-			View:           "low top-down",
+			ImageSize:         pixellab.ImageSize{Width: FrameSize, Height: FrameSize},
+			ReferenceImage:    &ref,
+			SkeletonKeypoints: skeletons,
+			Direction:         string(dir),
+			View:              "low top-down",
 		})
 		if aerr != nil {
 			return "", fmt.Errorf("sprite: animate %s: %w", dir, aerr)
 		}
-		if len(anim.Images) != FramesPerDirection {
+		if len(anim.Images) != WalkCycleFrames {
 			return "", fmt.Errorf("sprite: animate %s returned %d frames, want %d",
-				dir, len(anim.Images), FramesPerDirection)
+				dir, len(anim.Images), WalkCycleFrames)
 		}
-		seq := make([]image.Image, FramesPerDirection)
+		// Decode the 3 returned keyframes...
+		key := make([]image.Image, WalkCycleFrames)
 		for i, b64 := range anim.Images {
 			raw, derr := b64.PNGBytes()
 			if derr != nil {
@@ -178,7 +179,15 @@ func (g *Generator) GenerateForWorker(ctx context.Context, p WorkerProfile) (str
 			if ierr != nil {
 				return "", fmt.Errorf("sprite: decode %s frame %d image: %w", dir, i, ierr)
 			}
-			seq[i] = img
+			key[i] = img
+		}
+		// ...then expand to FramesPerDirection (6) by repeating the 3-frame
+		// cycle: [k0, k1, k2, k0, k1, k2]. The composed sheet still has 6
+		// columns per direction; the renderer's WALK_FRAMES picks indices
+		// 0/1/2 so the visible animation is a smooth 3-step loop.
+		seq := make([]image.Image, FramesPerDirection)
+		for i := 0; i < FramesPerDirection; i++ {
+			seq[i] = key[i%WalkCycleFrames]
 		}
 		frames[dir] = seq
 	}

@@ -134,35 +134,77 @@ func (c *Client) Rotate(ctx context.Context, req RotateRequest) (*RotateResponse
 // /animate-with-skeleton — skeleton poses → frame sequence
 // =============================================================
 
-// SkeletonPoint is one labelled keypoint (e.g. "left_hip", "head").
+// SkeletonPoint is one labelled keypoint. Label must be a value from
+// PixelLab's SkeletonLabel enum (NOSE / NECK / "LEFT SHOULDER" /
+// "RIGHT SHOULDER" / … / "LEFT LEG" / "RIGHT LEG"); see the constants
+// below or internal/sprite for the canonical mapping. ZIndex is
+// optional and defaults to 0 when omitted.
 type SkeletonPoint struct {
-	X     float64 `json:"x"`
-	Y     float64 `json:"y"`
-	Label string  `json:"label"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Label  string  `json:"label"`
+	ZIndex float64 `json:"z_index,omitempty"`
 }
 
-// Skeleton is one frame's pose (all keypoints).
-type Skeleton struct {
-	Keypoints []SkeletonPoint `json:"keypoints"`
-}
-
-// AnimateWithSkeletonRequest takes a base reference image plus a list of
-// pose skeletons (one per frame) and returns one PNG per frame, the
-// character bent into each pose. Used for building 6-frame walk cycles.
+// AnimateWithSkeletonRequest takes a base reference image plus a 2D
+// list of keypoints (outer = per-frame, inner = labelled points within
+// that frame) and returns one PNG per frame. The API hardcodes exactly
+// 3 keyframes server-side ("Expected 3 pose images" 500 otherwise);
+// callers wanting more granular animation must repeat keyframes after
+// receiving the 3-frame response.
+//
+// Field names mirror the live API exactly; the JSON wire format is:
+//
+//	{
+//	  "image_size":      {"width": 32, "height": 32},
+//	  "reference_image": {"type": "base64", "base64": "..."},
+//	  "skeleton_keypoints": [
+//	    [{"x":..., "y":..., "label":"NOSE"}, ...],   // frame 0
+//	    [...],                                        // frame 1
+//	    ...
+//	  ],
+//	  "direction": "south",
+//	  "view":      "low top-down"
+//	}
 type AnimateWithSkeletonRequest struct {
-	ImageSize         ImageSize    `json:"image_size"`
-	ReferenceImage    *Base64Image `json:"reference_image"`
-	Skeletons         []Skeleton   `json:"skeletons"`
-	ReferenceSkeleton *Skeleton    `json:"reference_skeleton,omitempty"`
-	View              string       `json:"view,omitempty"`
-	Direction         string       `json:"direction,omitempty"`
-	IsometricMode     bool         `json:"isometric,omitempty"`
-	OrientedReference bool         `json:"oriented_reference,omitempty"`
-	GuidanceScale     float64      `json:"guidance_scale,omitempty"`
-	MaskImage         *Base64Image `json:"mask_image,omitempty"`
-	ColorImage        *Base64Image `json:"color_image,omitempty"`
-	Seed              int64        `json:"seed,omitempty"`
+	ImageSize         ImageSize         `json:"image_size"`
+	ReferenceImage    *Base64Image      `json:"reference_image"`
+	SkeletonKeypoints [][]SkeletonPoint `json:"skeleton_keypoints,omitempty"`
+	View              string            `json:"view,omitempty"`
+	Direction         string            `json:"direction,omitempty"`
+	IsometricMode     bool              `json:"isometric,omitempty"`
+	ObliqueProjection bool              `json:"oblique_projection,omitempty"`
+	GuidanceScale     float64           `json:"guidance_scale,omitempty"`
+	InitImages        []*Base64Image    `json:"init_images,omitempty"`
+	InitImageStrength int               `json:"init_image_strength,omitempty"`
+	InpaintingImages  []*Base64Image    `json:"inpainting_images,omitempty"`
+	MaskImages        []*Base64Image    `json:"mask_images,omitempty"`
+	ColorImage        *Base64Image      `json:"color_image,omitempty"`
+	Seed              int64             `json:"seed,omitempty"`
 }
+
+// SkeletonLabel constants — the enum PixelLab accepts on Point.label.
+// Using these instead of raw strings catches typos at compile time.
+const (
+	LabelNose          = "NOSE"
+	LabelNeck          = "NECK"
+	LabelRightShoulder = "RIGHT SHOULDER"
+	LabelRightElbow    = "RIGHT ELBOW"
+	LabelRightArm      = "RIGHT ARM"
+	LabelLeftShoulder  = "LEFT SHOULDER"
+	LabelLeftElbow     = "LEFT ELBOW"
+	LabelLeftArm       = "LEFT ARM"
+	LabelRightHip      = "RIGHT HIP"
+	LabelRightKnee     = "RIGHT KNEE"
+	LabelRightLeg      = "RIGHT LEG"
+	LabelLeftHip       = "LEFT HIP"
+	LabelLeftKnee      = "LEFT KNEE"
+	LabelLeftLeg       = "LEFT LEG"
+	LabelRightEye      = "RIGHT EYE"
+	LabelLeftEye       = "LEFT EYE"
+	LabelRightEar      = "RIGHT EAR"
+	LabelLeftEar       = "LEFT EAR"
+)
 
 // AnimateWithSkeletonResponse carries the per-frame images.
 type AnimateWithSkeletonResponse struct {
@@ -227,10 +269,13 @@ type EstimateSkeletonRequest struct {
 	Image *Base64Image `json:"image"`
 }
 
-// EstimateSkeletonResponse returns the inferred keypoints.
+// EstimateSkeletonResponse returns the inferred keypoints. The API
+// returns a flat list (one frame, all points) — matching the spec at
+// /v1/openapi.json which defines the response as
+// {"usage", "keypoints": [Keypoint]}.
 type EstimateSkeletonResponse struct {
-	Skeleton Skeleton `json:"skeleton"`
-	Usage    Usage    `json:"usage"`
+	Keypoints []SkeletonPoint `json:"keypoints"`
+	Usage     Usage           `json:"usage"`
 }
 
 // EstimateSkeleton returns the pose keypoints for an existing image.

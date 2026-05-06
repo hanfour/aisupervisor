@@ -106,6 +106,7 @@ go test ./internal/...
 - **ExtraCLIArgs trust boundary**: `SpawnConfig.ExtraCLIArgs` is appended verbatim to the CLI command without shell escaping. It is treated as trusted config (from SkillProfile / tier YAML) and must never be populated from user input. Runtime plugins document this in their package docstrings.
 - **`AIS_PROVIDER` / `AIS_MAX_TOKENS` EnvVars**: ais-agent runtime reads provider + token budget from `cfg.EnvVars` (not from dedicated SpawnConfig fields). The spawner's `buildSpawnConfig` surfaces growth-config values there.
 - **Completion detection order**: `monitor.WatchForCompletion` prefers `rt.DetectCompletion(ctx, session, content)` (returns `Reason: "runtime_idle"`) when a registry is wired; falls back to `isClaudeIdle` / `isAiderIdle` when runtime is nil, returns false, or errors (error is logged once per watch call).
+- **PixelLab wire format is *only* validated by the live API**: structs in `internal/pixellab/endpoints.go` mirror `https://api.pixellab.ai/v1/openapi.json` and must be in sync with it (field names, label enums, hardcoded counts like the 3-keyframe limit on `animate-with-skeleton`). Unit tests can pass against any shape — they round-trip through Go structs we control. Any change to a request/response struct here requires a live smoke (`GenerateWorkerSprite` end-to-end) before merge. PR #41 caught four such drifts that had passed CI.
 
 ## Coding Conventions
 

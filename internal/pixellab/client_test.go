@@ -186,8 +186,8 @@ func TestClient_AnimateWithSkeleton(t *testing.T) {
 		}
 		var body AnimateWithSkeletonRequest
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if len(body.Skeletons) != 6 {
-			t.Errorf("skeletons = %d, want 6", len(body.Skeletons))
+		if len(body.SkeletonKeypoints) != 6 {
+			t.Errorf("skeleton_keypoints = %d, want 6", len(body.SkeletonKeypoints))
 		}
 		resp := AnimateWithSkeletonResponse{
 			Images: make([]Base64Image, 6),
@@ -203,11 +203,14 @@ func TestClient_AnimateWithSkeleton(t *testing.T) {
 	c, _ := NewClient(srv.URL, "k")
 	c.SetHTTPClient(srv.Client())
 
-	skeletons := make([]Skeleton, 6)
+	frames := make([][]SkeletonPoint, 6)
+	for i := range frames {
+		frames[i] = []SkeletonPoint{{X: 16, Y: 16, Label: LabelNose}}
+	}
 	got, err := c.AnimateWithSkeleton(context.Background(), AnimateWithSkeletonRequest{
-		ImageSize:      ImageSize{Width: 32, Height: 32},
-		ReferenceImage: &Base64Image{Type: "base64", Base64: "aGVsbG8="},
-		Skeletons:      skeletons,
+		ImageSize:         ImageSize{Width: 32, Height: 32},
+		ReferenceImage:    &Base64Image{Type: "base64", Base64: "aGVsbG8="},
+		SkeletonKeypoints: frames,
 	})
 	if err != nil {
 		t.Fatalf("AnimateWithSkeleton: %v", err)
@@ -217,6 +220,85 @@ func TestClient_AnimateWithSkeleton(t *testing.T) {
 	}
 }
 
+// Wire-format assertion: decode the request body as a generic map and
+// assert the live PixelLab API contract directly (field names, label
+// vocabulary). Prevents silent re-introduction of e.g. `skeletons` or
+// `HEAD` — the bugs PR #41 fixed against the live service.
+func TestClient_AnimateWithSkeleton_WireFormat(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewEncoder(w).Encode(AnimateWithSkeletonResponse{
+			Images: []Base64Image{{Type: "base64", Base64: "Zg=="}},
+			Usage:  Usage{Type: "usd", USD: 0.01},
+		})
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "k")
+	c.SetHTTPClient(srv.Client())
+
+	_, _ = c.AnimateWithSkeleton(context.Background(), AnimateWithSkeletonRequest{
+		ImageSize:      ImageSize{Width: 32, Height: 32},
+		ReferenceImage: &Base64Image{Type: "base64", Base64: "aGVsbG8="},
+		SkeletonKeypoints: [][]SkeletonPoint{
+			{{X: 16, Y: 6, Label: LabelNose}},
+			{{X: 16, Y: 6, Label: LabelNeck}},
+			{{X: 16, Y: 6, Label: LabelLeftLeg}},
+		},
+		Direction: "south",
+		View:      "low top-down",
+	})
+
+	// Top-level field name must be `skeleton_keypoints` (NOT `skeletons`)
+	if _, ok := body["skeleton_keypoints"]; !ok {
+		t.Fatalf("expected key 'skeleton_keypoints' in wire body, got: %v", keys(body))
+	}
+	if _, ok := body["skeletons"]; ok {
+		t.Errorf("legacy 'skeletons' key reappeared in wire body — regression")
+	}
+
+	// Structure: 2D array, outer length = number of keyframes
+	frames, ok := body["skeleton_keypoints"].([]any)
+	if !ok {
+		t.Fatalf("skeleton_keypoints is %T, want []any", body["skeleton_keypoints"])
+	}
+	if len(frames) != 3 {
+		t.Errorf("frames = %d, want 3", len(frames))
+	}
+
+	// Each label must be from PixelLab's SkeletonLabel enum
+	allowed := map[string]bool{
+		LabelNose: true, LabelNeck: true, LabelLeftLeg: true,
+		// (full enum verified in sprite package; this asserts what the
+		// test-payload pushes through is preserved end-to-end)
+	}
+	for fi, frame := range frames {
+		points, ok := frame.([]any)
+		if !ok {
+			t.Fatalf("frame %d is %T, want []any", fi, frame)
+		}
+		for pi, p := range points {
+			pt, ok := p.(map[string]any)
+			if !ok {
+				t.Fatalf("frame %d point %d is %T", fi, pi, p)
+			}
+			label, _ := pt["label"].(string)
+			if !allowed[label] {
+				t.Errorf("frame %d point %d: label %q not in expected set", fi, pi, label)
+			}
+		}
+	}
+}
+
+func keys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 // =============================================================
 // /estimate-skeleton
 // =============================================================
@@ -224,10 +306,10 @@ func TestClient_AnimateWithSkeleton(t *testing.T) {
 func TestClient_EstimateSkeleton(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := EstimateSkeletonResponse{
-			Skeleton: Skeleton{Keypoints: []SkeletonPoint{
-				{X: 16, Y: 8, Label: "head"},
-				{X: 16, Y: 16, Label: "torso"},
-			}},
+			Keypoints: []SkeletonPoint{
+				{X: 16, Y: 8, Label: LabelNose},
+				{X: 16, Y: 12, Label: LabelNeck},
+			},
 			Usage: Usage{Type: "usd", USD: 0.01},
 		}
 		_ = json.NewEncoder(w).Encode(resp)
@@ -243,8 +325,8 @@ func TestClient_EstimateSkeleton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EstimateSkeleton: %v", err)
 	}
-	if len(got.Skeleton.Keypoints) != 2 {
-		t.Errorf("keypoints = %d, want 2", len(got.Skeleton.Keypoints))
+	if len(got.Keypoints) != 2 {
+		t.Errorf("keypoints = %d, want 2", len(got.Keypoints))
 	}
 }
 

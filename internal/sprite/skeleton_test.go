@@ -11,17 +11,24 @@ func TestWalkCycleSkeletons_FrameCount(t *testing.T) {
 	if len(skels) != WalkCycleFrames {
 		t.Fatalf("expected %d skeleton frames, got %d", WalkCycleFrames, len(skels))
 	}
-	if WalkCycleFrames != FramesPerDirection {
-		t.Fatalf("WalkCycleFrames (%d) must equal FramesPerDirection (%d)",
+	// PixelLab's animate-with-skeleton hardcodes "expected 3 pose images"
+	// server-side, so WalkCycleFrames is fixed at 3 even though the
+	// composed sheet has FramesPerDirection (6) columns per direction.
+	// The generator expands [k0,k1,k2] → [k0,k1,k2,k0,k1,k2] to fill.
+	if WalkCycleFrames != 3 {
+		t.Fatalf("WalkCycleFrames must be 3 (PixelLab API constraint), got %d", WalkCycleFrames)
+	}
+	if WalkCycleFrames > FramesPerDirection {
+		t.Fatalf("WalkCycleFrames (%d) must fit in FramesPerDirection (%d)",
 			WalkCycleFrames, FramesPerDirection)
 	}
 }
 
 func TestWalkCycleSkeletons_KeypointCount(t *testing.T) {
-	for i, s := range WalkCycleSkeletons() {
-		if len(s.Keypoints) != WalkCycleKeypointCount {
+	for i, frame := range WalkCycleSkeletons() {
+		if len(frame) != WalkCycleKeypointCount {
 			t.Fatalf("frame %d: expected %d keypoints, got %d",
-				i, WalkCycleKeypointCount, len(s.Keypoints))
+				i, WalkCycleKeypointCount, len(frame))
 		}
 	}
 }
@@ -29,8 +36,8 @@ func TestWalkCycleSkeletons_KeypointCount(t *testing.T) {
 func TestWalkCycleSkeletons_AllInFrameBounds(t *testing.T) {
 	// Every keypoint must fall inside [0, FrameSize] on both axes —
 	// PixelLab clamps but out-of-bounds points produce visual glitches.
-	for i, s := range WalkCycleSkeletons() {
-		for _, kp := range s.Keypoints {
+	for i, frame := range WalkCycleSkeletons() {
+		for _, kp := range frame {
 			if kp.X < 0 || kp.X > FrameSize {
 				t.Errorf("frame %d label %s: x=%.1f out of [0,%d]", i, kp.Label, kp.X, FrameSize)
 			}
@@ -49,15 +56,15 @@ func TestWalkCycleSkeletons_LabelsConsistent(t *testing.T) {
 		t.Fatal("no frames")
 	}
 	first := map[string]bool{}
-	for _, kp := range skels[0].Keypoints {
+	for _, kp := range skels[0] {
 		first[kp.Label] = true
 	}
 	for i := 1; i < len(skels); i++ {
-		if len(skels[i].Keypoints) != len(skels[0].Keypoints) {
+		if len(skels[i]) != len(skels[0]) {
 			t.Fatalf("frame %d has %d keypoints, frame 0 has %d",
-				i, len(skels[i].Keypoints), len(skels[0].Keypoints))
+				i, len(skels[i]), len(skels[0]))
 		}
-		for _, kp := range skels[i].Keypoints {
+		for _, kp := range skels[i] {
 			if !first[kp.Label] {
 				t.Errorf("frame %d: label %q absent in frame 0", i, kp.Label)
 			}
@@ -65,32 +72,66 @@ func TestWalkCycleSkeletons_LabelsConsistent(t *testing.T) {
 	}
 }
 
-func TestWalkCycleSkeletons_AntiPhaseLegs(t *testing.T) {
-	// Frame 0 (right foot forward) and frame 3 (left foot forward) must
-	// be mirror images on the foot keypoints — that's the defining
-	// property of a walk cycle. If this drifts the cycle won't loop.
-	skels := WalkCycleSkeletons()
-	if len(skels) < 4 {
-		t.Skip("need ≥4 frames")
+func TestWalkCycleSkeletons_LabelsAreSkeletonEnum(t *testing.T) {
+	// PixelLab's SkeletonLabel enum is the only accepted vocabulary —
+	// the API rejects anything else with a 422 validation error. Ensure
+	// every keypoint label we emit is one of the documented values.
+	allowed := map[string]bool{
+		pixellab.LabelNose:          true,
+		pixellab.LabelNeck:          true,
+		pixellab.LabelRightShoulder: true,
+		pixellab.LabelRightElbow:    true,
+		pixellab.LabelRightArm:      true,
+		pixellab.LabelLeftShoulder:  true,
+		pixellab.LabelLeftElbow:     true,
+		pixellab.LabelLeftArm:       true,
+		pixellab.LabelRightHip:      true,
+		pixellab.LabelRightKnee:     true,
+		pixellab.LabelRightLeg:      true,
+		pixellab.LabelLeftHip:       true,
+		pixellab.LabelLeftKnee:      true,
+		pixellab.LabelLeftLeg:       true,
+		pixellab.LabelRightEye:      true,
+		pixellab.LabelLeftEye:       true,
+		pixellab.LabelRightEar:      true,
+		pixellab.LabelLeftEar:       true,
 	}
-	footL0 := findKP(t, skels[0], kpFootLeft)
-	footR0 := findKP(t, skels[0], kpFootRight)
-	footL3 := findKP(t, skels[3], kpFootLeft)
-	footR3 := findKP(t, skels[3], kpFootRight)
-
-	if footL0.X >= footR0.X {
-		t.Errorf("frame 0: expected left foot behind right (footL.X < footR.X), got L=%.1f R=%.1f",
-			footL0.X, footR0.X)
-	}
-	if footL3.X <= footR3.X {
-		t.Errorf("frame 3: expected left foot ahead of right (footL.X > footR.X), got L=%.1f R=%.1f",
-			footL3.X, footR3.X)
+	for i, frame := range WalkCycleSkeletons() {
+		for _, kp := range frame {
+			if !allowed[kp.Label] {
+				t.Errorf("frame %d: label %q not in SkeletonLabel enum", i, kp.Label)
+			}
+		}
 	}
 }
 
-func findKP(t *testing.T, s pixellab.Skeleton, label string) pixellab.SkeletonPoint {
+func TestWalkCycleSkeletons_AntiPhaseLegs(t *testing.T) {
+	// Frame 0 (right leg forward) and frame 2 (left leg forward) must
+	// be mirror images on the leg keypoints — that's the defining
+	// property of a walk cycle. The middle passing frame (1) has both
+	// legs at xMid and is exempt.
+	skels := WalkCycleSkeletons()
+	if len(skels) < 3 {
+		t.Skip("need ≥3 frames")
+	}
+	legL0 := findKP(t, skels[0], pixellab.LabelLeftLeg)
+	legR0 := findKP(t, skels[0], pixellab.LabelRightLeg)
+	legL2 := findKP(t, skels[2], pixellab.LabelLeftLeg)
+	legR2 := findKP(t, skels[2], pixellab.LabelRightLeg)
+
+	if legL0.X >= legR0.X {
+		t.Errorf("frame 0: expected left leg behind right (legL.X < legR.X), got L=%.1f R=%.1f",
+			legL0.X, legR0.X)
+	}
+	if legL2.X <= legR2.X {
+		t.Errorf("frame 2: expected left leg ahead of right (legL.X > legR.X), got L=%.1f R=%.1f",
+			legL2.X, legR2.X)
+	}
+}
+
+func findKP(t *testing.T, frame []pixellab.SkeletonPoint, label string) pixellab.SkeletonPoint {
 	t.Helper()
-	for _, kp := range s.Keypoints {
+	for _, kp := range frame {
 		if kp.Label == label {
 			return kp
 		}

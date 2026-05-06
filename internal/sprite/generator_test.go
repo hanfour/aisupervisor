@@ -40,9 +40,11 @@ type fakePixelLab struct {
 	pixfluxCalls  int
 	rotateCalls   int
 	animateCalls  int
+	estimateCalls int
 	pixfluxErr    error
 	rotateErr     error
 	animateErr    error
+	estimateErr   error
 	// Colour returned by GenerateImagePixflux (the "south" base view).
 	southPNG []byte
 	// Colour returned for each rotation; key is ToDirection.
@@ -52,6 +54,22 @@ type fakePixelLab struct {
 	// the reference PNG with frame-index variation so frames are
 	// pairwise distinct (proves the cycle isn't a static repeat).
 	animFramesByDir map[string][][]byte
+	// EstimateSkeleton response. When nil, returns an empty keypoint
+	// list — the generator falls back to WalkCycleSkeletons() in that
+	// case, matching the behaviour we want when PixelLab can't infer a
+	// skeleton from the reference image.
+	estimateKeypoints []pixellab.SkeletonPoint
+}
+
+func (f *fakePixelLab) EstimateSkeleton(ctx context.Context, req pixellab.EstimateSkeletonRequest) (*pixellab.EstimateSkeletonResponse, error) {
+	f.estimateCalls++
+	if f.estimateErr != nil {
+		return nil, f.estimateErr
+	}
+	return &pixellab.EstimateSkeletonResponse{
+		Keypoints: f.estimateKeypoints,
+		Usage:     pixellab.Usage{Type: "usd", USD: 0.01},
+	}, nil
 }
 
 func (f *fakePixelLab) GenerateImagePixflux(ctx context.Context, req pixellab.PixfluxRequest) (*pixellab.PixfluxResponse, error) {
@@ -379,15 +397,75 @@ func TestGenerator_GenerateForWorker_HappyPath(t *testing.T) {
 	if sheet.Bounds().Dx() != 768 || sheet.Bounds().Dy() != 32 {
 		t.Errorf("sprite sheet dims = %v, want 768x32", sheet.Bounds())
 	}
-	// API call counts: 1 pixflux + 3 rotations + 4 animations.
+	// API call counts: 1 pixflux + 3 rotations + 1 estimate + 4 animations.
 	if fake.pixfluxCalls != 1 {
 		t.Errorf("pixfluxCalls = %d, want 1", fake.pixfluxCalls)
 	}
 	if fake.rotateCalls != 3 {
 		t.Errorf("rotateCalls = %d, want 3", fake.rotateCalls)
 	}
+	if fake.estimateCalls != 1 {
+		t.Errorf("estimateCalls = %d, want 1 (south reference only)", fake.estimateCalls)
+	}
 	if fake.animateCalls != 4 {
 		t.Errorf("animateCalls = %d, want 4 (one per direction)", fake.animateCalls)
+	}
+}
+
+// Generator should fall back to the hardcoded skeleton when
+// EstimateSkeleton fails — the worker still gets a sprite, quality may
+// degrade slightly. The test confirms the pipeline doesn't error out
+// just because estimate failed.
+func TestGenerator_GenerateForWorker_FallsBackOnEstimateFailure(t *testing.T) {
+	fake := &fakePixelLab{
+		southPNG: fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+		rotPNGByDir: map[string][]byte{
+			"west": fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+			"east": fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+			"north": fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+		},
+		estimateErr: &pixellab.APIError{StatusCode: 500, Method: "POST", Path: "/estimate-skeleton", Body: "internal error"},
+	}
+	g := NewGenerator(fake, t.TempDir())
+	_, err := g.GenerateForWorker(context.Background(), WorkerProfile{
+		ID: "w-fallback", SkillProfile: "coder",
+	})
+	if err != nil {
+		t.Fatalf("GenerateForWorker should fall back, not propagate estimate error: %v", err)
+	}
+	if fake.estimateCalls != 1 {
+		t.Errorf("estimateCalls = %d, want 1 (called once even though it errored)", fake.estimateCalls)
+	}
+	if fake.animateCalls != 4 {
+		t.Errorf("animateCalls = %d, want 4 (pipeline still completes)", fake.animateCalls)
+	}
+}
+
+// Generator should also fall back when EstimateSkeleton returns a
+// keypoint set without the required limbs (e.g. only NOSE/NECK/EYES).
+func TestGenerator_GenerateForWorker_FallsBackOnIncompleteEstimate(t *testing.T) {
+	fake := &fakePixelLab{
+		southPNG: fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+		rotPNGByDir: map[string][]byte{
+			"west": fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+			"east": fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+			"north": fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+		},
+		estimateKeypoints: []pixellab.SkeletonPoint{
+			{Label: pixellab.LabelNose, X: 16, Y: 6},
+			{Label: pixellab.LabelNeck, X: 16, Y: 10},
+			// no shoulders/arms/legs → BuildWalkCycle returns ok=false
+		},
+	}
+	g := NewGenerator(fake, t.TempDir())
+	_, err := g.GenerateForWorker(context.Background(), WorkerProfile{
+		ID: "w-incomplete-est", SkillProfile: "coder",
+	})
+	if err != nil {
+		t.Fatalf("GenerateForWorker should fall back on incomplete estimate: %v", err)
+	}
+	if fake.animateCalls != 4 {
+		t.Errorf("animateCalls = %d, want 4 (pipeline still completes)", fake.animateCalls)
 	}
 }
 

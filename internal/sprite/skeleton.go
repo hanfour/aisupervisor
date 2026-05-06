@@ -101,3 +101,99 @@ func WalkCycleSkeletons() [][]pixellab.SkeletonPoint {
 	}
 	return out
 }
+
+// requiredWalkLabels are the keypoints BuildWalkCycle must see in the
+// estimated baseline to proceed; if any is missing, the caller falls
+// back to the hardcoded WalkCycleSkeletons template.
+var requiredWalkLabels = []string{
+	pixellab.LabelLeftShoulder, pixellab.LabelRightShoulder,
+	pixellab.LabelLeftElbow, pixellab.LabelRightElbow,
+	pixellab.LabelLeftArm, pixellab.LabelRightArm,
+	pixellab.LabelLeftHip, pixellab.LabelRightHip,
+	pixellab.LabelLeftKnee, pixellab.LabelRightKnee,
+	pixellab.LabelLeftLeg, pixellab.LabelRightLeg,
+}
+
+// BuildWalkCycle takes a single estimated skeleton (the character's
+// actual proportions, recovered via PixelLab's /estimate-skeleton from
+// the south-facing reference) and produces a 3-keyframe walk cycle
+// that respects those proportions instead of the hardcoded template.
+//
+// Returns nil + false if the baseline lacks any of the limb keypoints
+// the cycle perturbs (LEFT/RIGHT × SHOULDER/ELBOW/ARM/HIP/KNEE/LEG);
+// the caller falls back to WalkCycleSkeletons() when that happens.
+// Other labels (NOSE, NECK, EYE, EAR) pass through unchanged when
+// present and are dropped silently when missing.
+//
+// Cycle:
+//
+//	frame 0 (contact-right): right leg/arm forward, left leg/arm back
+//	frame 1 (passing):       baseline pose unchanged + 1 px head bob cleared
+//	frame 2 (contact-left):  mirror of frame 0
+//
+// Limb swing magnitude `xLimb` is fixed at 4 px (matching the static
+// template). For a 32×32 frame this yields visible foot/arm motion
+// without exceeding the canvas.
+func BuildWalkCycle(baseline []pixellab.SkeletonPoint) ([][]pixellab.SkeletonPoint, bool) {
+	byLabel := make(map[string]pixellab.SkeletonPoint, len(baseline))
+	for _, kp := range baseline {
+		byLabel[kp.Label] = kp
+	}
+	for _, label := range requiredWalkLabels {
+		if _, ok := byLabel[label]; !ok {
+			return nil, false
+		}
+	}
+
+	const xLimb = 4.0
+
+	// Compose three frames by perturbing the relevant limb x-offsets.
+	// Frame 1 (passing) is the unperturbed baseline; frames 0 and 2
+	// add/subtract xLimb to legs and reverse signs for arms.
+	out := make([][]pixellab.SkeletonPoint, WalkCycleFrames)
+	for i := 0; i < WalkCycleFrames; i++ {
+		// signL/signR: which side leads at this frame.
+		var legL, legR float64
+		switch i {
+		case 0: // right leg forward
+			legL, legR = -xLimb, +xLimb
+		case 2: // left leg forward
+			legL, legR = +xLimb, -xLimb
+		default: // 1, passing
+			legL, legR = 0, 0
+		}
+		// Arms swing in counter-phase to the legs.
+		armL, armR := -legL, -legR
+
+		frame := make([]pixellab.SkeletonPoint, 0, len(baseline))
+		for _, kp := range baseline {
+			perturbed := kp
+			switch kp.Label {
+			case pixellab.LabelLeftLeg:
+				perturbed.X += legL
+			case pixellab.LabelRightLeg:
+				perturbed.X += legR
+			case pixellab.LabelLeftKnee:
+				perturbed.X += legL * 0.6
+			case pixellab.LabelRightKnee:
+				perturbed.X += legR * 0.6
+			case pixellab.LabelLeftArm:
+				perturbed.X += armL
+			case pixellab.LabelRightArm:
+				perturbed.X += armR
+			case pixellab.LabelLeftElbow:
+				perturbed.X += armL * 0.6
+			case pixellab.LabelRightElbow:
+				perturbed.X += armR * 0.6
+			case pixellab.LabelNose, pixellab.LabelNeck:
+				// 1 px head bob on contact frames (0, 2) for liveliness.
+				if i == 0 || i == 2 {
+					perturbed.Y += 1.0
+				}
+			}
+			frame = append(frame, perturbed)
+		}
+		out[i] = frame
+	}
+	return out, true
+}

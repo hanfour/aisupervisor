@@ -71,6 +71,7 @@ type pixelLabClient interface {
 	GenerateImagePixflux(ctx context.Context, req pixellab.PixfluxRequest) (*pixellab.PixfluxResponse, error)
 	Rotate(ctx context.Context, req pixellab.RotateRequest) (*pixellab.RotateResponse, error)
 	AnimateWithSkeleton(ctx context.Context, req pixellab.AnimateWithSkeletonRequest) (*pixellab.AnimateWithSkeletonResponse, error)
+	EstimateSkeleton(ctx context.Context, req pixellab.EstimateSkeletonRequest) (*pixellab.EstimateSkeletonResponse, error)
 }
 
 // Generator orchestrates a single worker's sprite-sheet generation.
@@ -146,11 +147,24 @@ func (g *Generator) GenerateForWorker(ctx context.Context, p WorkerProfile) (str
 		views[dir] = decoded
 	}
 
-	// 3. Animate each direction's reference into a 6-frame walk cycle
-	// using the canonical WalkCycleSkeletons template. PixelLab handles
+	// 2.5. Estimate the character's actual skeleton from the south
+	// reference, then derive a walk cycle that respects those
+	// per-character proportions. Falls back to the hardcoded template
+	// when EstimateSkeleton fails or returns insufficient keypoints —
+	// quality degrades but the worker still gets a sprite.
+	skeletons := WalkCycleSkeletons()
+	if est, eerr := g.client.EstimateSkeleton(ctx, pixellab.EstimateSkeletonRequest{
+		Image: &baseB64,
+	}); eerr == nil && est != nil {
+		if cycle, ok := BuildWalkCycle(est.Keypoints); ok {
+			skeletons = cycle
+		}
+	}
+
+	// 3. Animate each direction's reference into a walk cycle using the
+	// (per-character or fallback) skeleton template. PixelLab handles
 	// the per-direction projection via the Direction parameter, so the
 	// same template produces front/side/back walking poses correctly.
-	skeletons := WalkCycleSkeletons()
 	frames := make(map[Direction][]image.Image, len(AllDirections))
 	for _, dir := range AllDirections {
 		ref := pixellab.Base64Image{Type: "base64", Base64: encodeBase64(views[dir])}

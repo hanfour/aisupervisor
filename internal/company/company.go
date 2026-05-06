@@ -1035,6 +1035,78 @@ func (m *Manager) GetWorkerSpritePNG(workerID string) ([]byte, error) {
 	return data, nil
 }
 
+// ListWorkersWithoutSprites returns the IDs of every worker that has
+// no AI sprite yet. Callers (the GUI batch button) use this to know
+// what work the next BatchGenerateWorkerSprites call would do, so they
+// can show a confirm dialog with the cost up front.
+func (m *Manager) ListWorkersWithoutSprites() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.workers))
+	for id, w := range m.workers {
+		if w.Appearance == nil || w.Appearance.SpriteSheetPath == "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// SpriteBatchProgress is one event in a batch generation run.
+// OK is false when the per-worker GenerateWorkerSprite call errored;
+// Err carries the error string in that case (Empty when OK).
+type SpriteBatchProgress struct {
+	WorkerID string `json:"workerId"`
+	Index    int    `json:"index"`
+	Total    int    `json:"total"`
+	OK       bool   `json:"ok"`
+	Path     string `json:"path,omitempty"`
+	Err      string `json:"err,omitempty"`
+}
+
+// BatchGenerateWorkerSprites generates sprites sequentially for each
+// worker ID in order, calling onProgress after each (success or
+// failure). Returns the per-worker progress slice in the same order as
+// the input.
+//
+// The function does NOT abort on per-worker failure — it records the
+// error in the progress event and moves on. The caller can choose to
+// retry failed IDs.
+//
+// onProgress may be nil. When non-nil, it is called synchronously
+// after each worker completes; long-running callbacks block the next
+// generation, so the GUI binding fires Wails events from inside it
+// rather than doing heavy work.
+func (m *Manager) BatchGenerateWorkerSprites(ctx context.Context, workerIDs []string, onProgress func(SpriteBatchProgress)) ([]SpriteBatchProgress, error) {
+	m.mu.RLock()
+	g := m.spriteGenerator
+	m.mu.RUnlock()
+	if g == nil {
+		return nil, ErrSpriteGeneratorNotConfigured
+	}
+	results := make([]SpriteBatchProgress, 0, len(workerIDs))
+	for i, id := range workerIDs {
+		if err := ctx.Err(); err != nil {
+			return results, err
+		}
+		path, err := m.GenerateWorkerSprite(ctx, id)
+		ev := SpriteBatchProgress{
+			WorkerID: id,
+			Index:    i + 1,
+			Total:    len(workerIDs),
+			OK:       err == nil,
+			Path:     path,
+		}
+		if err != nil {
+			ev.Err = err.Error()
+		}
+		results = append(results, ev)
+		if onProgress != nil {
+			onProgress(ev)
+		}
+	}
+	return results, nil
+}
+
 // ErrSpriteGeneratorNotConfigured is returned when sprite-generation
 // methods are called without a PixelLab generator wired. Lets callers
 // distinguish "no API key" from "generation actually failed".

@@ -519,6 +519,27 @@ func (c *CompanyApp) GetWorkerSpriteDataURL(workerID string) string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 }
 
+// ListWorkersWithoutSprites returns the IDs of all workers that don't
+// yet have an AI sprite. The frontend uses this to populate the batch
+// confirmation dialog (so the user can see exactly what will be
+// generated and the cost before committing).
+func (c *CompanyApp) ListWorkersWithoutSprites() []string {
+	return c.company.ListWorkersWithoutSprites()
+}
+
+// BatchGenerateWorkerSprites generates sprites for the given worker
+// IDs sequentially, emitting "sprite:batch:progress" Wails events
+// after each worker (success or failure). Returns the final summary
+// slice in the same order as the input.
+//
+// The frontend should subscribe to "sprite:batch:progress" before
+// calling this so it doesn't miss the early events.
+func (c *CompanyApp) BatchGenerateWorkerSprites(workerIDs []string) ([]company.SpriteBatchProgress, error) {
+	return c.company.BatchGenerateWorkerSprites(c.ctx, workerIDs, func(p company.SpriteBatchProgress) {
+		wailsRuntime.EventsEmit(c.ctx, "sprite:batch:progress", p)
+	})
+}
+
 // GetHierarchy returns workers organized by tier.
 func (c *CompanyApp) GetHierarchy() map[string][]WorkerDTO {
 	workers := c.company.ListWorkers()

@@ -1,12 +1,23 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { workers, loadWorkers, createWorkerWithTier, promoteWorker, hierarchy, loadHierarchy, skillProfiles, loadSkillProfiles } from '../stores/workers.js'
+  import { invalidateCustomSpriteSheet } from '../office/sprites.js'
   import WorkerCard from '../components/WorkerCard.svelte'
   import WorkerDetailDrawer from '../components/WorkerDetailDrawer.svelte'
   import { addError } from '../stores/errors.js'
   import { t } from '../stores/i18n.js'
 
+  // Per-worker call cost — pixflux 1 + rotate 3 + estimate 1 + animate 4.
+  // Update if the pipeline call count in internal/sprite/generator.go changes.
+  const COST_PER_WORKER = 9
+
   let showHire = false
+  let aiSpriteAvailable = false
+  let batchPending = []          // worker IDs that still need a sprite
+  let batchRunning = false
+  let batchProgress = null       // {workerId, index, total, ok, err?}
+  let batchFailures = []         // collected from progress events
+  let showBatchConfirm = false
   let newName = ''
   let newAvatar = 'robot'
   let newTier = 'engineer'
@@ -53,7 +64,53 @@
     } catch (e) {
       addError('Failed to load workers: ' + e.message)
     }
+    try {
+      const has = window?.go?.gui?.CompanyApp?.HasPixelLabSpriteGen
+      aiSpriteAvailable = has ? await has() : false
+      if (aiSpriteAvailable) {
+        batchPending = await window.go.gui.CompanyApp.ListWorkersWithoutSprites() || []
+      }
+    } catch {
+      aiSpriteAvailable = false
+    }
+
+    // Subscribe before kicking off any batch so we don't miss events.
+    if (window.runtime?.EventsOn) {
+      window.runtime.EventsOn('sprite:batch:progress', (p) => {
+        batchProgress = p
+        if (!p.ok) {
+          batchFailures = [...batchFailures, p]
+        } else {
+          // Drop the just-finished worker from the pending list and bust
+          // its custom-sheet cache so the office view reloads the new PNG.
+          batchPending = batchPending.filter(id => id !== p.workerId)
+          invalidateCustomSpriteSheet(p.workerId)
+        }
+      })
+    }
   })
+
+  onDestroy(() => {
+    window.runtime?.EventsOff?.('sprite:batch:progress')
+  })
+
+  async function handleBatchGenerate() {
+    showBatchConfirm = false
+    if (batchPending.length === 0 || batchRunning) return
+    batchRunning = true
+    batchFailures = []
+    batchProgress = null
+    try {
+      await window.go.gui.CompanyApp.BatchGenerateWorkerSprites(batchPending.slice())
+      // Reload workers so the UI picks up the new SpriteSheetPath values.
+      await loadWorkers()
+      batchPending = await window.go.gui.CompanyApp.ListWorkersWithoutSprites() || []
+    } catch (e) {
+      addError('Batch sprite generation failed: ' + (e?.message || e))
+    } finally {
+      batchRunning = false
+    }
+  }
 
   async function handleHire() {
     if (!newName) return
@@ -108,7 +165,56 @@
     <p class="title">{$t('workers.title')}</p>
     <div class="toolbar">
       <button class="nes-btn is-success" on:click={openHireDialog}>{$t('workers.hire')}</button>
+      {#if aiSpriteAvailable && batchPending.length > 0}
+        <button
+          class="nes-btn is-warning"
+          on:click={() => (showBatchConfirm = true)}
+          disabled={batchRunning}
+          title="批次為 {batchPending.length} 位尚未有 AI 角色圖的員工生成"
+        >
+          {batchRunning
+            ? `🪄 生成中… ${batchProgress ? `(${batchProgress.index}/${batchProgress.total})` : ''}`
+            : `🪄 批次 AI 角色圖 (${batchPending.length})`}
+        </button>
+      {/if}
     </div>
+
+    {#if showBatchConfirm}
+      <div class="batch-confirm">
+        <p>
+          將為 <strong>{batchPending.length}</strong> 位尚無 AI 角色圖的員工依序生成，
+          約消耗 <strong>{batchPending.length * COST_PER_WORKER}</strong> 次 PixelLab generation
+          （每位約 3 分鐘，總計 {Math.ceil(batchPending.length * 3)} 分鐘）。
+        </p>
+        <div class="batch-confirm-actions">
+          <button class="nes-btn is-error" on:click={() => (showBatchConfirm = false)}>取消</button>
+          <button class="nes-btn is-warning" on:click={handleBatchGenerate}>確認生成</button>
+        </div>
+      </div>
+    {/if}
+
+    {#if batchRunning && batchProgress}
+      <div class="batch-progress">
+        <p>
+          {batchProgress.index} / {batchProgress.total}
+          — {batchProgress.ok ? '✓' : '✗'} {batchProgress.workerId}
+        </p>
+        {#if batchFailures.length > 0}
+          <p class="batch-failures">
+            {batchFailures.length} 個失敗（會在結束後可重試）
+          </p>
+        {/if}
+      </div>
+    {/if}
+
+    {#if !batchRunning && batchFailures.length > 0}
+      <div class="batch-failures-final">
+        <p>
+          上一輪批次有 {batchFailures.length} 個失敗：
+          {batchFailures.map(f => f.workerId).join(', ')}
+        </p>
+      </div>
+    {/if}
 
     <div class="hierarchy-grid">
       {#each tierOrder as tier}
@@ -283,10 +389,39 @@
 
   .toolbar {
     margin-bottom: 12px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 
   .toolbar button {
     font-size: 10px;
+  }
+
+  .batch-confirm,
+  .batch-progress,
+  .batch-failures-final {
+    margin: 12px 0;
+    padding: 8px 12px;
+    border: 2px solid var(--accent-yellow, #ffd700);
+    background: rgba(255, 215, 0, 0.08);
+    font-size: 10px;
+  }
+
+  .batch-failures-final {
+    border-color: var(--accent-red, #e74c3c);
+    background: rgba(231, 76, 60, 0.08);
+  }
+
+  .batch-confirm-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .batch-failures {
+    color: var(--accent-red, #e74c3c);
+    margin-top: 4px;
   }
 
   .hierarchy-grid {

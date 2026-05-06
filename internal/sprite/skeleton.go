@@ -16,14 +16,16 @@ const WalkCycleFrames = 3
 // elbows / arms (= hands) / hips / knees / legs (= feet).
 const WalkCycleKeypointCount = 14
 
-// WalkCycleSkeletons returns the canonical 6-frame side-view walk
+// WalkCycleSkeletons returns the canonical 3-keyframe side-view walk
 // cycle as a 2D point slice (outer = per-frame, inner = labelled
 // points). Coordinates are in pixel space relative to the top-left of
 // a 32×32 frame.
 //
-// The cycle is symmetric around frame 3 — frame 0 (right leg forward)
-// mirrors frame 3 (left leg forward), with intermediate frames at 1/2
-// and 4/5. Played at ~6 fps it produces a natural-looking loop.
+// Three keyframes only: frame 0 contact (right leg forward), frame 1
+// passing (limbs centred), frame 2 contact-mirror (left leg forward).
+// PixelLab's animate-with-skeleton hardcodes "expected 3 pose images"
+// server-side, so this is the only count the API accepts. The
+// generator repeats these to fill the sheet's 6 columns per direction.
 //
 // Labels use PixelLab's SkeletonLabel enum vocabulary (see
 // pixellab/endpoints.go Label* constants) — the API rejects anything

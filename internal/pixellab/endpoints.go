@@ -148,8 +148,10 @@ type SkeletonPoint struct {
 
 // AnimateWithSkeletonRequest takes a base reference image plus a 2D
 // list of keypoints (outer = per-frame, inner = labelled points within
-// that frame) and returns one PNG per frame. Used to drive 6-frame
-// walk cycles from a single static reference.
+// that frame) and returns one PNG per frame. The API hardcodes exactly
+// 3 keyframes server-side ("Expected 3 pose images" 500 otherwise);
+// callers wanting more granular animation must repeat keyframes after
+// receiving the 3-frame response.
 //
 // Field names mirror the live API exactly; the JSON wire format is:
 //

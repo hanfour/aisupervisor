@@ -7,12 +7,13 @@
 //     (skill_profile / gender / personality flavor) — see prompt.go.
 //  2. PixelLab Pixflux: generate the south-facing 32×32 base view.
 //  3. PixelLab Rotate ×3: derive east / north / west views from the base.
-//  4. Composer assembles the four 32×32 views into a 768×32 sprite sheet
-//     (24-col × 1-row layout matching the frontend's existing FRAME_SIZE
-//     constants), repeating each view six times to fill the 6-frame
-//     walk-cycle slot. Animation frames-per-direction is left as a
-//     follow-up — workers turn correctly today; their legs swing in PR 4.
-//  5. Sheet is written atomically to <cacheDir>/<worker_id>/walking.png
+//  4. PixelLab AnimateWithSkeleton ×4: feed each direction's reference
+//     image through the canonical 6-pose walk-cycle skeleton template
+//     (see skeleton.go) to get a 6-frame walk animation per direction.
+//  5. Composer assembles the resulting 24 frames (4 dirs × 6 frames)
+//     into a 768×32 sprite sheet (24-col × 1-row layout matching the
+//     frontend's FRAME_SIZE constants).
+//  6. Sheet is written atomically to <cacheDir>/<worker_id>/walking.png
 //     and that absolute path is returned.
 //
 // Failure modes:
@@ -69,6 +70,7 @@ var AllDirections = []Direction{DirSouth, DirWest, DirEast, DirNorth}
 type pixelLabClient interface {
 	GenerateImagePixflux(ctx context.Context, req pixellab.PixfluxRequest) (*pixellab.PixfluxResponse, error)
 	Rotate(ctx context.Context, req pixellab.RotateRequest) (*pixellab.RotateResponse, error)
+	AnimateWithSkeleton(ctx context.Context, req pixellab.AnimateWithSkeletonRequest) (*pixellab.AnimateWithSkeletonResponse, error)
 }
 
 // Generator orchestrates a single worker's sprite-sheet generation.
@@ -144,14 +146,41 @@ func (g *Generator) GenerateForWorker(ctx context.Context, p WorkerProfile) (str
 		views[dir] = decoded
 	}
 
-	// 3. Decode each PNG to image.Image so the composer can blit it.
-	frames := make(map[Direction]image.Image, len(AllDirections))
+	// 3. Animate each direction's reference into a 6-frame walk cycle
+	// using the canonical WalkCycleSkeletons template. PixelLab handles
+	// the per-direction projection via the Direction parameter, so the
+	// same template produces front/side/back walking poses correctly.
+	skeletons := WalkCycleSkeletons()
+	frames := make(map[Direction][]image.Image, len(AllDirections))
 	for _, dir := range AllDirections {
-		img, decodeErr := decodePNG(views[dir])
-		if decodeErr != nil {
-			return "", fmt.Errorf("sprite: decode %s frame: %w", dir, decodeErr)
+		ref := pixellab.Base64Image{Type: "base64", Base64: encodeBase64(views[dir])}
+		anim, aerr := g.client.AnimateWithSkeleton(ctx, pixellab.AnimateWithSkeletonRequest{
+			ImageSize:      pixellab.ImageSize{Width: FrameSize, Height: FrameSize},
+			ReferenceImage: &ref,
+			Skeletons:      skeletons,
+			Direction:      string(dir),
+			View:           "low top-down",
+		})
+		if aerr != nil {
+			return "", fmt.Errorf("sprite: animate %s: %w", dir, aerr)
 		}
-		frames[dir] = img
+		if len(anim.Images) != FramesPerDirection {
+			return "", fmt.Errorf("sprite: animate %s returned %d frames, want %d",
+				dir, len(anim.Images), FramesPerDirection)
+		}
+		seq := make([]image.Image, FramesPerDirection)
+		for i, b64 := range anim.Images {
+			raw, derr := b64.PNGBytes()
+			if derr != nil {
+				return "", fmt.Errorf("sprite: decode %s frame %d PNG: %w", dir, i, derr)
+			}
+			img, ierr := decodePNG(raw)
+			if ierr != nil {
+				return "", fmt.Errorf("sprite: decode %s frame %d image: %w", dir, i, ierr)
+			}
+			seq[i] = img
+		}
+		frames[dir] = seq
 	}
 
 	// 4. Compose the 768×32 sheet (4 dirs × 6 frames × 32 px wide).

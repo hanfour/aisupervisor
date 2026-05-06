@@ -8,31 +8,39 @@ import (
 	"image/png"
 )
 
-// ComposeSheet stitches one PNG per cardinal direction into a single
+// ComposeSheet stitches per-direction frame slices into a single
 // 768×32 sprite sheet (24-col × 1-row layout, FrameSize=32, six frames
 // per direction). Layout:
 //
-//	cols  0 .. 5   south   (frames 0..5)
-//	cols  6 .. 11  west    (frames 6..11)
-//	cols 12 .. 17  east    (frames 12..17)
-//	cols 18 .. 23  north   (frames 18..23)
+//	cols  0 .. 5   south frames 0..5
+//	cols  6 .. 11  west  frames 0..5
+//	cols 12 .. 17  east  frames 0..5
+//	cols 18 .. 23  north frames 0..5
 //
-// Walk-cycle animation is left for a follow-up: each direction's six
-// columns currently hold the same static frame six times. Once
-// animate-with-skeleton is wired the composer's inner loop becomes
-// `for f, frame := range frames[dir]` instead of the static repeat.
+// Each direction's slice must contain exactly FramesPerDirection
+// frames; pass the same image six times to reproduce the static
+// behaviour from earlier revisions.
 //
 // Returns the encoded PNG bytes ready to write to disk.
-func ComposeSheet(frames map[Direction]image.Image) ([]byte, error) {
+func ComposeSheet(frames map[Direction][]image.Image) ([]byte, error) {
 	for _, dir := range AllDirections {
-		f, ok := frames[dir]
-		if !ok || f == nil {
-			return nil, fmt.Errorf("compose: missing frame for direction %q", dir)
+		seq, ok := frames[dir]
+		if !ok || seq == nil {
+			return nil, fmt.Errorf("compose: missing frames for direction %q", dir)
 		}
-		b := f.Bounds()
-		if b.Dx() != FrameSize || b.Dy() != FrameSize {
-			return nil, fmt.Errorf("compose: %s frame is %dx%d, want %dx%d",
-				dir, b.Dx(), b.Dy(), FrameSize, FrameSize)
+		if len(seq) != FramesPerDirection {
+			return nil, fmt.Errorf("compose: %s has %d frames, want %d",
+				dir, len(seq), FramesPerDirection)
+		}
+		for i, f := range seq {
+			if f == nil {
+				return nil, fmt.Errorf("compose: %s frame %d is nil", dir, i)
+			}
+			b := f.Bounds()
+			if b.Dx() != FrameSize || b.Dy() != FrameSize {
+				return nil, fmt.Errorf("compose: %s frame %d is %dx%d, want %dx%d",
+					dir, i, b.Dx(), b.Dy(), FrameSize, FrameSize)
+			}
 		}
 	}
 
@@ -40,8 +48,8 @@ func ComposeSheet(frames map[Direction]image.Image) ([]byte, error) {
 	sheet := image.NewRGBA(image.Rect(0, 0, width, FrameSize))
 
 	for dirIdx, dir := range AllDirections {
-		frame := frames[dir]
-		for f := 0; f < FramesPerDirection; f++ {
+		seq := frames[dir]
+		for f, frame := range seq {
 			col := dirIdx*FramesPerDirection + f
 			dst := image.Rect(col*FrameSize, 0, (col+1)*FrameSize, FrameSize)
 			draw.Draw(sheet, dst, frame, frame.Bounds().Min, draw.Src)

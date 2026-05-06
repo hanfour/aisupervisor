@@ -37,14 +37,21 @@ func fakeColorPNG(t *testing.T, c color.RGBA) []byte {
 // generator can drive. It returns one of four colour PNGs per
 // direction so the composer's slot ordering is testable downstream.
 type fakePixelLab struct {
-	pixfluxCalls int
-	rotateCalls  int
-	pixfluxErr   error
-	rotateErr    error
+	pixfluxCalls  int
+	rotateCalls   int
+	animateCalls  int
+	pixfluxErr    error
+	rotateErr     error
+	animateErr    error
 	// Colour returned by GenerateImagePixflux (the "south" base view).
 	southPNG []byte
 	// Colour returned for each rotation; key is ToDirection.
 	rotPNGByDir map[string][]byte
+	// Per-direction 6-frame animation responses; key is Direction.
+	// When nil, AnimateWithSkeleton synthesises 6 frames by tinting
+	// the reference PNG with frame-index variation so frames are
+	// pairwise distinct (proves the cycle isn't a static repeat).
+	animFramesByDir map[string][][]byte
 }
 
 func (f *fakePixelLab) GenerateImagePixflux(ctx context.Context, req pixellab.PixfluxRequest) (*pixellab.PixfluxResponse, error) {
@@ -71,6 +78,79 @@ func (f *fakePixelLab) Rotate(ctx context.Context, req pixellab.RotateRequest) (
 		Image: pixellab.Base64Image{Type: "base64", Base64: encodeBase64(png)},
 		Usage: pixellab.Usage{Type: "usd", USD: 0.02},
 	}, nil
+}
+
+func (f *fakePixelLab) AnimateWithSkeleton(ctx context.Context, req pixellab.AnimateWithSkeletonRequest) (*pixellab.AnimateWithSkeletonResponse, error) {
+	f.animateCalls++
+	if f.animateErr != nil {
+		return nil, f.animateErr
+	}
+	// If the test pre-populated explicit per-direction frames, return those.
+	if f.animFramesByDir != nil {
+		if seq, ok := f.animFramesByDir[req.Direction]; ok {
+			imgs := make([]pixellab.Base64Image, len(seq))
+			for i, raw := range seq {
+				imgs[i] = pixellab.Base64Image{Type: "base64", Base64: encodeBase64(raw)}
+			}
+			return &pixellab.AnimateWithSkeletonResponse{
+				Images: imgs,
+				Usage:  pixellab.Usage{Type: "usd", USD: 0.06},
+			}, nil
+		}
+	}
+	// Default: synthesise 6 frames by tinting the reference PNG with
+	// per-frame variation so frames are pairwise distinct.
+	if req.ReferenceImage == nil {
+		return nil, &pixellab.APIError{StatusCode: 400, Method: "POST", Path: "/animate-with-skeleton", Body: "missing reference"}
+	}
+	refRaw, err := req.ReferenceImage.PNGBytes()
+	if err != nil {
+		return nil, err
+	}
+	refImg, err := decodePNG(refRaw)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]pixellab.Base64Image, FramesPerDirection)
+	for i := 0; i < FramesPerDirection; i++ {
+		out[i] = pixellab.Base64Image{
+			Type:   "base64",
+			Base64: encodeBase64(tintedPNG(refImg, uint8(i*5))), // stride 5 / frame
+		}
+	}
+	return &pixellab.AnimateWithSkeletonResponse{
+		Images: out,
+		Usage:  pixellab.Usage{Type: "usd", USD: 0.06},
+	}, nil
+}
+
+// tintedPNG returns a copy of img with red increased by `delta`. Used
+// only by the fake to manufacture frames that differ pairwise — proves
+// the composer doesn't silently repeat a single frame across columns.
+func tintedPNG(img image.Image, delta uint8) []byte {
+	b := img.Bounds()
+	out := image.NewRGBA(b)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := img.At(x, y).RGBA()
+			out.Set(x, y, color.RGBA{
+				R: uint8(min32(int(uint8(r>>8))+int(delta), 255)),
+				G: uint8(g >> 8),
+				B: uint8(bl >> 8),
+				A: uint8(a >> 8),
+			})
+		}
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, out)
+	return buf.Bytes()
+}
+
+func min32(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // =============================================================
@@ -137,11 +217,18 @@ func TestComposeSheet_LayoutAndDimensions(t *testing.T) {
 		}
 		return img
 	}
-	frames := map[Direction]image.Image{
-		DirSouth: mk(color.RGBA{255, 0, 0, 255}),   // red
-		DirWest:  mk(color.RGBA{0, 255, 0, 255}),   // green
-		DirEast:  mk(color.RGBA{0, 0, 255, 255}),   // blue
-		DirNorth: mk(color.RGBA{255, 255, 0, 255}), // yellow
+	repeat := func(img image.Image) []image.Image {
+		out := make([]image.Image, FramesPerDirection)
+		for i := range out {
+			out[i] = img
+		}
+		return out
+	}
+	frames := map[Direction][]image.Image{
+		DirSouth: repeat(mk(color.RGBA{255, 0, 0, 255})),   // red
+		DirWest:  repeat(mk(color.RGBA{0, 255, 0, 255})),   // green
+		DirEast:  repeat(mk(color.RGBA{0, 0, 255, 255})),   // blue
+		DirNorth: repeat(mk(color.RGBA{255, 255, 0, 255})), // yellow
 	}
 
 	sheetBytes, err := ComposeSheet(frames)
@@ -183,11 +270,18 @@ func TestComposeSheet_RejectsMissingDirection(t *testing.T) {
 	mk := func() image.Image {
 		return image.NewRGBA(image.Rect(0, 0, FrameSize, FrameSize))
 	}
-	_, err := ComposeSheet(map[Direction]image.Image{
-		DirSouth: mk(),
+	repeat := func(img image.Image) []image.Image {
+		out := make([]image.Image, FramesPerDirection)
+		for i := range out {
+			out[i] = img
+		}
+		return out
+	}
+	_, err := ComposeSheet(map[Direction][]image.Image{
+		DirSouth: repeat(mk()),
 		// DirWest missing
-		DirEast:  mk(),
-		DirNorth: mk(),
+		DirEast:  repeat(mk()),
+		DirNorth: repeat(mk()),
 	})
 	if err == nil {
 		t.Error("expected error for missing direction")
@@ -198,14 +292,43 @@ func TestComposeSheet_RejectsWrongFrameSize(t *testing.T) {
 	mk := func(w, h int) image.Image {
 		return image.NewRGBA(image.Rect(0, 0, w, h))
 	}
-	_, err := ComposeSheet(map[Direction]image.Image{
-		DirSouth: mk(48, 48), // wrong size
-		DirWest:  mk(FrameSize, FrameSize),
-		DirEast:  mk(FrameSize, FrameSize),
-		DirNorth: mk(FrameSize, FrameSize),
+	repeat := func(img image.Image) []image.Image {
+		out := make([]image.Image, FramesPerDirection)
+		for i := range out {
+			out[i] = img
+		}
+		return out
+	}
+	_, err := ComposeSheet(map[Direction][]image.Image{
+		DirSouth: repeat(mk(48, 48)), // wrong size
+		DirWest:  repeat(mk(FrameSize, FrameSize)),
+		DirEast:  repeat(mk(FrameSize, FrameSize)),
+		DirNorth: repeat(mk(FrameSize, FrameSize)),
 	})
 	if err == nil {
 		t.Error("expected error for non-32x32 frame")
+	}
+}
+
+func TestComposeSheet_RejectsWrongFrameCount(t *testing.T) {
+	mk := func() image.Image {
+		return image.NewRGBA(image.Rect(0, 0, FrameSize, FrameSize))
+	}
+	repeat := func(img image.Image, n int) []image.Image {
+		out := make([]image.Image, n)
+		for i := range out {
+			out[i] = img
+		}
+		return out
+	}
+	_, err := ComposeSheet(map[Direction][]image.Image{
+		DirSouth: repeat(mk(), 5), // wrong count — should be FramesPerDirection (6)
+		DirWest:  repeat(mk(), FramesPerDirection),
+		DirEast:  repeat(mk(), FramesPerDirection),
+		DirNorth: repeat(mk(), FramesPerDirection),
+	})
+	if err == nil {
+		t.Error("expected error for wrong frame count")
 	}
 }
 
@@ -256,12 +379,111 @@ func TestGenerator_GenerateForWorker_HappyPath(t *testing.T) {
 	if sheet.Bounds().Dx() != 768 || sheet.Bounds().Dy() != 32 {
 		t.Errorf("sprite sheet dims = %v, want 768x32", sheet.Bounds())
 	}
-	// API call counts: 1 pixflux + 3 rotations.
+	// API call counts: 1 pixflux + 3 rotations + 4 animations.
 	if fake.pixfluxCalls != 1 {
 		t.Errorf("pixfluxCalls = %d, want 1", fake.pixfluxCalls)
 	}
 	if fake.rotateCalls != 3 {
 		t.Errorf("rotateCalls = %d, want 3", fake.rotateCalls)
+	}
+	if fake.animateCalls != 4 {
+		t.Errorf("animateCalls = %d, want 4 (one per direction)", fake.animateCalls)
+	}
+}
+
+// Walk-cycle proof: each direction's 6 columns must contain pairwise
+// distinct frames. If the composer regressed to repeating a single
+// frame, this test catches it. The fake's tintedPNG synthesiser
+// guarantees frame-to-frame variation regardless of skeleton choice.
+func TestGenerator_WalkCycle_FramesAreDistinct(t *testing.T) {
+	fake := &fakePixelLab{
+		southPNG: fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+		rotPNGByDir: map[string][]byte{
+			"west":  fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+			"east":  fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+			"north": fakeColorPNG(t, color.RGBA{120, 80, 80, 255}),
+		},
+	}
+	g := NewGenerator(fake, t.TempDir())
+	path, err := g.GenerateForWorker(context.Background(), WorkerProfile{
+		ID: "w-cycle", SkillProfile: "coder",
+	})
+	if err != nil {
+		t.Fatalf("GenerateForWorker: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read sprite: %v", err)
+	}
+	sheet, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode sprite: %v", err)
+	}
+
+	// Pick centre pixel of each of the 24 columns and require that
+	// within each direction's 6-column band, no two columns share the
+	// exact same colour. This asserts the cycle is animated, not a
+	// 6× static repeat.
+	for dirIdx := 0; dirIdx < 4; dirIdx++ {
+		seen := map[uint32]int{}
+		for f := 0; f < FramesPerDirection; f++ {
+			col := dirIdx*FramesPerDirection + f
+			cx := col*FrameSize + FrameSize/2
+			cy := FrameSize / 2
+			r, gC, b, a := sheet.At(cx, cy).RGBA()
+			key := (uint32(r>>8) << 24) | (uint32(gC>>8) << 16) | (uint32(b>>8) << 8) | uint32(a>>8)
+			if prev, ok := seen[key]; ok {
+				t.Errorf("dir %d: frames %d and %d share colour 0x%08x — walk cycle collapsed to static",
+					dirIdx, prev, f, key)
+				break
+			}
+			seen[key] = f
+		}
+	}
+}
+
+func TestGenerator_GenerateForWorker_PropagatesAnimateError(t *testing.T) {
+	fake := &fakePixelLab{
+		southPNG: fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+		rotPNGByDir: map[string][]byte{
+			"west":  fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+			"east":  fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+			"north": fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+		},
+		animateErr: &pixellab.APIError{StatusCode: 429, Method: "POST", Path: "/animate-with-skeleton", Body: "rate_limited"},
+	}
+	g := NewGenerator(fake, t.TempDir())
+	_, err := g.GenerateForWorker(context.Background(), WorkerProfile{ID: "w1", SkillProfile: "coder"})
+	if err == nil {
+		t.Fatal("expected error to propagate from animate failure")
+	}
+	if !strings.Contains(err.Error(), "animate") {
+		t.Errorf("error should identify animate, got: %v", err)
+	}
+}
+
+func TestGenerator_GenerateForWorker_RejectsWrongFrameCountFromAPI(t *testing.T) {
+	// Simulate API returning fewer frames than requested — must be
+	// caught and surfaced rather than producing a malformed sheet.
+	short := [][]byte{fakeColorPNG(t, color.RGBA{0, 0, 0, 255})}
+	fake := &fakePixelLab{
+		southPNG: fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+		rotPNGByDir: map[string][]byte{
+			"west":  fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+			"east":  fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+			"north": fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+		},
+		animFramesByDir: map[string][][]byte{
+			"south": short, "west": short, "east": short, "north": short,
+		},
+	}
+	g := NewGenerator(fake, t.TempDir())
+	_, err := g.GenerateForWorker(context.Background(), WorkerProfile{ID: "w1", SkillProfile: "coder"})
+	if err == nil {
+		t.Fatal("expected error when API returns fewer frames than FramesPerDirection")
+	}
+	if !strings.Contains(err.Error(), "frames") {
+		t.Errorf("error should mention frame count, got: %v", err)
 	}
 }
 

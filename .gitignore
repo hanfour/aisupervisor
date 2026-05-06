@@ -39,3 +39,8 @@ docs/plans/
 .claude/worktrees/
 .worktrees/
 ais-agent
+
+# Local app caches & dev artifacts
+.aisupervisor/
+.playwright-mcp/
+office-view-*.png

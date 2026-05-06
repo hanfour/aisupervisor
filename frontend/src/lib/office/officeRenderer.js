@@ -1,7 +1,7 @@
 // Canvas 2D rendering engine for Pixel Office — Warm Bright Edition
 
 import { TILE_SIZE, SCALE, getFloorMap, getDesks, buildWorkerDeskMap, getLayoutDimensions, getCurrentLayoutId } from './layout.js'
-import { prerenderCharacter, prerenderCharacterFromAppearance, prerenderFurniture, prerenderEnvSprite, prerenderWallVariants, getCharacterType, getWorkerDecorations, drawDeskDecoration, SKILL_PROFILE_COLORS, getLevelEffects } from './sprites.js'
+import { prerenderCharacter, prerenderCharacterFromAppearance, loadCustomSpriteSheet, prerenderFurniture, prerenderEnvSprite, prerenderWallVariants, getCharacterType, getWorkerDecorations, drawDeskDecoration, SKILL_PROFILE_COLORS, getLevelEffects } from './sprites.js'
 import { AnimationState, statusToAnim, ENV_ANIM } from './animation.js'
 import { PHASES } from './gameClock.js'
 import { startAmbient, stopAmbient, playKeyClatter } from './sounds.js'
@@ -400,6 +400,22 @@ export class OfficeRenderer {
           ? prerenderCharacterFromAppearance(w.appearance)
           : prerenderCharacter(charType)
         if (result) this.charCache[charType] = result
+      }
+
+      // PixelLab AI sprite sheet — async-load and overwrite the layered cache.
+      // The layered render above acts as immediate fallback while the AI sheet
+      // is fetched/decoded; once ready, the next animation frame uses it.
+      if (w.appearance?.spriteSheetPath) {
+        this._customSheetRequested = this._customSheetRequested || {}
+        const reqKey = `${w.id}:${w.appearance.spriteSheetPath}`
+        if (this._customSheetRequested[w.id] !== reqKey) {
+          this._customSheetRequested[w.id] = reqKey
+          loadCustomSpriteSheet(w.id).then(customCache => {
+            if (customCache) this.charCache[charType] = customCache
+          }).catch(err => {
+            console.warn('loadCustomSpriteSheet error', w.id, err)
+          })
+        }
       }
     }
 

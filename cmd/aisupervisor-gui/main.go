@@ -25,9 +25,11 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/group"
 	"github.com/hanfourmini/aisupervisor/internal/gui"
 	"github.com/hanfourmini/aisupervisor/internal/messaging"
+	"github.com/hanfourmini/aisupervisor/internal/pixellab"
 	"github.com/hanfourmini/aisupervisor/internal/project"
 	"github.com/hanfourmini/aisupervisor/internal/role"
 	"github.com/hanfourmini/aisupervisor/internal/session"
+	"github.com/hanfourmini/aisupervisor/internal/sprite"
 	"github.com/hanfourmini/aisupervisor/internal/supervisor"
 	"github.com/hanfourmini/aisupervisor/internal/tmux"
 	"github.com/hanfourmini/aisupervisor/internal/training"
@@ -154,6 +156,19 @@ func main() {
 	companyMgr, err := company.New(projectStore, spawner, git, completionMon, tmuxClient, companyDataDir, chatProvider)
 	if err != nil {
 		log.Fatalf("setting up company manager: %v", err)
+	}
+
+	// Wire PixelLab AI sprite generator when an API key is available
+	// (env var PIXELLAB_API_KEY wins over YAML cfg.PixelLab.APIKey).
+	if key := config.ResolvePixelLabAPIKey(cfg.PixelLab); key != "" {
+		pclient, perr := pixellab.NewClient(cfg.PixelLab.BaseURL, key)
+		if perr != nil {
+			log.Printf("WARNING: PixelLab client init failed: %v", perr)
+		} else {
+			spriteCacheDir := filepath.Join(home, ".local", "share", "aisupervisor", "sprites")
+			companyMgr.SetSpriteGenerator(sprite.NewGenerator(pclient, spriteCacheDir))
+			log.Printf("PixelLab sprite generator enabled (cache: %s)", spriteCacheDir)
+		}
 	}
 
 	// Wire training collector if enabled

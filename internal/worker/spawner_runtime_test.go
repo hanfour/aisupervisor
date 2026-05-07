@@ -235,10 +235,11 @@ func TestSpawner_BuildSpawnConfig(t *testing.T) {
 	})
 
 	t.Run("growth overrides profile and sets envvars", func(t *testing.T) {
-		// Seed the skill tree so EffectiveConfig returns level-1 defaults
-		// (CLITool: ais-agent, Provider: ollama, Model: llama3,
-		// PermissionMode: plan, AllowedTools: [Read Glob Grep], MaxTokenBudget: 50000,
-		// ExtraPrompt: "You are a junior developer...").
+		// Level 1 was changed from {ais-agent, ollama, llama3} to
+		// {claude, "", claude-haiku-4-5} after the previous combo
+		// proved production-broken (ais-agent doesn't support ollama,
+		// claude fallback timed out — observed live 2026-05-07). See
+		// internal/growth/config_mapper.go for the full rationale.
 		tree := growth.NewSkillTree()
 
 		s := newTestSpawner()
@@ -248,8 +249,8 @@ func TestSpawner_BuildSpawnConfig(t *testing.T) {
 		cfg := s.buildSpawnConfig(w, nil, "/tmp/w", "b")
 
 		// Growth overrides Model
-		if cfg.Model != "llama3" {
-			t.Errorf("Model: expected growth override llama3, got %q", cfg.Model)
+		if cfg.Model != "claude-haiku-4-5" {
+			t.Errorf("Model: expected growth override claude-haiku-4-5, got %q", cfg.Model)
 		}
 		// Growth overrides PermissionMode
 		if cfg.PermissionMode != "plan" {
@@ -266,9 +267,11 @@ func TestSpawner_BuildSpawnConfig(t *testing.T) {
 		if !strings.Contains(cfg.SystemPrompt, "junior developer") {
 			t.Errorf("SystemPrompt missing growth ExtraPrompt: %q", cfg.SystemPrompt)
 		}
-		// EnvVars carry ais-agent Provider + MaxTokens
-		if got := cfg.EnvVars["AIS_PROVIDER"]; got != "ollama" {
-			t.Errorf("EnvVars[AIS_PROVIDER] = %q, want ollama", got)
+		// AIS_PROVIDER must NOT be set for level-1 anymore — claude
+		// runtime doesn't read it, and leaving it populated invites a
+		// cross-runtime leak.
+		if got, ok := cfg.EnvVars["AIS_PROVIDER"]; ok {
+			t.Errorf("EnvVars[AIS_PROVIDER] should be unset for level-1 (claude runtime), got %q", got)
 		}
 		if got := cfg.EnvVars["AIS_MAX_TOKENS"]; got != "50000" {
 			t.Errorf("EnvVars[AIS_MAX_TOKENS] = %q, want 50000", got)

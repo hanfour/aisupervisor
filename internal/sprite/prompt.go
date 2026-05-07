@@ -28,14 +28,7 @@ func BuildPrompt(p WorkerProfile) string {
 		"32x32 pixel art top-down character",
 		"full body visible head to toe",
 		"standing centered",
-		// Dragon Quest era anchor — chunky proportions, bold outlines,
-		// limited but saturated palette, Akira Toriyama-style chibi
-		// hero design. Strong franchise reference because that's what
-		// the user asked for; PixelLab handles game-reference prompts
-		// fine in our experience.
-		"classic Dragon Quest JRPG overworld hero sprite",
-		"16-bit retro pixel art style",
-		"chibi proportions, big head small body",
+		"small RPG game character sprite",
 		profileVisualHint(p.SkillProfile),
 	}
 

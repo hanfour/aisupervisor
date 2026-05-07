@@ -20,8 +20,15 @@ import (
 // The exported function lives here (vs. inside generator.go) so it can
 // be unit-tested independently of the HTTP client.
 func BuildPrompt(p WorkerProfile) string {
+	// Framing anchors come first — at 32×32 the model otherwise tends
+	// to crop to a portrait/upper-body shot. "head to toe" + "standing
+	// centered" + "small RPG game character sprite" lock the model
+	// onto a full-body silhouette.
 	parts := []string{
 		"32x32 pixel art top-down character",
+		"full body visible head to toe",
+		"standing centered",
+		"small RPG game character sprite",
 		profileVisualHint(p.SkillProfile),
 	}
 
@@ -33,9 +40,14 @@ func BuildPrompt(p WorkerProfile) string {
 		parts = append(parts, "(personality: "+strings.TrimSpace(p.Personality)+")")
 	}
 
+	// Style anchors come last so they bias rather than dominate the
+	// prompt. "simple silhouette" + black outline (set on the
+	// PixfluxRequest) keep characters visually consistent across runs
+	// even when role descriptions differ widely.
 	parts = append(parts,
 		"clean line art",
 		"vibrant flat colors",
+		"simple silhouette",
 		"transparent background",
 		"facing south",
 	)

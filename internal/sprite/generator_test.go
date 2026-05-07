@@ -59,6 +59,9 @@ type fakePixelLab struct {
 	// case, matching the behaviour we want when PixelLab can't infer a
 	// skeleton from the reference image.
 	estimateKeypoints []pixellab.SkeletonPoint
+	// Last received Pixflux request — used by tests that assert the
+	// generator passes the right style controls.
+	lastPixfluxReq pixellab.PixfluxRequest
 }
 
 func (f *fakePixelLab) EstimateSkeleton(ctx context.Context, req pixellab.EstimateSkeletonRequest) (*pixellab.EstimateSkeletonResponse, error) {
@@ -74,6 +77,7 @@ func (f *fakePixelLab) EstimateSkeleton(ctx context.Context, req pixellab.Estima
 
 func (f *fakePixelLab) GenerateImagePixflux(ctx context.Context, req pixellab.PixfluxRequest) (*pixellab.PixfluxResponse, error) {
 	f.pixfluxCalls++
+	f.lastPixfluxReq = req
 	if f.pixfluxErr != nil {
 		return nil, f.pixfluxErr
 	}
@@ -185,9 +189,13 @@ func TestBuildPrompt_IncludesProfileAndStyleAnchors(t *testing.T) {
 	})
 	wantSubstrings := []string{
 		"32x32 pixel art top-down character",
+		"full body visible head to toe", // framing anchor — guards against upper-body crops
+		"standing centered",
+		"small RPG game character sprite", // style consistency anchor
 		"devops engineer",
 		"male character",
 		"calm and methodical",
+		"simple silhouette",
 		"transparent background",
 		"facing south",
 	}
@@ -218,6 +226,39 @@ func TestBuildPrompt_UnknownProfileFallsBackGracefully(t *testing.T) {
 	got := BuildPrompt(WorkerProfile{ID: "w1", SkillProfile: "qa-lead"})
 	if !strings.Contains(got, "qa-lead professional outfit") {
 		t.Errorf("unknown profile should fall through to generic outfit phrase: %s", got)
+	}
+}
+
+// Generator must apply the style controls (outline / detail / guidance
+// scale) on every Pixflux call, not just include them in the prompt
+// text. Without these, the model produced inconsistent framing and
+// stylistic drift between workers — the symptom that prompted PR #47.
+func TestGenerator_GenerateForWorker_AppliesStyleControls(t *testing.T) {
+	fake := &fakePixelLab{
+		southPNG: fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+		rotPNGByDir: map[string][]byte{
+			"west":  fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+			"east":  fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+			"north": fakeColorPNG(t, color.RGBA{0, 0, 0, 255}),
+		},
+	}
+	g := NewGenerator(fake, t.TempDir())
+	if _, err := g.GenerateForWorker(context.Background(), WorkerProfile{
+		ID: "w-style", SkillProfile: "coder",
+	}); err != nil {
+		t.Fatalf("GenerateForWorker: %v", err)
+	}
+
+	req := fake.lastPixfluxReq
+	if req.OutlineMode != "single color black outline" {
+		t.Errorf("OutlineMode = %q, want %q", req.OutlineMode, "single color black outline")
+	}
+	if req.DetailLevel != "low detail" {
+		t.Errorf("DetailLevel = %q, want %q", req.DetailLevel, "low detail")
+	}
+	if req.TextGuidanceScale < 7 || req.TextGuidanceScale > 12 {
+		t.Errorf("TextGuidanceScale = %v, want roughly 7..12 (default ≈ 4 too low for consistency)",
+			req.TextGuidanceScale)
 	}
 }
 

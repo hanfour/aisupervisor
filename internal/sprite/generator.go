@@ -109,12 +109,28 @@ func (g *Generator) GenerateForWorker(ctx context.Context, p WorkerProfile) (str
 	prompt := BuildPrompt(p)
 
 	// 1. Generate the south-facing base view.
+	//
+	// Style controls (added after observing inconsistent framing —
+	// some workers came back as upper-body crops, others as wildly
+	// different art styles, on the default settings):
+	//
+	//   - OutlineMode "single color black outline" gives every sprite
+	//     the same crisp black silhouette outline; reads as a unified
+	//     game-asset set rather than a mix of styles.
+	//   - DetailLevel "low detail" keeps the model from overspending
+	//     pixel budget on facial features that won't survive at 32×32.
+	//   - TextGuidanceScale 8 (default ≈ 4) pushes the model harder
+	//     toward the prompt — particularly the "full body head to toe"
+	//     framing anchor in BuildPrompt.
 	baseResp, err := g.client.GenerateImagePixflux(ctx, pixellab.PixfluxRequest{
-		Description:  prompt,
-		ImageSize:    pixellab.ImageSize{Width: FrameSize, Height: FrameSize},
-		NoBackground: true,
-		View:         "low top-down",
-		Direction:    string(DirSouth),
+		Description:       prompt,
+		ImageSize:         pixellab.ImageSize{Width: FrameSize, Height: FrameSize},
+		NoBackground:      true,
+		View:              "low top-down",
+		Direction:         string(DirSouth),
+		OutlineMode:       "single color black outline",
+		DetailLevel:       "low detail",
+		TextGuidanceScale: 8,
 	})
 	if err != nil {
 		return "", fmt.Errorf("sprite: generate base view: %w", err)

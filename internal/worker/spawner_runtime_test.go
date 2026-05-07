@@ -114,9 +114,19 @@ func TestSpawner_SetRuntimeRegistry(t *testing.T) {
 }
 
 func TestSpawner_ResolveRuntimeName(t *testing.T) {
-	// A skill tree where the level-1 default picks "ais-agent" from
-	// levelDefaults in growth/config_mapper.go.
-	treeL1 := growth.NewSkillTree()
+	// A skill tree where the level-2 default picks "ais-agent" from
+	// levelDefaults in growth/config_mapper.go. (Level 1 was changed
+	// from ais-agent → claude after the broken-default fix; level 2
+	// still uses ais-agent and is the cleanest case for the
+	// "growth overrides worker.CLITool" assertion.)
+	//
+	// DominantBranch() returns the branch with the highest TotalEXP,
+	// so we have to bump both Level AND TotalEXP — otherwise it
+	// returns an empty branch name and EffectiveConfig falls back to
+	// MapLevelToConfig(1) (claude under the new defaults).
+	treeL2 := growth.NewSkillTree()
+	treeL2.Branches[growth.BranchBackend].Level = 2
+	treeL2.Branches[growth.BranchBackend].TotalEXP = 100
 
 	tierCfgs := map[WorkerTier]TierSpawnConfig{
 		TierEngineer: {CLITool: "tier-cli"},
@@ -140,12 +150,12 @@ func TestSpawner_ResolveRuntimeName(t *testing.T) {
 		},
 		{
 			name:   "growth overrides worker.CLITool",
-			worker: &Worker{ID: "w1", CLITool: "aider", SkillTree: treeL1},
-			want:   "ais-agent", // level-1 default per levelDefaults[1]
+			worker: &Worker{ID: "w1", CLITool: "aider", SkillTree: treeL2},
+			want:   "ais-agent", // level-2 default per levelDefaults[2]
 		},
 		{
 			name:        "tier overrides growth and worker",
-			worker:      &Worker{ID: "w1", Tier: TierEngineer, CLITool: "aider", SkillTree: treeL1},
+			worker:      &Worker{ID: "w1", Tier: TierEngineer, CLITool: "aider", SkillTree: treeL2},
 			tierConfigs: tierCfgs,
 			want:        "tier-cli",
 		},

@@ -189,9 +189,11 @@ func TestBuildPrompt_IncludesProfileAndStyleAnchors(t *testing.T) {
 	})
 	wantSubstrings := []string{
 		"32x32 pixel art top-down character",
-		"full body visible head to toe", // framing anchor — guards against upper-body crops
+		"full body visible head to toe",                   // framing anchor
 		"standing centered",
-		"small RPG game character sprite", // style consistency anchor
+		"classic Dragon Quest JRPG overworld hero sprite", // franchise style anchor
+		"16-bit retro pixel art style",
+		"chibi proportions",
 		"devops engineer",
 		"male character",
 		"calm and methodical",

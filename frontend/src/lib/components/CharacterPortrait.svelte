@@ -1,6 +1,6 @@
 <script>
   import { onMount, afterUpdate } from 'svelte'
-  import { prerenderCharacter, prerenderCharacterFromAppearance, getCharacterType, spritesReady, loadAllSprites, loadCustomSpriteSheet } from '../office/sprites.js'
+  import { prerenderCharacter, prerenderCharacterFromAppearance, getCharacterType, spritesReady, loadAllSprites } from '../office/sprites.js'
   import { renderPortrait, getWorkerPortraitProfile } from '../office/characterPortrait.js'
 
   // Either pass a profileId directly, or pass a worker object
@@ -20,30 +20,9 @@
     }
 
     if (worker && spritesReady()) {
-      // 1. AI sprite sheet (when SpriteSheetPath is set) — highest priority.
-      //    Slices the same 24-col PNG the office renderer uses; idle[0] is
-      //    the south-facing rest pose.
-      let cache = null
-      if (worker.appearance?.spriteSheetPath) {
-        try {
-          cache = await loadCustomSpriteSheet(worker.id)
-        } catch {
-          cache = null
-        }
-      }
-
-      // 2. Layered renderer fallback (body+outfit+hair from appearance).
-      //    Skipped when the layered fields are empty (e.g. AI-only worker
-      //    where the AI sheet failed to load) — falls through to (3).
-      if (!cache && worker.appearance && (worker.appearance.outfit || worker.appearance.hair)) {
-        cache = prerenderCharacterFromAppearance(worker.appearance)
-      }
-
-      // 3. Static character-type lookup (Olivia → designer, etc.) — used
-      //    when the worker has no custom appearance fields at all.
-      if (!cache) {
-        cache = prerenderCharacter(getCharacterType(worker))
-      }
+      const cache = worker.appearance
+        ? prerenderCharacterFromAppearance(worker.appearance)
+        : prerenderCharacter(getCharacterType(worker))
 
       if (cache && cache.idle && cache.idle[0]) {
         const frame = cache.idle[0]

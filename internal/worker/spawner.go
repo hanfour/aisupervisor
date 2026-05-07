@@ -1619,7 +1619,7 @@ func (s *Spawner) spawnViaRuntimeWithConfig(
 	// Early compatibility check. Validate is a fast pure inspection of cfg —
 	// when it fails we know the CLI would crash at startup (e.g. ais-agent
 	// v0.1.0 given --provider ollama) and we should skip straight to the
-	// claude fallback rather than spending ~120s waiting out DetectReady.
+	// claude fallback rather than spending ~240s waiting out DetectReady.
 	if verr := rt.Validate(cfg); verr != nil {
 		return s.tryClaudeFallback(ctx, rt, cfg, w, t, p, workDir, verr, "validate")
 	}
@@ -1629,7 +1629,12 @@ func (s *Spawner) spawnViaRuntimeWithConfig(
 		return fmt.Errorf("runtime %s spawn: %w", rt.Name(), err)
 	}
 
-	if err := rt.DetectReady(ctx, runtimeSess, 120*time.Second); err != nil {
+	// 240s (was 120s) gives slow cold starts — particularly first-run
+	// auth / network-bound config fetches — room to settle before we
+	// declare timeout. The 120s prior fired on legitimate startups
+	// during the 2026-05-07 level-1 incident; the timeout error now
+	// also embeds the last pane tail so debug data survives the abort.
+	if err := rt.DetectReady(ctx, runtimeSess, 240*time.Second); err != nil {
 		_ = rt.Cleanup(runtimeSess)
 		return s.tryClaudeFallback(ctx, rt, cfg, w, t, p, workDir, err, "ready")
 	}

@@ -315,3 +315,74 @@ func TestClaudeCodeRuntime_ParseTokenUsage(t *testing.T) {
 
 // PromptRenderDelay and ShellEscape are now shared helpers in
 // internal/agent/runtimeutil/ and tested there.
+
+// TestSummarisePaneTail verifies the diagnostic helper returns a
+// useful tail for several typical pane-content shapes the real CLI
+// gets stuck in.
+func TestSummarisePaneTail(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string // exact match
+	}{
+		{
+			name:    "empty pane",
+			content: "",
+			want:    "(empty pane)",
+		},
+		{
+			name:    "whitespace only",
+			content: "   \n\t\n  \n",
+			want:    "(whitespace only)",
+		},
+		{
+			name:    "single line",
+			content: "Loading workspace…",
+			want:    "Loading workspace…",
+		},
+		{
+			name:    "multi-line tail joined with separator",
+			content: "noise above\nstill noise\nthird line\nfourth line\nfifth line",
+			want:    "noise above | still noise | third line | fourth line | fifth line",
+		},
+		{
+			name:    "more than 5 non-empty lines keeps the last 5",
+			content: "line 1\nline 2\nline 3\nline 4\nline 5\nline 6",
+			want:    "line 2 | line 3 | line 4 | line 5 | line 6",
+		},
+		{
+			name:    "drops empty lines from middle",
+			content: "first\n\n\nsecond\n",
+			want:    "first | second",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := summarisePaneTail(tc.content); got != tc.want {
+				t.Errorf("summarisePaneTail(%q) = %q, want %q", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSummarisePaneTail_TruncatesLongTail(t *testing.T) {
+	// 600 chars of non-empty content should be capped at the 400-char
+	// limit + ellipsis. Exact length isn't important, just that it's
+	// shorter than the input and ends with the truncation marker.
+	long := strings.Repeat("abcdefghij", 60) // 600 chars
+	got := summarisePaneTail(long)
+	if len(got) >= len(long) {
+		t.Errorf("expected truncation; got %d chars (input was %d)", len(got), len(long))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("expected ellipsis suffix on truncated tail, got %q (last 30 = %q)",
+			got[max(0, len(got)-30):], got[max(0, len(got)-30):])
+	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

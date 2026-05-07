@@ -143,6 +143,13 @@ func (r *Runtime) CaptureOutput(session *agent.AgentSession, lines int) (string,
 // elapses. Along the way it auto-accepts two known confirmation dialogs:
 //   - Trust-folder dialog: answer "Yes, I trust this folder" (Enter only).
 //   - Skip-permissions dialog: move selection Down then Enter.
+//
+// On timeout the error includes a sanitized tail of the last captured
+// pane content so the caller can tell whether Claude was stuck on an
+// auth prompt, a network warning, or some never-before-seen banner —
+// the "after N polls" count alone gave us no actionable signal during
+// the 2026-05-07 incident where every level-1 worker hit a 2-min retry
+// loop.
 func (r *Runtime) DetectReady(ctx context.Context, session *agent.AgentSession, timeout time.Duration) error {
 	if r.tmuxClient == nil {
 		return fmt.Errorf("claudecode: tmux client is nil")
@@ -158,19 +165,22 @@ func (r *Runtime) DetectReady(ctx context.Context, session *agent.AgentSession, 
 	pollCount := 0
 	bypassAccepted := false
 	bypassAcceptedAt := 0
+	var lastContent string
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
-			return fmt.Errorf("claudecode: timeout waiting for CLI ready after %d polls", pollCount)
+			return fmt.Errorf("claudecode: timeout waiting for CLI ready after %d polls (last pane tail: %s)",
+				pollCount, summarisePaneTail(lastContent))
 		case <-ticker.C:
 			pollCount++
 			content, err := r.tmuxClient.CapturePane(session.TmuxSession, session.Window, session.Pane, 10)
 			if err != nil {
 				continue
 			}
+			lastContent = content
 
 			// Auto-accept dialogs.
 			if !bypassAccepted && (strings.Contains(content, "No, exit") || strings.Contains(content, "I accept")) {
@@ -203,6 +213,38 @@ func (r *Runtime) DetectReady(ctx context.Context, session *agent.AgentSession, 
 			}
 		}
 	}
+}
+
+// summarisePaneTail collapses the last few non-empty lines of pane
+// content into a single human-readable string the caller can drop into
+// an error message. Trims trailing whitespace, replaces newlines with
+// " | " separators, and caps total length so the error stays loggable.
+func summarisePaneTail(content string) string {
+	if content == "" {
+		return "(empty pane)"
+	}
+	lines := strings.Split(content, "\n")
+	var nonEmpty []string
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, " \t")
+		if trimmed != "" {
+			nonEmpty = append(nonEmpty, trimmed)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return "(whitespace only)"
+	}
+	const maxLines = 5
+	start := len(nonEmpty) - maxLines
+	if start < 0 {
+		start = 0
+	}
+	tail := strings.Join(nonEmpty[start:], " | ")
+	const maxLen = 400
+	if len(tail) > maxLen {
+		tail = tail[:maxLen] + "…"
+	}
+	return tail
 }
 
 // DetectCompletion is a pure check over already-captured pane content:

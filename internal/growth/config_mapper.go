@@ -14,10 +14,23 @@ type LevelConfig struct {
 }
 
 var levelDefaults = map[int]LevelConfig{
+	// Level 1 originally targeted ais-agent + ollama for cheap-junior
+	// learning, but ais-agent v0.1.0's ollama provider was never wired
+	// end-to-end (validate rejects it — see internal/agent/aisagent),
+	// and the claude fallback path hits its own ~120s DetectReady
+	// timeout when spawned cold. The combination meant every level-1
+	// worker (default for new hires) got stuck in a 2-min health-check
+	// retry loop on first task assignment — observed live 2026-05-07
+	// when the smoke task hit Michael (a default-level-1 devops).
+	//
+	// Switching to claude+haiku puts juniors on the same battle-tested
+	// runtime path as the rest of the tiers. Permission mode stays
+	// "plan" so juniors still operate read-mostly. Ollama support can
+	// come back via a future PR once ais-agent actually implements it.
 	1: {
-		CLITool:        "ais-agent",
-		Provider:       "ollama",
-		Model:          "llama3",
+		CLITool:        "claude",
+		Provider:       "",
+		Model:          "claude-haiku-4-5",
 		PermissionMode: "plan",
 		AllowedTools:   []string{"Read", "Glob", "Grep"},
 		MaxTokenBudget: 50000,

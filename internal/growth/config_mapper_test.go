@@ -3,18 +3,21 @@ package growth
 import "testing"
 
 func TestMapLevelToConfig_Level1(t *testing.T) {
+	// Level 1 used to target ais-agent + ollama but that runtime path
+	// is broken (see config_mapper.go comment); juniors now run on
+	// claude+haiku with plan-mode permissions.
 	cfg := MapLevelToConfig(1)
-	if cfg.CLITool != "ais-agent" {
-		t.Errorf("level 1 CLITool should be ais-agent, got %s", cfg.CLITool)
+	if cfg.CLITool != "claude" {
+		t.Errorf("level 1 CLITool should be claude, got %s", cfg.CLITool)
 	}
-	if cfg.Provider != "ollama" {
-		t.Errorf("level 1 provider should be ollama, got %s", cfg.Provider)
+	if cfg.Provider != "" {
+		t.Errorf("level 1 provider should be empty (claude doesn't take a Provider), got %s", cfg.Provider)
 	}
-	if cfg.Model != "llama3" {
-		t.Errorf("level 1 model should be llama3, got %s", cfg.Model)
+	if cfg.Model != "claude-haiku-4-5" {
+		t.Errorf("level 1 model should be claude-haiku-4-5, got %s", cfg.Model)
 	}
 	if cfg.PermissionMode != "plan" {
-		t.Errorf("level 1 permission should be plan, got %s", cfg.PermissionMode)
+		t.Errorf("level 1 permission should be plan (read-mostly for juniors), got %s", cfg.PermissionMode)
 	}
 	if cfg.CanReview {
 		t.Error("level 1 should not review")
@@ -59,7 +62,13 @@ func TestEffectiveConfig_UsesHighestRelevantBranch(t *testing.T) {
 }
 
 func TestMapLevelToConfig_AISAgentLevels(t *testing.T) {
-	for level := 1; level <= 3; level++ {
+	// Levels 2-3 still use ais-agent (with openai providers — those
+	// work). Level 1 dropped ais-agent entirely (ollama path is
+	// broken). Levels 4-5 use claude direct.
+	if MapLevelToConfig(1).CLITool != "claude" {
+		t.Errorf("level 1 should use claude (was ais-agent+ollama, runtime broken)")
+	}
+	for level := 2; level <= 3; level++ {
 		cfg := MapLevelToConfig(level)
 		if cfg.CLITool != "ais-agent" {
 			t.Errorf("level %d should use ais-agent, got %s", level, cfg.CLITool)

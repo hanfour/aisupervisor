@@ -173,9 +173,11 @@ RuntimeRegistry (thread-safe, insertion-order-preserving)
 
 ### Documentation
 
+- [Product PRD](docs/product/aisupervisor-prd.md) — AI Supervisor product direction, MVP scope, and commercial readiness bar
 - [Installation Guide](INSTALL.md) — User installation & developer build guide
 - [GUI Manual](docs/GUI-MANUAL.md) — Complete UI operation manual
 - [Docker Guide](docker/README.md) — Docker development environment
+- [Case Studies](docs/case-studies/README.md) — External projects managed by AI Supervisor agents, including the LINE Wi-Fi Ad SaaS showcase
 
 ---
 
@@ -278,9 +280,11 @@ polling:
 
 ### 相關文件
 
+- [產品 PRD](docs/product/aisupervisor-prd.md) — AI Supervisor 本體方向、MVP 範圍與商業化成熟度門檻
 - [安裝手冊](INSTALL.md) — 使用者安裝與開發者建置指南
 - [GUI 操作手冊](docs/GUI-MANUAL.md) — 完整 UI 操作手冊
 - [Docker 指南](docker/README.md) — Docker 開發環境
+- [案例研究](docs/case-studies/README.md) — 由 AI Supervisor agents 管理的外部專案，包含 LINE Wi-Fi Ad SaaS showcase
 
 ---
 

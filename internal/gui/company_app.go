@@ -282,12 +282,34 @@ func (c *CompanyApp) SetupChatBackendFromKey(provider, apiKey string) error {
 
 	c.company.SetChatProvider(chatProv)
 
-	// Persist to config
+	// Persist the key to secrets.yaml so it survives process
+	// restart. Without this step the os.Setenv calls above only
+	// last for the current process; next launch would read the
+	// backend config (which carries the env-var NAME), call
+	// os.Getenv, get an empty string, and fall back to the
+	// onboarding wizard again.
+	secrets, sErr := config.LoadSecrets("")
+	if sErr != nil {
+		log.Printf("WARNING: SetupChatBackendFromKey: loading secrets: %v (will create fresh)", sErr)
+		secrets = &config.Secrets{}
+	}
+	if !secrets.SetByEnvVar(apiKeyEnv, apiKey) {
+		// Should never happen — the switch above only produces env
+		// names the Secrets struct knows. Surface loudly if it does.
+		return fmt.Errorf("internal: Secrets has no field for env var %q", apiKeyEnv)
+	}
+	if err := config.SaveSecrets("", secrets); err != nil {
+		return fmt.Errorf("persisting secret to secrets.yaml: %w", err)
+	}
+
+	// Persist the backend metadata (name / type / model / env-var
+	// name) to config.yaml. The actual key is NOT written here —
+	// it lives in secrets.yaml above. config.yaml stays portable
+	// and safe to inspect.
 	cfg, err := config.Load("")
 	if err != nil {
 		return err
 	}
-	// Add or update the backend entry
 	found := false
 	for i, bc := range cfg.Backends {
 		if bc.Name == backendName {

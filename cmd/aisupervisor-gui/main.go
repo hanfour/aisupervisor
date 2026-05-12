@@ -71,6 +71,21 @@ func main() {
 		log.Fatalf("loading config: %v", err)
 	}
 
+	// Inject persisted secrets into os.Environ BEFORE any backend
+	// setup. The onboarding wizard writes API keys to secrets.yaml
+	// so they survive process restart; without this step a freshly
+	// configured key would only work for the current process and
+	// require a manual shell export on next launch. Shell env (set
+	// by the user explicitly) still wins because ApplyToEnv only
+	// calls Setenv for non-empty fields.
+	if secrets, sErr := config.LoadSecrets(""); sErr == nil {
+		if applied := secrets.ApplyToEnv(); len(applied) > 0 {
+			log.Printf("secrets: injected %v from secrets.yaml", applied)
+		}
+	} else {
+		log.Printf("WARNING: loading secrets.yaml failed: %v", sErr)
+	}
+
 	if flagBackend != "" {
 		cfg.DefaultBackend = flagBackend
 	}

@@ -2763,6 +2763,9 @@ func (m *Manager) decomposeFromVerifyFailure(ctx context.Context, projectID, tes
 	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
 		return fmt.Errorf("parse fix-task JSON: %w (raw: %s)", err, text)
 	}
+	if err := requireNonEmptyDecomposition("decomposeFromVerifyFailure", len(result.Tasks), text); err != nil {
+		return err
+	}
 
 	prefix := fmt.Sprintf("[verify-iter-%d] ", p.VerifyIterations)
 	for _, dt := range result.Tasks {

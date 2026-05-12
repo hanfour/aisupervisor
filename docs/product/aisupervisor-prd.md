@@ -106,8 +106,13 @@ these checks on real repositories:
 
 ## 7. Showcase Strategy
 
-The official first showcase is the LINE Wi-Fi Ad SaaS case study. It should be
-used to demonstrate that AI Supervisor can manage an external SaaS project from
-requirements to implementation tasks, without confusing that project with AI
-Supervisor's own product direction.
+The first worked example shipped with AI Supervisor is the LINE Wi-Fi Ad SaaS
+case study (see `docs/case-studies/line-wifi-saas/`). Its purpose is purely
+illustrative: demonstrate that AI Supervisor can manage an external SaaS
+project from requirements to implementation tasks. Completing the case study
+is **not** a GA gate, and customers are not expected to use it as a template —
+they point AI Supervisor at their own repositories. Future case studies may
+be added to broaden coverage (e.g. internal tools, CLI utilities, data
+pipelines), but each remains separate from AI Supervisor's own product
+direction.
 

@@ -420,7 +420,17 @@ func (c *CompanyApp) CreateWorker(name, avatar string) (*WorkerDTO, error) {
 }
 
 // CreateWorkerWithTier creates a worker with tier and hierarchy options.
+//
+// Verifies the requested CLI tool (or "claude" by default) is on
+// PATH before creating the worker; without this guard the worker
+// materialises in YAML but fails silently at first task assignment
+// when the spawner can't find the binary.
 func (c *CompanyApp) CreateWorkerWithTier(name, avatar, tier, parentID, backendID, cliTool, skillProfile, gender string) (*WorkerDTO, error) {
+	if missing := installer.CheckRuntimePrereqs([]installer.WorkerPrereq{
+		{Name: name, CLITool: cliTool},
+	}); len(missing) > 0 {
+		return nil, fmt.Errorf("%s", installer.FormatMissingError(missing))
+	}
 	var opts []company.WorkerOption
 	if tier != "" {
 		opts = append(opts, company.WithTier(worker.WorkerTier(tier)))
@@ -1372,8 +1382,35 @@ func (c *CompanyApp) MergeSkillsFromMP(baseRepo, baseSkillName, targetName strin
 	return &dto, nil
 }
 
+// CheckWorkerPrereqs is a pre-flight binding the setup wizard can
+// call BEFORE the user clicks "Create team" to see whether the host
+// has the runtime CLIs (claude / codex / aider / ais-agent) the
+// proposed workers will need. Returns one entry per missing runtime
+// with the affected worker names so the GUI can render an actionable
+// "install X then retry" message.
+//
+// OnboardingWorkerDTO doesn't carry a CLITool field today; all
+// wizard-created workers default to "claude" (matches spawner's
+// resolveRuntimeName seed). The check therefore reduces to "is
+// claude on PATH?" for the batch path.
+func (c *CompanyApp) CheckWorkerPrereqs(workers []OnboardingWorkerDTO) []installer.MissingRuntime {
+	plan := make([]installer.WorkerPrereq, 0, len(workers))
+	for _, w := range workers {
+		plan = append(plan, installer.WorkerPrereq{Name: w.Name, CLITool: ""})
+	}
+	return installer.CheckRuntimePrereqs(plan)
+}
+
 // BatchCreateWorkers creates multiple workers at once (used by Setup Wizard custom mode).
+//
+// Runs the same prereq check as CheckWorkerPrereqs and refuses the
+// whole batch when any runtime CLI is missing — better to fail
+// loudly here than to let workers materialise and fail silently at
+// first task assignment.
 func (c *CompanyApp) BatchCreateWorkers(workers []OnboardingWorkerDTO) ([]WorkerDTO, error) {
+	if missing := c.CheckWorkerPrereqs(workers); len(missing) > 0 {
+		return nil, fmt.Errorf("%s", installer.FormatMissingError(missing))
+	}
 	var result []WorkerDTO
 	for _, w := range workers {
 		var opts []company.WorkerOption

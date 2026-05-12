@@ -18,6 +18,7 @@ import (
 	"github.com/hanfourmini/aisupervisor/internal/agent/aider"
 	"github.com/hanfourmini/aisupervisor/internal/agent/aisagent"
 	"github.com/hanfourmini/aisupervisor/internal/agent/claudecode"
+	"github.com/hanfourmini/aisupervisor/internal/agent/codex"
 	"github.com/hanfourmini/aisupervisor/internal/ai"
 	"github.com/hanfourmini/aisupervisor/internal/ai/claudecli"
 	"github.com/hanfourmini/aisupervisor/internal/config"
@@ -226,6 +227,7 @@ func New(
 		runtimeReg.Register(claudecode.New(tmuxClient))
 		runtimeReg.Register(aisagent.New(tmuxClient))
 		runtimeReg.Register(aider.New(tmuxClient))
+		runtimeReg.Register(codex.New(tmuxClient))
 	}
 	m.runtimeRegistry = runtimeReg
 	if spawner != nil {

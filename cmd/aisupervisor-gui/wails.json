@@ -7,6 +7,13 @@
   "frontend:dev:watcher": "cd ../../../frontend && npm run dev",
   "frontend:dev:serverUrl": "http://localhost:41229",
   "author": {
-    "name": "aisupervisor"
+    "name": "hanfour",
+    "email": "hanfourhuang@gmail.com"
+  },
+  "info": {
+    "companyName": "hanfour",
+    "productName": "AI Supervisor",
+    "productIdentifier": "com.hanfour.aisupervisor",
+    "copyright": "Copyright © 2026 hanfour. All rights reserved."
   }
 }

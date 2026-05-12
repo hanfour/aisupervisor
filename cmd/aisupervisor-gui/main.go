@@ -42,6 +42,13 @@ import (
 // Version is set at build time via -ldflags "-X main.Version=..."
 var Version = "dev"
 
+// defaultUpdateURL is the production fallback when the user's YAML
+// doesn't override `update_url`. The updater appends "/version.json"
+// and fetches that to compare against `Version`. Keep this in sync
+// with the location of `website/releases/version.json` on the
+// GitHub Pages site (or whatever hosts the release manifest).
+const defaultUpdateURL = "https://hanfour.github.io/aisupervisor/releases"
+
 var (
 	flagConfig  string
 	flagDryRun  bool
@@ -212,9 +219,15 @@ func main() {
 		companyMgr.SetAutoAssignConfig(cfg.AutoAssign)
 	}
 	companyMgr.LoadHumanGateConfig(cfg.HumanGate)
-	if cfg.UpdateURL != "" {
-		companyApp.SetUpdateURL(cfg.UpdateURL)
+	// UpdateURL precedence: YAML config wins if explicitly set; otherwise
+	// fall through to the production default so a stock install gets
+	// auto-update without YAML edits. The updater fetches
+	// <UpdateURL>/version.json (see internal/updater).
+	updateURL := cfg.UpdateURL
+	if updateURL == "" {
+		updateURL = defaultUpdateURL
 	}
+	companyApp.SetUpdateURL(updateURL)
 
 	// Start messaging integrations if configured
 	startMessaging(cfg, companyMgr)

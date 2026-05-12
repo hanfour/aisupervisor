@@ -177,7 +177,7 @@ RuntimeRegistry (thread-safe, insertion-order-preserving)
 - [Installation Guide](INSTALL.md) — User installation & developer build guide
 - [GUI Manual](docs/GUI-MANUAL.md) — Complete UI operation manual
 - [Docker Guide](docker/README.md) — Docker development environment
-- [Case Studies](docs/case-studies/README.md) — External projects managed by AI Supervisor agents, including the LINE Wi-Fi Ad SaaS showcase
+- [Case Studies](docs/case-studies/README.md) — Worked examples of external projects AI Supervisor agents can plan and build (LINE Wi-Fi Ad SaaS is one such example, not a template customers need to follow)
 
 ---
 
@@ -284,7 +284,7 @@ polling:
 - [安裝手冊](INSTALL.md) — 使用者安裝與開發者建置指南
 - [GUI 操作手冊](docs/GUI-MANUAL.md) — 完整 UI 操作手冊
 - [Docker 指南](docker/README.md) — Docker 開發環境
-- [案例研究](docs/case-studies/README.md) — 由 AI Supervisor agents 管理的外部專案，包含 LINE Wi-Fi Ad SaaS showcase
+- [案例研究](docs/case-studies/README.md) — AI Supervisor agents 可規劃並執行的外部專案範例（LINE Wi-Fi Ad SaaS 為其中一例，並非客戶必須套用的模板）
 
 ---
 

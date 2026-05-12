@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -341,6 +342,16 @@ func Load(path string) (*Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
+	// Surface plaintext credential storage on every startup so a
+	// user who set up via the GUI (which writes plaintext today) sees
+	// the migration suggestion repeatedly rather than just once.
+	for _, w := range cfg.WarnPlaintextSecrets() {
+		if w.EnvVar != "" {
+			log.Printf("⚠️  config: %s %s (try %s)", w.Field, w.Comment, w.EnvVar)
+		} else {
+			log.Printf("⚠️  config: %s %s", w.Field, w.Comment)
+		}
+	}
 	return cfg, nil
 }
 
@@ -388,12 +399,28 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// Save writes the config to path (default ~/.config/aisupervisor/config.yaml)
+// atomically with 0o600 permissions.
+//
+// Why temp-file-then-rename instead of os.WriteFile:
+//   - os.WriteFile's mode is only honoured on first creation; if the
+//     file already exists with 0o644, the perms don't change. A
+//     follow-up Chmod has a race window where another process can
+//     read the freshly-written world-readable contents.
+//   - CreateTemp on Unix creates the temp file with 0o600 by default,
+//     so the destination never exists with weaker perms. Rename is
+//     atomic on the same filesystem, so observers see either the old
+//     file or the new file, never a partial one.
+//
+// The explicit Chmod after Sync is belt-and-suspenders: some umasks
+// or filesystems can still surprise us.
 func (c *Config) Save(path string) error {
 	if path == "" {
 		path = DefaultConfigPath()
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 
@@ -401,7 +428,73 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("config: create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("config: write temp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("config: sync temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("config: close temp: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		cleanup()
+		return fmt.Errorf("config: chmod temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		cleanup()
+		return fmt.Errorf("config: rename temp to %s: %w", path, err)
+	}
+	return nil
+}
+
+// PlaintextSecretWarning describes a YAML field that contains a
+// credential the supervisor would rather see in an environment
+// variable or platform keystore.
+type PlaintextSecretWarning struct {
+	Field    string // YAML path, e.g. "pixellab.api_key"
+	EnvVar   string // suggested env var alternative; empty when none yet
+	Comment  string // one-line guidance the UI / log can display
+}
+
+// WarnPlaintextSecrets returns one warning per credential field the
+// supervisor currently stores as plaintext in YAML. Returning a slice
+// (rather than just logging) lets both startup logs AND the future
+// settings UI surface the same finding without duplicating the rules.
+//
+// Today this covers PixelLab + SkillsMP keys. Backend API keys go
+// through env-var resolution (BackendConfig.APIKeyEnv) and never
+// touch the YAML, so they're not flagged here.
+func (c *Config) WarnPlaintextSecrets() []PlaintextSecretWarning {
+	var out []PlaintextSecretWarning
+	if c.PixelLab.APIKey != "" {
+		out = append(out, PlaintextSecretWarning{
+			Field:   "pixellab.api_key",
+			EnvVar:  "PIXELLAB_API_KEY",
+			Comment: "stored as plaintext in YAML; set PIXELLAB_API_KEY env var instead and remove the YAML entry — env var takes precedence",
+		})
+	}
+	if c.SkillsMPAPIKey != "" {
+		out = append(out, PlaintextSecretWarning{
+			Field:   "skillsmp_api_key",
+			EnvVar:  "", // no env-var resolver yet; planned for v0.2
+			Comment: "stored as plaintext in YAML; keychain integration planned for v0.2 — until then ensure config.yaml is 0o600",
+		})
+	}
+	return out
 }
 
 // ResolvePixelLabAPIKey returns the effective PixelLab API key,

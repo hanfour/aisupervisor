@@ -122,6 +122,9 @@ func (m *Manager) DecomposeObjective(ctx context.Context, objectiveID string) ([
 	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse decomposed projects: %w (raw: %s)", err, text)
 	}
+	if err := requireNonEmptyDecomposition("DecomposeObjective", len(result.Projects), text); err != nil {
+		return nil, err
+	}
 
 	var projectIDs []string
 	for _, dp := range result.Projects {
@@ -180,6 +183,9 @@ func (m *Manager) DecomposeGoals(ctx context.Context, projectID string) error {
 	extracted := extractChatJSON(text)
 	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
 		return fmt.Errorf("failed to parse decomposed tasks: %w (raw: %s)", err, text)
+	}
+	if err := requireNonEmptyDecomposition("DecomposeGoals", len(result.Tasks), text); err != nil {
+		return err
 	}
 
 	// Create tasks

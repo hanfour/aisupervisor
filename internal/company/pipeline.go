@@ -324,8 +324,21 @@ func (m *Manager) DecomposeFromPRD(ctx context.Context, projectID, prdContent st
 	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
 		return fmt.Errorf("failed to parse decomposed tasks from PRD: %w (raw: %s)", err, text)
 	}
+	if err := requireNonEmptyDecomposition("DecomposeFromPRD", len(result.Tasks), text); err != nil {
+		return err
+	}
 
-	for _, dt := range result.Tasks {
+	// Pre-pass: infer topological dependency hints by classifying
+	// each task into one of the eight canonical layers and ordering
+	// downstream layers (frontend/tests/docs) after their canonical
+	// predecessors (api/data). This populates AddTask's dependsOn so
+	// tasks start in TaskBacklog (not TaskReady) until their
+	// predecessor completes — avoids the "all tasks ready, workers
+	// thrash on conflicting files" failure mode with unannotated PRDs.
+	hints := inferDependencyHints(result.Tasks)
+	createdIDs := make([]string, len(result.Tasks))
+
+	for i, dt := range result.Tasks {
 		taskType := "code"
 		switch dt.Type {
 		case "research":
@@ -337,15 +350,37 @@ func (m *Manager) DecomposeFromPRD(ctx context.Context, projectID, prdContent st
 		case "hr":
 			taskType = "hr"
 		}
-		if _, err := m.AddTask(projectID, dt.Title, dt.Description, dt.Prompt, nil, dt.Priority, "", taskType); err != nil {
+		var dependsOn []string
+		for _, predIdx := range hints[i] {
+			if predIdx < len(createdIDs) && createdIDs[predIdx] != "" {
+				dependsOn = append(dependsOn, createdIDs[predIdx])
+			}
+		}
+		task, err := m.AddTask(projectID, dt.Title, dt.Description, dt.Prompt, dependsOn, dt.Priority, "", taskType)
+		if err != nil {
 			return fmt.Errorf("failed to add task %q: %w", dt.Title, err)
 		}
+		createdIDs[i] = task.ID
 	}
+
+	// Layer coverage report: log + event so users see which of the
+	// eight mandatory layers came back covered vs. missing. We do
+	// NOT fail when a layer is missing — ReviewDecomposedTasks
+	// (Phase-0) runs immediately after this and is designed to fill
+	// gaps. This validator's job is telemetry: surface the gap
+	// visibly so users don't have to guess what was emitted.
+	cov := analyseLayerCoverage(result.Tasks)
+	log.Printf("DecomposeFromPRD[%s]: layer coverage — present: %s; missing: %s",
+		projectID, formatLayerList(cov.Present), formatLayerList(cov.Missing))
 
 	m.emit(Event{
 		Type:      EventTaskCreated,
 		ProjectID: projectID,
-		Message:   m.msgf("Auto-generated %d tasks from PRD", "已從 PRD 自動生成 %d 個任務", len(result.Tasks)),
+		Message: m.msgf(
+			"Auto-generated %d tasks from PRD (layers: %s; missing: %s)",
+			"已從 PRD 自動生成 %d 個任務（涵蓋：%s；缺漏：%s）",
+			len(result.Tasks), formatLayerList(cov.Present), formatLayerList(cov.Missing),
+		),
 	})
 
 	return nil

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
-  "download_url": "https://your-site.com/releases/aisupervisor-1.0.0.dmg",
-  "release_notes": "Initial release"
+  "version": "0.1.0",
+  "download_url": "https://github.com/hanfour/aisupervisor/releases/download/v0.1.0/aisupervisor-0.1.0.dmg",
+  "release_notes": "First public beta. Initial AgentRuntime plugin set (Claude Code, Codex CLI, ais-agent, Aider), PixelLab AI sprite generation, project verify-and-iterate, structured meeting engine."
 }

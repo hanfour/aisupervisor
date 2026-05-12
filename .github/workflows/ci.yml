@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs on the same PR/branch when a new commit lands.
+# Saves Actions minutes when force-pushing or pushing rapid fixups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-test:
+    name: Go test (short)
+    runs-on: ubuntu-latest
+    # The full ./internal/worker suite runs a ~120s wall-clock simulation
+    # that we don't want on every PR. -short skips those (see SkipTests
+    # gated by testing.Short() in internal/worker/monitor_runtime_test.go
+    # and internal/company/council_runtime_test.go).
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # tmux is a build-time dependency for the worker package's tests
+      # (they exec real tmux commands). Without it, integration-style
+      # tests fail with "tmux: command not found".
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      # cmd/aisupervisor-gui has a go:embed pattern that needs
+      # frontend/dist to exist even when we're only running tests.
+      - name: Stub frontend dist for embed
+        run: |
+          mkdir -p cmd/aisupervisor-gui/frontend/dist
+          touch cmd/aisupervisor-gui/frontend/dist/.gitkeep
+
+      - name: Run short tests
+        run: go test ./... -short
+
+  go-vet:
+    name: Go vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Stub frontend dist for embed
+        run: |
+          mkdir -p cmd/aisupervisor-gui/frontend/dist
+          touch cmd/aisupervisor-gui/frontend/dist/.gitkeep
+      - name: go vet
+        run: go vet ./...
+
+  go-build:
+    name: Go build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # cmd/aisupervisor-gui embeds frontend/dist/ via go:embed. CI
+      # doesn't run wails build, so we create a placeholder so the
+      # Go build can resolve the embed pattern. The actual frontend
+      # build is exercised separately in the frontend-build job.
+      - name: Stub frontend dist for embed
+        run: |
+          mkdir -p cmd/aisupervisor-gui/frontend/dist
+          touch cmd/aisupervisor-gui/frontend/dist/.gitkeep
+
+      - name: Build all entry points
+        run: |
+          go build -o /tmp/aisupervisor ./cmd/aisupervisor
+          go build -o /tmp/aisupervisor-gui ./cmd/aisupervisor-gui
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        # Use npm ci when a lockfile is present (faster + reproducible);
+        # fall back to npm install otherwise so this works on first-CI
+        # runs before the lockfile is checked in.
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Build
+        run: npm run build
